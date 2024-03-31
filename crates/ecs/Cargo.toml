@@ -1,0 +1,10 @@
+[package]
+name = "ecs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ecs_derive = { path = "../ecs_derive" }
+itertools = "0.12.1"
+dyn-clone = "1.0.17"
+fxhash = "0.2.1"

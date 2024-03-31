@@ -1,0 +1,11 @@
+[package]
+name = "winny"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["crates/*"]
+
+[dependencies]
+winny_engine = { path = "crates/winny_engine" }
+
