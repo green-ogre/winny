@@ -1,7 +1,7 @@
 use std::{
     cell::{RefCell, RefMut},
     collections::VecDeque,
-    fmt::Write,
+    fmt::{Debug, Write},
     marker::PhantomData,
 };
 
@@ -9,13 +9,13 @@ use crate::{any::*, World};
 
 pub trait Event {}
 
-pub trait EventQueue {
+pub trait EventQueue: std::fmt::Debug {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn flush(&mut self);
 }
 
-impl<T: TypeGetter> EventQueue for RefCell<VecDeque<T>> {
+impl<T: TypeGetter + Debug> EventQueue for RefCell<VecDeque<T>> {
     fn as_any(&self) -> &dyn Any {
         self as &dyn Any
     }

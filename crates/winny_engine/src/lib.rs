@@ -45,7 +45,7 @@ impl<T: std::default::Default> App<T> {
         self
     }
 
-    pub fn register_event<E: Event + TypeGetter>(&mut self) -> &mut Self {
+    pub fn register_event<E: std::fmt::Debug + Event + TypeGetter>(&mut self) -> &mut Self {
         self.world.register_event::<E>();
         self
     }

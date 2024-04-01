@@ -27,7 +27,7 @@ impl TypeGetter for Entity {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct EntityMeta {
     pub table_id: usize,
     pub table_row: TableRow,

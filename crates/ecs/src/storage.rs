@@ -13,7 +13,7 @@ use crate::{
     any::{self, *},
     ecs_derive::*,
     entity::Entity,
-    Res,
+    Res, ResourceStorage,
 };
 
 #[derive(Debug)]
@@ -24,6 +24,13 @@ pub struct Table {
 
 impl Table {
     pub fn new<T: Bundle>(bundle: T) -> Self {
+        Self {
+            storage: bundle.into_storage(),
+            len: 1,
+        }
+    }
+
+    pub fn new_dyn(bundle: Box<dyn Bundle>) -> Self {
         Self {
             storage: bundle.into_storage(),
             len: 1,
@@ -73,7 +80,7 @@ impl Table {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum StorageType {
     Table,
     SparseSet,
@@ -180,7 +187,7 @@ pub trait ComponentVec: std::fmt::Debug + DynClone {
     fn try_append(&mut self, value: &dyn Any) -> Result<(), ()>;
     fn try_remove(&mut self, value: &dyn Any) -> Result<(), ()>;
     fn len(&self) -> usize;
-    fn duplicate(&self) -> Box<dyn ComponentVec>;
+    fn duplicate(&self, index: usize) -> Option<Box<dyn ComponentVec>>;
 }
 
 dyn_clone::clone_trait_object!(ComponentVec);
@@ -266,8 +273,13 @@ impl<T: Storage + TypeGetter + std::fmt::Debug + Clone> ComponentVec for RefCell
         self.borrow().len()
     }
 
-    fn duplicate(&self) -> Box<dyn ComponentVec> {
-        Box::new(RefCell::new(Vec::<T>::new()))
+    fn duplicate(&self, index: usize) -> Option<Box<dyn ComponentVec>> {
+        println!("{:?}, {:?}", index, self);
+
+        Some(Box::new(RefCell::new(vec![self
+            .borrow()
+            .get(index)?
+            .clone()])))
     }
 }
 
@@ -276,11 +288,54 @@ pub enum IntoStorageError {
     MismatchedShape,
 }
 
-pub trait Bundle {
+pub trait Bundle: BundleBoxed {
     fn into_storage(self) -> Vec<Box<dyn ComponentVec>>;
     fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError>;
     fn ids(&self) -> Vec<TypeId>;
     fn storage_locations(&self) -> Vec<StorageType>;
+}
+
+pub trait BundleBoxed {
+    fn into_storage_boxed(self: Box<Self>) -> Vec<Box<dyn ComponentVec>>;
+    fn push_storage_boxed(self: Box<Self>, table: &mut Table) -> Result<(), IntoStorageError>;
+    fn ids_boxed(&self) -> Vec<TypeId>;
+    fn storage_locations_boxed(&self) -> Vec<StorageType>;
+}
+
+impl<T: Bundle> BundleBoxed for T {
+    fn into_storage_boxed(self: Box<Self>) -> Vec<Box<dyn ComponentVec>> {
+        self.into_storage()
+    }
+
+    fn push_storage_boxed(self: Box<Self>, table: &mut Table) -> Result<(), IntoStorageError> {
+        self.push_storage(table)
+    }
+
+    fn ids_boxed(&self) -> Vec<TypeId> {
+        self.ids()
+    }
+
+    fn storage_locations_boxed(&self) -> Vec<StorageType> {
+        self.storage_locations()
+    }
+}
+
+impl Bundle for Box<dyn Bundle> {
+    fn into_storage(self) -> Vec<Box<dyn ComponentVec>> {
+        self.into_storage_boxed()
+    }
+
+    fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError> {
+        self.push_storage_boxed(table)
+    }
+
+    fn ids(&self) -> Vec<TypeId> {
+        self.ids_boxed()
+    }
+
+    fn storage_locations(&self) -> Vec<StorageType> {
+        self.storage_locations_boxed()
+    }
 }
 
 impl Bundle for Vec<Box<dyn ComponentVec>> {
@@ -327,15 +382,16 @@ macro_rules! bundle {
             }
 
             fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError> {
-               let ($($t,)*) = self;
+               let ($(ref $t,)*) = self;
+                let ids = self.ids();
                 $(
                     let id = TypeId::of::<$t>();
-                    let index = self.ids()
+                    let index = ids
                         .iter()
                         .enumerate()
                         .find(|(_, other)| **other == id)
                         .ok_or(IntoStorageError::MismatchedShape)?.0;
-                    table.storage[index].try_push(&$t as &dyn Any).expect("sad");
+                    table.storage[index].try_push($t as &dyn Any).expect("sad");
                 )*
 
                 Ok(())

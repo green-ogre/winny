@@ -48,10 +48,53 @@ pub fn component_impl(input: TokenStream) -> TokenStream {
 
     quote! {
         impl winny::ecs::Storage for #name {
-            fn storage_type() -> winny::ecs::storage::Storage {
-                #storage   
+            fn storage_type() -> winny::ecs::storage::StorageType {
+                winny::ecs::storage::StorageType::#storage   
             }
         }
+    }
+    .into()
+}
+
+#[proc_macro_derive(ComponentTest, attributes(component))]
+pub fn component_impl_test(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    
+    let mut storage = StorageType::Table;
+
+    for meta in input.attrs.iter().filter(|a| a.path().is_ident("component")) {
+        meta.parse_nested_meta(|nested| {
+            if nested.path.is_ident("storage") {
+                storage = match nested.value()?.parse::<LitStr>()?.value() {
+                    s if s == TABLE => StorageType::Table,
+                    s if s == SPARSE_SET => StorageType::SparseSet,
+                    _ => {
+                        return Err(nested.error("Invalid storage type"));
+                    }
+                };              
+                Ok(())
+            } else {
+                panic!("Invalid component attribute. Use \n\"component(storage = SparseSet)\"\nfor sparse set.");
+            }
+        }).expect("Invalid attribute(s)");
+    }
+
+    let storage = match storage {
+        StorageType::Table => 
+            Ident::new("Table", Span::call_site()),
+        StorageType::SparseSet => 
+            Ident::new("SparseSet", Span::call_site()),
+    };
+
+    quote! {
+        impl crate::Storage for #name {
+            fn storage_type() -> crate::storage::StorageType {
+                crate::storage::StorageType::#storage   
+            }
+        }
+
+        impl crate::storage::Component for #name {}
     }
     .into()
 }
@@ -185,6 +228,7 @@ pub fn bundle_impl(input: TokenStream) -> TokenStream {
             let mut push = quote!();
             let mut into_storage = quote!();
             let mut component_ids = quote!();
+            let mut component_storage = quote!();
 
             match &data.fields {
                 Fields::Named(data) => {
@@ -194,13 +238,13 @@ pub fn bundle_impl(input: TokenStream) -> TokenStream {
                         push.extend(quote!(
                         {
                             let id = self.#name.type_id();
-                            let index = component_ids
-                            .ids
+                            let index = self
+                            .ids()
                             .iter()
                             .enumerate()
                             .find(|(_, other)| **other == id)
                             .ok_or(winny::ecs::storage::IntoStorageError::MismatchedShape)?.0;
-                            storage[index].try_push(&self.#name as &dyn Any).expect("sad");
+                            table.storage[index].try_push(&self.#name as &dyn Any).expect("sad");
                         }
                         ));
 
@@ -210,33 +254,127 @@ pub fn bundle_impl(input: TokenStream) -> TokenStream {
                         component_ids.extend(quote!(
                             self.#name.type_id(),
                         ));
+
+                        component_storage.extend(quote!(
+                            self.#name.storage_type(),
+                        ));
                     }
                 }
                 _ => panic!("helo"),
             }
 
             quote! {
-                impl winny::ecs::storage::IntoComponentStorage for #name {
-                    fn push(
+                impl crate::storage::Bundle for #name {
+                    fn push_storage(
                         self,
-                        storage: &mut Vec<Box<dyn winny::ecs::storage::ComponentVec>>,
-                        component_ids: &winny::ecs::storage::ComponentSet,
+                        table: &mut winny::ecs::storage::Table
                         ) -> Result<(), winny::ecs::storage::IntoStorageError> {
                         #push
                         Ok(())
                     }
 
                     fn into_storage(self) -> Vec<Box<dyn winny::ecs::storage::ComponentVec>> {
-                         vec![
-                             #into_storage
-                         ]
+                        vec![
+                            #into_storage
+                        ]
+                    }
+
+                    fn ids(&self) -> Vec<winny::ecs::any::TypeId>  {
+                        vec![
+                            #component_ids
+                        ]
+                    }
+
+                    fn storage_locations(&self) -> Vec<winny::ecs::storage::StorageType> {
+                        vec![
+                            #component_storage
+                        ]
                     }
                 }
+            }
+            .into()
+        }
+    }
+}
 
-                impl winny::ecs::storage::GetComponentIds for #name {
-                    fn ids(&self) -> Vec<TypeId>  {
+
+#[proc_macro_derive(BundleTest)]
+pub fn bundle_impl_test(input: TokenStream) -> TokenStream {
+    let input: DeriveInput = syn::parse(input).unwrap();
+    let name = &input.ident;
+    let data = &input.data;
+
+    match data {
+        syn::Data::Enum(data) => {
+            panic!("bunlde must have fields: {}", name.to_string());
+        }
+        syn::Data::Union(data) => {
+            panic!("bunlde must have fields: {}", name.to_string())
+        }
+        syn::Data::Struct(data) => {
+            let mut push = quote!();
+            let mut into_storage = quote!();
+            let mut component_ids = quote!();
+            let mut component_storage = quote!();
+
+            match &data.fields {
+                Fields::Named(data) => {
+                    for field in data.named.iter() {
+                        let name = field.ident.as_ref().unwrap();
+
+                        push.extend(quote!(
+                        {
+                            let id = self.#name.type_id();
+                            let index = self
+                            .ids()
+                            .iter()
+                            .enumerate()
+                            .find(|(_, other)| **other == id)
+                            .ok_or(crate::storage::IntoStorageError::MismatchedShape)?.0;
+                            table.storage[index].try_push(&self.#name as &dyn Any).expect("sad");
+                        }
+                        ));
+
+                        into_storage
+                            .extend(quote!(Box::new(std::cell::RefCell::new(vec![self.#name])),));
+
+                        component_ids.extend(quote!(
+                            self.#name.type_id(),
+                        ));
+
+                        component_storage.extend(quote!(
+                            self.#name.storage_type(),
+                        ));
+                    }
+                }
+                _ => panic!("helo"),
+            }
+
+            quote! {
+                impl crate::storage::Bundle for #name {
+                    fn push_storage(
+                        self,
+                        table: &mut crate::storage::Table
+                        ) -> Result<(), crate::storage::IntoStorageError> {
+                        #push
+                        Ok(())
+                    }
+
+                    fn into_storage(self) -> Vec<Box<dyn crate::storage::ComponentVec>> {
                         vec![
-                             #component_ids
+                            #into_storage
+                        ]
+                    }
+
+                    fn ids(&self) -> Vec<crate::any::TypeId>  {
+                        vec![
+                            #component_ids
+                        ]
+                    }
+
+                    fn storage_locations(&self) -> Vec<crate::storage::StorageType> {
+                        vec![
+                            #component_storage
                         ]
                     }
                 }
