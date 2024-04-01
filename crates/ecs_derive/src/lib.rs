@@ -1,6 +1,7 @@
 use core::panic;
 use proc_macro2::{Ident, Span};
 use std::hash::Hasher;
+use std::collections::hash_map::DefaultHasher;
 
 use proc_macro::{TokenStream};
 use quote::quote;
@@ -46,8 +47,8 @@ pub fn component_impl(input: TokenStream) -> TokenStream {
     };
 
     quote! {
-        impl winny::ecs::ComponentStorageType for #name {
-            fn storage_type(&self) -> winny::ecs::storage::StorageType {
+        impl winny::ecs::Storage for #name {
+            fn storage_type() -> winny::ecs::storage::Storage {
                 #storage   
             }
         }
@@ -109,7 +110,7 @@ pub fn type_getter_impl(input: TokenStream) -> TokenStream {
     let names = name.to_string() + &data_decon;
     let name_str = name.to_string();
 
-    let mut hasher = std::hash::DefaultHasher::default();
+    let mut hasher = DefaultHasher::default();
     hasher.write(names.as_bytes());
     let id = hasher.finish();
 
@@ -149,7 +150,7 @@ pub fn test_type_getter_impl(input: TokenStream) -> TokenStream {
     let names = name.to_string() + &data_decon;
     let name_str = name.to_string();
 
-    let mut hasher = std::hash::DefaultHasher::default();
+    let mut hasher = DefaultHasher::default();
     hasher.write(names.as_bytes());
     let id = hasher.finish();
 

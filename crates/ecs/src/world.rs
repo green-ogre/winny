@@ -25,7 +25,7 @@ pub struct NewEntityCommands {
 }
 
 impl NewEntityCommands {
-    pub fn new<T: Bundle>(bundle: T) -> Self {
+    pub fn new<T: Bundle + 'static>(bundle: T) -> Self {
         Self {
             data: Box::new(bundle),
         }
@@ -37,20 +37,20 @@ impl NewEntityCommands {
 }
 
 impl Bundle for Box<dyn Bundle> {
-    fn push(self, table: &mut Table) -> Result<(), crate::IntoStorageError> {
-        self.push(table)
+    fn push_storage(self, table: &mut Table) -> Result<(), crate::IntoStorageError> {
+        self.deref().push_storage(table)
     }
 
     fn into_storage(self) -> Vec<Box<dyn crate::ComponentVec>> {
-        self.into_storage()
+        self.deref().into_storage()
     }
 
     fn ids(&self) -> Vec<TypeId> {
-        self.ids()
+        self.deref().ids()
     }
 
     fn storage_locations(&self) -> Vec<StorageType> {
-        self.storage_locations()
+        self.deref().storage_locations()
     }
 }
 
@@ -68,9 +68,32 @@ impl Bundle for Box<dyn Bundle> {
 //     }
 // }
 
+#[derive(Debug)]
+struct InsertComponent {
+    component: Box<dyn ComponentVec>,
+    type_id: TypeId,
+    storage_type: StorageType,
+}
+
+impl std::fmt::Debug for dyn Component {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
+impl InsertComponent {
+    pub fn new<T: Component + TypeGetter + Storage + Clone + Debug>(component: T) -> Self {
+        Self {
+            type_id: component.type_id(),
+            storage_type: component.storage_type(),
+            component: Box::new(RefCell::new(vec![component])),
+        }
+    }
+}
+
 pub struct EntityCommands {
     entity: Entity,
-    insert: Vec<Box<*mut Component>>,
+    insert: Vec<InsertComponent>,
     remove: Vec<TypeId>,
     despawn: bool,
 }
@@ -85,8 +108,11 @@ impl EntityCommands {
         }
     }
 
-    pub fn insert<T: Component>(&mut self, component: T) -> &mut Self {
-        self.insert.push(Box::new(component));
+    pub fn insert<T: Component + TypeGetter + Storage + Debug + Clone>(
+        &mut self,
+        component: T,
+    ) -> &mut Self {
+        self.insert.push(InsertComponent::new(component));
         self
     }
 
@@ -106,14 +132,14 @@ pub struct Commands {
 }
 
 impl Commands {
-    pub fn new(world: &World) -> Self {
+    pub fn new() -> Self {
         Self {
             entity_commands: VecDeque::new(),
             new_entity_commands: VecDeque::new(),
         }
     }
 
-    pub fn spawn<T: Bundle>(&mut self, bundle: T) -> &NewEntityCommands {
+    pub fn spawn<T: Bundle + 'static>(&mut self, bundle: T) -> &NewEntityCommands {
         self.new_entity_commands
             .push_back(NewEntityCommands::new(bundle));
 
@@ -123,7 +149,7 @@ impl Commands {
     pub fn get_entity(&mut self, entity: Entity) -> &mut EntityCommands {
         self.entity_commands.push_back(EntityCommands::new(entity));
 
-        &mut self.entity_commands.back().unwrap()
+        self.entity_commands.back_mut().unwrap()
     }
 
     pub fn sync(&mut self, world: &mut World) {
@@ -165,10 +191,11 @@ impl World {
     pub fn spawn<T: Bundle>(&mut self, bundle: T) -> Entity {
         let comp_ids = bundle.ids();
 
-        let arch = self
+        let arch_id = self
             .archetypes
-            .iter_mut()
+            .iter()
             .find(|arch| arch.contains_id_set(&comp_ids))
+            .map(|arch| arch.id)
             .unwrap_or_else(|| {
                 let table_id = self.tables.len();
                 let arch_id = self.archetypes.len();
@@ -187,15 +214,19 @@ impl World {
                     component_desc,
                     vec![],
                 ));
-                self.archetypes.last_mut().unwrap()
+                arch_id
             });
 
-        let table_row = TableRow(self.tables[arch.table_id].len);
+        let table_row = TableRow(self.tables[self.archetypes[arch_id].table_id].len);
         self.tables.push(Table::new(bundle));
-        bundle.push(&mut self.tables[arch.table_id]);
 
-        let entity = self.new_entity(arch.table_id, table_row, arch.id, arch.entities.len());
-        arch.entities.push((entity, table_row));
+        let entity = self.new_entity(
+            self.archetypes[arch_id].table_id,
+            table_row,
+            self.archetypes[arch_id].id,
+            self.archetypes[arch_id].entities.len(),
+        );
+        self.archetypes[arch_id].entities.push((entity, table_row));
 
         entity
     }
@@ -232,37 +263,55 @@ impl World {
         }
     }
 
-    fn get_entity(&mut self, entity: Entity) -> Option<&EntityMeta> {
+    pub fn get_entity(&mut self, entity: Entity) -> Option<&EntityMeta> {
         self.entities
             .get(entity.index() as usize)
             .and_then(|m| (entity.generation() == m.generation).then_some(m))
     }
 
+    pub fn get_entity_mut(&mut self, entity: Entity) -> Option<&mut EntityMeta> {
+        self.entities
+            .get_mut(entity.index() as usize)
+            .and_then(|m| (entity.generation() == m.generation).then_some(m))
+    }
+
     pub fn despawn(&mut self, entity: Entity) -> Result<(), ()> {
-        let Some(meta) = self.get_entity(entity) else {
+        let Some(meta) = self
+            .entities
+            .get_mut(entity.index() as usize)
+            .and_then(|m| (entity.generation() == m.generation).then_some(m))
+        else {
             return Ok(());
         };
 
         meta.free = true;
         self.free_entities.push(entity.index());
 
-        self.remove_entity_from_table(entity, meta)?;
+        self.remove_entity_from_table(entity)?;
 
         Ok(())
     }
 
-    fn remove_entity_from_table(&mut self, entity: Entity, meta: &EntityMeta) -> Result<(), ()> {
+    fn remove_entity_from_table(&mut self, entity: Entity) -> Result<(), ()> {
+        let Some(meta) = self
+            .entities
+            .get_mut(entity.index() as usize)
+            .and_then(|m| (entity.generation() == m.generation).then_some(m))
+        else {
+            return Err(());
+        };
+
         let changed_table_row = TableRow(self.tables[meta.table_id].len - 1);
-        for v in self.tables[meta.table_id].storage.iter() {
+        for v in self.tables[meta.table_id].storage.iter_mut() {
             v.swap_remove(meta.table_row.0)?;
         }
 
         if let Some(changed_meta) = self.archetypes[meta.archetype_id]
             .entities
-            .iter()
+            .iter_mut()
             .rev()
             .find(|(_, table_row)| *table_row == changed_table_row)
-            .and_then(|(e, _)| self.get_entity(*e))
+            .and_then(|(e, _)| Some(self.entities[e.index() as usize]))
         {
             // WARN: idk if this actually changes the value
             changed_meta.table_row = changed_table_row;
@@ -306,19 +355,26 @@ impl World {
             &mut commands
                 .insert
                 .iter()
-                .map(|c| (c.type_id(), c.storage_type())),
+                .map(|c| (c.type_id, c.storage_type))
+                .collect(),
         );
 
         // TODO: needs to look for tables with same storage
         let arch = self
             .archetypes
             .iter()
-            .find(|arch| arch.contains_id_set(&new_comp_set))
+            .find(|arch| {
+                let new_set: Vec<_> = new_comp_set.iter().map(|(id, _)| id.clone()).collect();
+                arch.contains_id_set(&new_set)
+            })
             .unwrap_or_else(|| {
                 let table_id = self.tables.len();
                 let arch_id = self.archetypes.len();
-                let component_ids = new_comp_set.iter().map(|(id, _)| id).collect();
-                let mut component_desc = new_comp_set;
+                let component_ids: Vec<_> = new_comp_set.iter().map(|(id, _)| id.clone()).collect();
+                let mut component_desc = FxHashMap::default();
+                for (id, storage) in new_comp_set.iter() {
+                    component_desc.insert(*id, *storage);
+                }
 
                 self.archetypes.push(Archetype::new(
                     arch_id,
@@ -336,14 +392,13 @@ impl World {
             .filter(|vec| !arch.contains_id(&vec.stored_type_id()))
             .map(|vec| vec.duplicate())
             .collect();
-        for component in commands.insert.iter() {
-            bundle.push(Box::new(RefCell::new(vec![component])));
+        for insert_component in commands.insert.iter() {
+            bundle.push(insert_component.component);
         }
 
         let old_table = &mut self.tables[meta.table_id];
         self.tables.push(Table::new(bundle));
         let new_table = &mut self.tables[meta.table_id];
-        debug_assert_ne!(old_table, new_table);
 
         let table_row = TableRow(self.tables[arch.table_id].len);
         let table_id = arch.table_id;

@@ -31,7 +31,7 @@ impl Table {
     }
 
     pub fn new_entity<T: Bundle>(&mut self, bundle: T) {
-        bundle.push(self);
+        bundle.push_storage(self);
         self.len += 1;
     }
 
@@ -73,10 +73,16 @@ impl Table {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum StorageType {
     Table,
     SparseSet,
+}
+
+impl StorageType {
+    pub fn of<T: Storage>() -> StorageType {
+        T::storage_type()
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -123,10 +129,21 @@ impl Archetype {
     }
 }
 
-pub trait Component: 'static + ComponentStorageType + TypeGetter {}
+pub trait Component: 'static + DynClone {}
+dyn_clone::clone_trait_object!(Component);
 
 pub trait ComponentStorageType {
     fn storage_type(&self) -> StorageType;
+}
+
+pub trait Storage {
+    fn storage_type() -> StorageType;
+}
+
+impl<T: Storage + 'static> ComponentStorageType for T {
+    fn storage_type(&self) -> StorageType {
+        T::storage_type()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -198,9 +215,7 @@ impl<T: TypeGetter> TypeGetter for VecDeque<T> {
     }
 }
 
-impl<T: ComponentStorageType + TypeGetter + std::fmt::Debug + Clone> ComponentVec
-    for RefCell<Vec<T>>
-{
+impl<T: Storage + TypeGetter + std::fmt::Debug + Clone> ComponentVec for RefCell<Vec<T>> {
     fn as_any(&self) -> &dyn Any {
         self as &dyn Any
     }
@@ -214,7 +229,7 @@ impl<T: ComponentStorageType + TypeGetter + std::fmt::Debug + Clone> ComponentVe
     }
 
     fn storage_type(&self) -> StorageType {
-        T::STORAGE_TYPE
+        T::storage_type()
     }
 
     fn swap_remove(&mut self, index: usize) -> Result<(), ()> {
@@ -263,7 +278,7 @@ pub enum IntoStorageError {
 
 pub trait Bundle {
     fn into_storage(self) -> Vec<Box<dyn ComponentVec>>;
-    fn push(self, table: &mut Table) -> Result<(), IntoStorageError>;
+    fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError>;
     fn ids(&self) -> Vec<TypeId>;
     fn storage_locations(&self) -> Vec<StorageType>;
 }
@@ -273,7 +288,7 @@ impl Bundle for Vec<Box<dyn ComponentVec>> {
         self
     }
 
-    fn push(self, table: &mut Table) -> Result<(), IntoStorageError> {
+    fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError> {
         for vec in self.iter() {
             let id = vec.stored_type_id();
             let index = self
@@ -283,7 +298,9 @@ impl Bundle for Vec<Box<dyn ComponentVec>> {
                 .find(|(_, other)| **other == id)
                 .ok_or(IntoStorageError::MismatchedShape)?
                 .0;
-            table.storage[index].try_append(&vec as &dyn Any)?
+            table.storage[index]
+                .try_append(vec.as_any())
+                .map_err(|_| IntoStorageError::MismatchedShape)?;
         }
 
         Ok(())
@@ -301,7 +318,7 @@ impl Bundle for Vec<Box<dyn ComponentVec>> {
 macro_rules! bundle {
     ($($t:ident)*) => {
         #[allow(non_snake_case)]
-        impl<$($t: std::fmt::Debug + Component + ComponentStorageType + TypeGetter + Clone + 'static),*> Bundle for ($($t,)*) {
+        impl<$($t: std::fmt::Debug + Storage + Component + ComponentStorageType + TypeGetter + Clone + 'static),*> Bundle for ($($t,)*) {
             fn into_storage(self) -> Vec<Box<dyn ComponentVec>>  {
                let ($($t,)*) = self;
                 vec![
@@ -309,7 +326,7 @@ macro_rules! bundle {
                 ]
             }
 
-            fn push(self, table: &mut Table) -> Result<(), IntoStorageError> {
+            fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError> {
                let ($($t,)*) = self;
                 $(
                     let id = TypeId::of::<$t>();
@@ -332,7 +349,7 @@ macro_rules! bundle {
 
             fn storage_locations(&self) -> Vec<StorageType> {
                 vec![
-                    $(<$t>::STORAGE_TYPE,)*
+                    $(StorageType::of::<$t>(),)*
                 ]
             }
         }

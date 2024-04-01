@@ -6,7 +6,12 @@ use std::{
 
 use itertools::Itertools;
 
-use crate::{world, Archetype, Component, Entity, TypeGetter, TypeId, World, ENTITY};
+use crate::{
+    entity::Entity, world, Archetype, Component, Storage, StorageType, Table, TypeGetter, TypeId,
+    World,
+};
+
+use crate::storage::*;
 
 pub trait Filter {
     fn condition(arch: &Archetype) -> bool;
@@ -18,19 +23,19 @@ pub struct Or<T>(PhantomData<T>);
 
 impl<T: TypeGetter> Filter for With<T> {
     fn condition(arch: &Archetype) -> bool {
-        arch.component_storage.ids.contains::<T>()
+        arch.contains::<T>()
     }
 }
 
 impl<T: TypeGetter> Filter for Without<T> {
     fn condition(arch: &Archetype) -> bool {
-        !arch.component_storage.ids.contains::<T>()
+        !arch.contains::<T>()
     }
 }
 
 impl<T: TypeGetter> Filter for Or<T> {
     fn condition(arch: &Archetype) -> bool {
-        arch.component_storage.ids.contains::<T>()
+        arch.contains::<T>()
     }
 }
 
@@ -145,7 +150,7 @@ pub trait WorldQuery {
     type Output;
 
     fn iter(&self) -> impl Iterator<Item = Self::Output>;
-    fn get(&self, id: &Entity) -> Result<Self::Output, ()>;
+    fn get(&self, id: Entity) -> Result<Self::Output, ()>;
     fn get_single(&self) -> Result<Self::Output, ()>;
 }
 
@@ -153,78 +158,100 @@ pub trait WorldQueryMut {
     type Output;
 
     fn iter_mut(&mut self) -> impl Iterator<Item = Self::Output>;
-    fn get_mut(&self, id: &Entity) -> Result<Self::Output, ()>;
+    fn get_mut(&self, id: Entity) -> Result<Self::Output, ()>;
     fn get_single_mut(&self) -> Result<Self::Output, ()>;
 }
 
-fn map_vec<'a, T: TypeGetter + Component>(
+fn map_vec<'a, T: Storage + TypeGetter + Component>(
     archetype: &'a Archetype,
+    table: &'a Table,
 ) -> impl Iterator<Item = Ref<'a, T>> {
-    let len = archetype.len();
+    match T::storage_type() {
+        StorageType::Table => {
+            let len = archetype.entities.len();
 
-    (0..len)
-        .map(|i| {
-            let vec = match archetype.borrow_component_vec::<T>().ok_or(()) {
-                Ok(vec) => vec,
-                Err(()) => return Err(()),
-            };
+            (0..len)
+                .map(|i| {
+                    let vec = match table.borrow_component_vec::<T>().ok_or(()) {
+                        Ok(vec) => vec,
+                        Err(()) => return Err(()),
+                    };
 
-            Ok(Ref::map(vec, |v| &v[i]))
-        })
-        .filter(|res| {
-            if res.is_err() {
-                println!("Query Error for: {:?}", T::type_name());
-                return false;
-            }
-            true
-        })
-        .map(|res| res.unwrap())
+                    Ok(Ref::map(vec, |v| &v[archetype.entities[i].1 .0]))
+                })
+                .filter(|res| {
+                    if res.is_err() {
+                        println!("Query Error for: {:?}", T::type_name());
+                        return false;
+                    }
+                    true
+                })
+                .map(|res| res.unwrap())
+        }
+        StorageType::SparseSet => {
+            todo!()
+        }
+    }
 }
 
-fn map_vec_mut<'a, T: TypeGetter + Component>(
+fn map_vec_mut<'a, T: Storage + TypeGetter + Component>(
     archetype: &'a Archetype,
+    table: &'a Table,
 ) -> impl Iterator<Item = RefMut<'a, T>> {
-    let len = archetype.len();
+    match T::storage_type() {
+        StorageType::Table => {
+            let len = archetype.entities.len();
 
-    (0..len)
-        .map(|i| {
-            let vec = match archetype.borrow_mut_component_vec::<T>().ok_or(()) {
-                Ok(vec) => vec,
-                Err(()) => return Err(()),
-            };
+            (0..len)
+                .map(|i| {
+                    let vec = match table.borrow_mut_component_vec::<T>().ok_or(()) {
+                        Ok(vec) => vec,
+                        Err(()) => return Err(()),
+                    };
 
-            Ok(RefMut::map(vec, |v| &mut v[i]))
-        })
-        .filter(|res| {
-            if res.is_err() {
-                println!("Query Error for: {:?}", T::type_name());
-                return false;
-            }
-            true
-        })
-        .map(|res| res.unwrap())
+                    Ok(RefMut::map(vec, |v| &mut v[archetype.entities[i].1 .0]))
+                })
+                .filter(|res| {
+                    if res.is_err() {
+                        println!("Query Error for: {:?}", T::type_name());
+                        return false;
+                    }
+                    true
+                })
+                .map(|res| res.unwrap())
+        }
+        StorageType::SparseSet => {
+            todo!()
+        }
+    }
 }
 
-impl<'b, T: TypeGetter + Component, F: Filter> WorldQuery for Query<'b, T, F> {
+impl<'b, T: TypeGetter + Component + Storage, F: Filter> WorldQuery for Query<'b, T, F> {
     type Output = Ref<'b, T>;
 
     fn iter(&self) -> impl Iterator<Item = Self::Output> {
         self.world
             .archetypes
             .iter()
-            .filter(|arch| arch.component_storage.ids.contains::<T>())
+            .filter(|arch| arch.contains::<T>())
             .filter(|arch| F::condition(arch))
-            .map(|arch| map_vec::<T>(arch))
+            .map(|arch| map_vec::<T>(arch, &self.world.tables[arch.table_id]))
             .flatten()
     }
 
-    fn get(&self, id: &Entity) -> Result<Self::Output, ()> {
-        let len = self.world.archetypes[id.archetype_index()].len();
+    fn get(&self, id: Entity) -> Result<Self::Output, ()> {
+        let meta = self.world.get_entity(id).ok_or(())?;
+        let len = self.world.archetypes[meta.archetype_id].entities.len();
 
         (0..len)
-            .map(|_| map_vec::<T>(&self.world.archetypes[id.archetype_index()]))
+            .map(|_| {
+                map_vec::<T>(
+                    &self.world.archetypes[meta.archetype_id],
+                    &self.world.tables[meta.table_id],
+                )
+            })
             .flatten()
-            .nth(id.storage_index())
+            .nth(meta.table_row.0)
             .ok_or(())
     }
 
@@ -232,35 +259,41 @@ impl<'b, T: TypeGetter + Component, F: Filter> WorldQuery for Query<'b, T, F> {
         self.world
             .archetypes
             .iter()
-            .filter(|arch| arch.component_storage.ids.contains::<T>())
+            .filter(|arch| arch.contains::<T>())
             .filter(|arch| F::condition(arch))
-            .map(|arch| map_vec::<T>(arch))
+            .map(|arch| map_vec::<T>(arch, &self.world.tables[arch.table_id]))
             .flatten()
             .exactly_one()
             .map_err(|_| ())
     }
 }
 
-impl<'b, T: TypeGetter + Component, F: Filter> WorldQueryMut for Query<'b, T, F> {
+impl<'b, T: TypeGetter + Component + Storage, F: Filter> WorldQueryMut for Query<'b, T, F> {
     type Output = RefMut<'b, T>;
 
     fn iter_mut(&mut self) -> impl Iterator<Item = Self::Output> {
         self.world
             .archetypes
             .iter()
-            .filter(|arch| arch.component_storage.ids.contains::<T>())
+            .filter(|arch| arch.contains::<T>())
             .filter(|arch| F::condition(arch))
-            .map(|arch| map_vec_mut::<T>(arch))
+            .map(|arch| map_vec_mut::<T>(arch, &self.world.tables[arch.table_id]))
             .flatten()
     }
 
-    fn get_mut(&self, id: &Entity) -> Result<Self::Output, ()> {
-        let len = self.world.archetypes[id.archetype_index()].len();
+    fn get_mut(&self, id: Entity) -> Result<Self::Output, ()> {
+        let meta = self.world.get_entity(id).ok_or(())?;
+        let len = self.world.archetypes[meta.archetype_id].entities.len();
 
         (0..len)
-            .map(|_| map_vec_mut::<T>(&self.world.archetypes[id.archetype_index()]))
+            .map(|_| {
+                map_vec_mut::<T>(
+                    &self.world.archetypes[meta.archetype_id],
+                    &self.world.tables[meta.table_id],
+                )
+            })
             .flatten()
-            .nth(id.storage_index())
+            .nth(meta.table_row.0)
             .ok_or(())
     }
 
@@ -268,9 +301,9 @@ impl<'b, T: TypeGetter + Component, F: Filter> WorldQueryMut for Query<'b, T, F>
         self.world
             .archetypes
             .iter()
-            .filter(|arch| arch.component_storage.ids.contains::<T>())
+            .filter(|arch| arch.contains::<T>())
             .filter(|arch| F::condition(arch))
-            .map(|arch| map_vec_mut::<T>(arch))
+            .map(|arch| map_vec_mut::<T>(arch, &self.world.tables[arch.table_id]))
             .flatten()
             .exactly_one()
             .map_err(|_| ())
@@ -280,19 +313,19 @@ impl<'b, T: TypeGetter + Component, F: Filter> WorldQueryMut for Query<'b, T, F>
 macro_rules! queries {
       ($($t:ident)*) => {
          #[allow(non_snake_case)]
-          impl<'b, $($t: TypeGetter + Component),*, Fil: Filter> WorldQuery for Query<'b, ($($t,)*), Fil> {
+          impl<'b, $($t: TypeGetter + Component + Storage),*, Fil: Filter> WorldQuery for Query<'b, ($($t,)*), Fil> {
             type Output = ($(Ref<'b, $t>,)*);
 
             fn iter(&self) -> impl Iterator<Item = Self::Output> {
              self.world.archetypes
                 .iter()
-                .filter(|arch| $(arch.component_storage.ids.contains::<$t>())&&*)
+                .filter(|arch| $(arch.contains::<$t>())&&*)
                 .filter(|arch| Fil::condition(arch))
                 .map(|arch| {
                     itertools::multizip((
                         $(
                             {
-                                map_vec::<$t>(arch)
+                                map_vec::<$t>(arch, &self.world.tables[arch.table_id])
                             },
                         )*
                     ))
@@ -302,16 +335,17 @@ macro_rules! queries {
             }
 
 
-            fn get(&self, id: &Entity) -> Result<Self::Output, ()> {
-                let len = self.world.archetypes[id.archetype_index()].len();
+            fn get(&self, id: Entity) -> Result<Self::Output, ()> {
+                let meta = self.world.get_entity(id).ok_or(())?;
+                let len = self.world.archetypes[meta.archetype_id].entities.len();
 
                 (0..len)
                     .map(|_| itertools::multizip(($({
-                                map_vec::<$t>(&self.world.archetypes[id.archetype_index()])
+                                map_vec::<$t>(&self.world.archetypes[meta.archetype_id], &self.world.tables[meta.table_id])
                             },)*))
                     )
                     .flatten()
-                    .nth(id.storage_index())
+                    .nth(meta.table_row.0)
                     .ok_or(())
             }
 
@@ -320,13 +354,13 @@ macro_rules! queries {
                 self.world
                     .archetypes
                     .iter()
-                    .filter(|arch| $(arch.component_storage.ids.contains::<$t>())&&*)
+                    .filter(|arch| $(arch.contains::<$t>())&&*)
                     .filter(|arch| Fil::condition(arch))
                     .map(|arch| {
                         itertools::multizip((
                                 $(
                                     {
-                                        map_vec::<$t>(arch)
+                                        map_vec::<$t>(arch, &self.world.tables[arch.table_id])
                                     },
                                     )*
                                 ))
@@ -337,19 +371,19 @@ macro_rules! queries {
             }
           }
 
-          impl<'b, $($t: TypeGetter + Component),*, Fil: Filter> WorldQueryMut for Query<'b, ($($t,)*), Fil> {
+          impl<'b, $($t: TypeGetter + Component + Storage),*, Fil: Filter> WorldQueryMut for Query<'b, ($($t,)*), Fil> {
               type Output = ($(RefMut<'b, $t>,)*);
 
             fn iter_mut(&mut self) -> impl Iterator<Item = Self::Output> {
              self.world.archetypes
                 .iter()
-                .filter(|arch| $(arch.component_storage.ids.contains::<$t>())&&*)
+                .filter(|arch| $(arch.contains::<$t>())&&*)
                 .filter(|arch| Fil::condition(arch))
                 .map(|arch| {
                     itertools::multizip((
                         $(
                             {
-                                map_vec_mut::<$t>(arch)
+                                map_vec_mut::<$t>(arch, &self.world.tables[arch.table_id])
                             },
                         )*
                     ))
@@ -359,16 +393,17 @@ macro_rules! queries {
             }
 
 
-            fn get_mut(&self, id: &Entity) -> Result<Self::Output, ()> {
-                let len = self.world.archetypes[id.archetype_index()].len();
+            fn get_mut(&self, id: Entity) -> Result<Self::Output, ()> {
+                let meta = self.world.get_entity(id).ok_or(())?;
+                let len = self.world.archetypes[meta.archetype_id].entities.len();
 
                 (0..len)
                     .map(|_| itertools::multizip(($({
-                                map_vec_mut::<$t>(&self.world.archetypes[id.archetype_index()])
+                                map_vec_mut::<$t>(&self.world.archetypes[meta.archetype_id], &self.world.tables[meta.table_id])
                             },)*))
                     )
                     .flatten()
-                    .nth(id.storage_index())
+                    .nth(meta.table_row.0)
                     .ok_or(())
             }
 
@@ -376,13 +411,13 @@ macro_rules! queries {
                 self.world
                     .archetypes
                     .iter()
-                    .filter(|arch| $(arch.component_storage.ids.contains::<$t>())&&*)
+                    .filter(|arch| $(arch.contains::<$t>())&&*)
                     .filter(|arch| Fil::condition(arch))
                     .map(|arch| {
                         itertools::multizip((
                                 $(
                                     {
-                                        map_vec_mut::<$t>(arch)
+                                        map_vec_mut::<$t>(arch, &self.world.tables[arch.table_id])
                                     },
                                     )*
                                 ))

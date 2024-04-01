@@ -6,6 +6,7 @@ pub mod gfx;
 mod gl;
 pub mod input;
 pub mod logging;
+#[cfg(windows)]
 mod win32;
 
 use ecs::{any::TypeGetter, Event, Resource, StartUpSystem, World};

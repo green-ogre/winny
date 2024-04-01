@@ -1,3 +1,5 @@
+use crate::ComponentStorageType;
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TypeId(u64);
 
