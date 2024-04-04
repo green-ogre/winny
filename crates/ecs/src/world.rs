@@ -90,7 +90,6 @@ impl EntityCommands {
     pub fn commit(self, world: &mut World) {
         let res = world.apply_entity_commands(self);
         debug_assert!(res.is_ok());
-        println!("SUCCEEDED");
     }
 }
 
@@ -340,7 +339,6 @@ impl World {
             .map(|(e, _)| e)
         {
             let changed_meta = self.get_entity_mut(*moved_entity).ok_or(())?;
-            println!("{:?}, {:?}", changed_table_row, changed_meta.table_row);
             changed_meta.table_row = meta.table_row;
         } else if let Some(moved_entity) = self
             .archetypes

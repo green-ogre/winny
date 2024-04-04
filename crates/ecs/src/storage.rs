@@ -274,8 +274,6 @@ impl<T: Storage + TypeGetter + std::fmt::Debug + Clone> ComponentVec for RefCell
     }
 
     fn duplicate(&self, index: usize) -> Option<Box<dyn ComponentVec>> {
-        println!("{:?}, {:?}", index, self);
-
         Some(Box::new(RefCell::new(vec![self
             .borrow()
             .get(index)?

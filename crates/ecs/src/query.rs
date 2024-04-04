@@ -168,7 +168,12 @@ fn map_vec<'a, T: Storage + TypeGetter + Component>(
 ) -> impl Iterator<Item = Ref<'a, T>> {
     match T::storage_type() {
         StorageType::Table => {
-            let len = archetype.entities.len();
+            let len = table.len;
+
+            // println!();
+            // println!();
+            // println!();
+            // println!("{:#?}, {:#?}, {:?}", table, archetype, len);
 
             (0..len)
                 .map(|i| {

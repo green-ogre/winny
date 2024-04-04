@@ -25,6 +25,7 @@ pub fn default_start_up_system<T>(_world: &mut World, _args: &T) {}
 #[cfg(test)]
 mod winny {
     use super::*;
+    use logging::*;
 
     #[derive(Event, Debug, TestTypeGetter)]
     struct TestEvent(usize);
@@ -78,13 +79,20 @@ mod winny {
 
         let mut commands = Commands::new();
 
-        commands.get_entity(e2).despawn();
-        commands.get_entity(e3).insert(Size(200)).insert(Size(4));
-        commands.get_entity(e4).insert(Weight(4)).remove::<Health>();
+        // commands.get_entity(e2).despawn();
+        // commands.get_entity(e3).insert(Size(200)).insert(Size(4));
+        // commands.get_entity(e4).insert(Weight(4)).remove::<Health>();
 
-        println!("{:#?}", world);
+        // println!("{:#?}", world);
 
         commands.sync(&mut world);
+
+        info!("test info");
+
+        let health_q = Query::<Health>::new(&world);
+        for health in health_q.iter() {
+            println!("{:?}", health);
+        }
 
         panic!("{:#?}", world);
     }
