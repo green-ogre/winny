@@ -7,8 +7,12 @@ pub mod prelude;
 pub mod gfx;
 mod gl;
 pub mod input;
-#[cfg(windows)]
+
+#[cfg(target_os = "windows")]
 mod win32;
+
+#[cfg(target_os = "macos")]
+mod macos;
 
 use ecs::{any::TypeGetter, Event, Resource, StartUpSystem, World};
 
@@ -63,12 +67,20 @@ impl<T: std::default::Default> App<T> {
         trace!("Entering Startup");
         (self.start_up)(&mut self.world, &self.args);
         trace!("Exiting Startup");
-        enter_platform(self.reload_path.clone(), &mut self.world);
+        // enter_platform(self.reload_path.clone(), &mut self.world);
     }
 }
 
-#[cfg(windows)]
-fn enter_platform(reload_path: String, world: &mut World) {
+#[cfg(target_os = "windows")]
+pub fn enter_platform(reload_path: String, world: &mut World) {
     trace!("Entering Windows Main");
     win32::win32_main(reload_path, world);
+}
+
+#[cfg(target_os = "macos")]
+pub fn enter_platform(lib_path: String) {
+    trace!("Entering MacOS Main");
+
+    let mut world = World::default();
+    macos::macos_main(lib_path, &mut world);
 }

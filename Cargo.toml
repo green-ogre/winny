@@ -3,6 +3,14 @@ name = "winny"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "winny"
+path = "src/lib.rs"
+
+[[bin]]
+name = "winny"
+path = "src/bin.rs"
+
 [workspace]
 members = ["crates/*"]
 
