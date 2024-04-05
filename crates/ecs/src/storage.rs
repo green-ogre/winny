@@ -2,8 +2,9 @@ use std::{
     borrow::{Borrow, BorrowMut},
     cell::{Ref, RefCell, RefMut},
     collections::{btree_map::Range, VecDeque},
+    fmt::Debug,
     marker::PhantomData,
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 
 use dyn_clone::DynClone;
@@ -30,9 +31,9 @@ impl Table {
         }
     }
 
-    pub fn new_dyn(bundle: Box<dyn Bundle>) -> Self {
+    pub fn new_box(bundle: Box<dyn Bundle>) -> Self {
         Self {
-            storage: bundle.into_storage(),
+            storage: bundle.into_storage_box(),
             len: 1,
         }
     }
@@ -132,7 +133,12 @@ impl Archetype {
     }
 
     pub fn contains_id_set(&self, components: &[TypeId]) -> bool {
-        self.component_ids.eq(components)
+        components.iter().all(|c| self.component_ids.contains(c))
+    }
+
+    pub fn comp_set_eq(&self, components: &[TypeId]) -> bool {
+        components.iter().all(|c| self.component_ids.contains(c))
+            && components.len() == self.component_ids.len()
     }
 }
 
@@ -286,59 +292,22 @@ pub enum IntoStorageError {
     MismatchedShape,
 }
 
-pub trait Bundle: BundleBoxed {
+pub trait Bundle: Debug {
     fn into_storage(self) -> Vec<Box<dyn ComponentVec>>;
+    fn into_storage_box(self: Box<Self>) -> Vec<Box<dyn ComponentVec>>;
     fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError>;
+    fn push_storage_box(self: Box<Self>, table: &mut Table) -> Result<(), IntoStorageError>;
     fn ids(&self) -> Vec<TypeId>;
     fn storage_locations(&self) -> Vec<StorageType>;
-}
-
-pub trait BundleBoxed {
-    fn into_storage_boxed(self: Box<Self>) -> Vec<Box<dyn ComponentVec>>;
-    fn push_storage_boxed(self: Box<Self>, table: &mut Table) -> Result<(), IntoStorageError>;
-    fn ids_boxed(&self) -> Vec<TypeId>;
-    fn storage_locations_boxed(&self) -> Vec<StorageType>;
-}
-
-impl<T: Bundle> BundleBoxed for T {
-    fn into_storage_boxed(self: Box<Self>) -> Vec<Box<dyn ComponentVec>> {
-        self.into_storage()
-    }
-
-    fn push_storage_boxed(self: Box<Self>, table: &mut Table) -> Result<(), IntoStorageError> {
-        self.push_storage(table)
-    }
-
-    fn ids_boxed(&self) -> Vec<TypeId> {
-        self.ids()
-    }
-
-    fn storage_locations_boxed(&self) -> Vec<StorageType> {
-        self.storage_locations()
-    }
-}
-
-impl Bundle for Box<dyn Bundle> {
-    fn into_storage(self) -> Vec<Box<dyn ComponentVec>> {
-        self.into_storage_boxed()
-    }
-
-    fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError> {
-        self.push_storage_boxed(table)
-    }
-
-    fn ids(&self) -> Vec<TypeId> {
-        self.ids_boxed()
-    }
-
-    fn storage_locations(&self) -> Vec<StorageType> {
-        self.storage_locations_boxed()
-    }
 }
 
 impl Bundle for Vec<Box<dyn ComponentVec>> {
     fn into_storage(self) -> Vec<Box<dyn ComponentVec>> {
         self
+    }
+
+    fn into_storage_box(self: Box<Self>) -> Vec<Box<dyn ComponentVec>> {
+        self.into_storage()
     }
 
     fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError> {
@@ -357,6 +326,10 @@ impl Bundle for Vec<Box<dyn ComponentVec>> {
         }
 
         Ok(())
+    }
+
+    fn push_storage_box(self: Box<Self>, table: &mut Table) -> Result<(), IntoStorageError> {
+        self.push_storage(table)
     }
 
     fn ids(&self) -> Vec<TypeId> {
@@ -379,20 +352,28 @@ macro_rules! bundle {
                 ]
             }
 
+            fn into_storage_box(self: Box<Self>) -> Vec<Box<dyn ComponentVec>> {
+                self.into_storage()
+            }
+
             fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError> {
                let ($(ref $t,)*) = self;
-                let ids = self.ids();
+
                 $(
                     let id = TypeId::of::<$t>();
-                    let index = ids
+                    let index = table.storage
                         .iter()
                         .enumerate()
-                        .find(|(_, other)| **other == id)
+                        .find(|(_, vec)| vec.stored_type_id() == id)
                         .ok_or(IntoStorageError::MismatchedShape)?.0;
                     table.storage[index].try_push($t as &dyn Any).expect("sad");
                 )*
 
                 Ok(())
+            }
+
+            fn push_storage_box(self: Box<Self>, table: &mut Table) -> Result<(), IntoStorageError> {
+                self.push_storage(table)
             }
 
             fn ids(&self) -> Vec<TypeId>  {

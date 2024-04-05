@@ -1,11 +1,12 @@
 pub extern crate ecs;
 
+use logging::*;
+
 pub mod prelude;
 
 pub mod gfx;
 mod gl;
 pub mod input;
-pub mod logging;
 #[cfg(windows)]
 mod win32;
 
@@ -15,7 +16,6 @@ pub struct App<T: std::default::Default> {
     reload_path: String,
     world: World,
     start_up: StartUpSystem<T>,
-    log: bool,
     args: T,
 }
 
@@ -25,7 +25,6 @@ impl<T: Default> Default for App<T> {
             reload_path: String::new(),
             world: World::default(),
             start_up: ecs::default_start_up_system,
-            log: false,
             args: T::default(),
         }
     }
@@ -60,18 +59,16 @@ impl<T: std::default::Default> App<T> {
         self
     }
 
-    pub fn log(&mut self) -> &mut Self {
-        self.log = true;
-        self
-    }
-
     pub fn run(&mut self) {
+        trace!("Entering Startup");
         (self.start_up)(&mut self.world, &self.args);
-        enter_platform(self.log, self.reload_path.clone(), &mut self.world);
+        trace!("Exiting Startup");
+        enter_platform(self.reload_path.clone(), &mut self.world);
     }
 }
 
 #[cfg(windows)]
-fn enter_platform(log: bool, reload_path: String, world: &mut World) {
-    win32::win32_main(log, reload_path, world);
+fn enter_platform(reload_path: String, world: &mut World) {
+    trace!("Entering Windows Main");
+    win32::win32_main(reload_path, world);
 }

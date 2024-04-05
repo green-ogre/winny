@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 ecs = { path = "../ecs" }
+logging = { path = "../logging" }
 
 [dependencies.windows]
 version = "0.53.0"

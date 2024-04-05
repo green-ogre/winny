@@ -12,6 +12,7 @@ pub mod storage;
 pub mod world;
 
 pub use any::*;
+pub use entity::*;
 pub use events::*;
 pub use query::*;
 pub use resources::*;
@@ -24,6 +25,8 @@ pub fn default_start_up_system<T>(_world: &mut World, _args: &T) {}
 
 #[cfg(test)]
 mod winny {
+    use core::panic;
+
     use super::*;
     use logging::*;
 
@@ -49,7 +52,7 @@ mod winny {
     #[derive(ComponentTest, TestTypeGetter, Debug, Clone)]
     struct Size(usize);
 
-    #[derive(BundleTest)]
+    #[derive(BundleTest, Debug)]
     pub struct TestBundle {
         size: Size,
         weight: Weight,
@@ -79,22 +82,52 @@ mod winny {
 
         let mut commands = Commands::new();
 
-        // commands.get_entity(e2).despawn();
-        // commands.get_entity(e3).insert(Size(200)).insert(Size(4));
-        // commands.get_entity(e4).insert(Weight(4)).remove::<Health>();
+        commands.get_entity(e1).despawn();
+        commands.get_entity(e2).insert(Size(200)).remove::<Health>();
+        commands.get_entity(e4).insert(Weight(4)).remove::<Health>();
 
-        // println!("{:#?}", world);
+        println!("{:#?}", world);
 
         commands.sync(&mut world);
 
-        info!("test info");
+        println!("{:#?}", world);
 
         let health_q = Query::<Health>::new(&world);
         for health in health_q.iter() {
             println!("{:?}", health);
         }
 
-        panic!("{:#?}", world);
+        // panic!();
+    }
+
+    #[test]
+    fn commands_spawn() {
+        let mut world = World::default();
+        let mut commands = Commands::new();
+
+        commands.spawn(TestBundle {
+            health: Health(10),
+            size: Size(3),
+            weight: Weight(45),
+        });
+
+        commands.spawn(TestBundle {
+            health: Health(30),
+            size: Size(300),
+            weight: Weight(5),
+        });
+
+        commands.spawn((Health(1), Size(2), Weight(3)));
+
+        {
+            let mut commands = Commands::new();
+            commands.spawn((Health(20),));
+            commands.sync(&mut world);
+        }
+
+        commands.sync(&mut world);
+
+        // panic!("{:#?}", world);
     }
 
     // #[test]

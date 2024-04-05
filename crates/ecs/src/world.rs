@@ -11,6 +11,7 @@ use std::{
 use ecs_derive::TestTypeGetter;
 use fxhash::FxHashMap;
 use itertools::Itertools;
+use logging::*;
 
 use crate::{
     Any, Archetype, Component, ComponentSet, Event, EventQueue, Resource, ResourceStorage, Table,
@@ -20,6 +21,14 @@ use crate::{
 use crate::entity::*;
 use crate::storage::*;
 
+/*
+ * TODO:
+ *
+ * - Add event types and resource types so that they can index into storage,
+ *      instead of iterating over all types.
+ * */
+
+#[derive(Debug)]
 pub struct NewEntityCommands {
     data: Box<dyn Bundle>,
 }
@@ -32,7 +41,7 @@ impl NewEntityCommands {
     }
 
     pub fn commit(self, world: &mut World) {
-        world.spawn_dyn(self.data);
+        world.spawn_box(self.data);
     }
 }
 
@@ -53,6 +62,7 @@ impl InsertComponent {
     }
 }
 
+#[derive(Debug)]
 pub struct EntityCommands {
     entity: Entity,
     insert: Vec<InsertComponent>,
@@ -93,6 +103,7 @@ impl EntityCommands {
     }
 }
 
+#[derive(Debug)]
 pub struct Commands {
     entity_commands: VecDeque<EntityCommands>,
     new_entity_commands: VecDeque<NewEntityCommands>,
@@ -157,19 +168,47 @@ impl Default for World {
 
 impl World {
     pub fn spawn<T: Bundle>(&mut self, bundle: T) -> Entity {
+        let meta_location = self.find_or_create_archetype(bundle);
+
+        let entity = self.new_entity(meta_location);
+        self.archetypes[meta_location.archetype_id]
+            .entities
+            .push((entity, meta_location.table_row));
+
+        entity
+    }
+
+    pub fn spawn_box(&mut self, bundle: Box<dyn Bundle>) -> Entity {
+        let meta_location = self.find_or_create_archetype_box(bundle);
+
+        let entity = self.new_entity(meta_location);
+        self.archetypes[meta_location.archetype_id]
+            .entities
+            .push((entity, meta_location.table_row));
+
+        entity
+    }
+
+    fn find_or_create_archetype<T: Bundle>(&mut self, bundle: T) -> MetaLocation {
         let comp_ids = bundle.ids();
 
-        let arch_id = match self
+        match self
             .archetypes
             .iter()
-            .find(|arch| arch.contains_id_set(&comp_ids))
+            .find(|arch| arch.comp_set_eq(&comp_ids))
             .map(|arch| arch.id)
         {
             Some(arch_id) => {
                 let _ = bundle.push_storage(&mut self.tables[self.archetypes[arch_id].table_id]);
                 self.tables[self.archetypes[arch_id].table_id].len += 1;
 
-                arch_id
+                let arch = &self.archetypes[arch_id];
+                MetaLocation::new(
+                    arch.table_id,
+                    TableRow(self.tables[self.archetypes[arch_id].table_id].len - 1),
+                    arch.id,
+                    arch.entities.len().saturating_sub(1),
+                )
             }
             None => {
                 let table_id = self.tables.len();
@@ -191,33 +230,34 @@ impl World {
                     vec![],
                 ));
 
-                arch_id
+                MetaLocation::new(table_id, TableRow(0), arch_id, 0)
             }
-        };
-
-        let table_row = TableRow(self.tables[self.archetypes[arch_id].table_id].len - 1);
-
-        let entity = self.new_entity(
-            self.archetypes[arch_id].table_id,
-            table_row,
-            self.archetypes[arch_id].id,
-            self.archetypes[arch_id].entities.len(),
-        );
-        self.archetypes[arch_id].entities.push((entity, table_row));
-
-        entity
+        }
     }
 
-    // TODO: Not fixed
-    pub fn spawn_dyn(&mut self, bundle: Box<dyn Bundle>) -> Entity {
+    fn find_or_create_archetype_box(&mut self, bundle: Box<dyn Bundle>) -> MetaLocation {
         let comp_ids = bundle.ids();
 
-        let arch_id = self
+        match self
             .archetypes
             .iter()
-            .find(|arch| arch.contains_id_set(&comp_ids))
+            .find(|arch| arch.comp_set_eq(&comp_ids))
             .map(|arch| arch.id)
-            .unwrap_or_else(|| {
+        {
+            Some(arch_id) => {
+                let _ =
+                    bundle.push_storage_box(&mut self.tables[self.archetypes[arch_id].table_id]);
+                self.tables[self.archetypes[arch_id].table_id].len += 1;
+
+                let arch = &self.archetypes[arch_id];
+                MetaLocation::new(
+                    arch.table_id,
+                    TableRow(self.tables[self.archetypes[arch_id].table_id].len - 1),
+                    arch.id,
+                    arch.entities.len().saturating_sub(1),
+                )
+            }
+            None => {
                 let table_id = self.tables.len();
                 let arch_id = self.archetypes.len();
                 let component_ids = bundle.ids();
@@ -228,6 +268,7 @@ impl World {
                     component_desc.insert(*id, *location);
                 }
 
+                self.tables.push(Table::new_box(bundle));
                 self.archetypes.push(Archetype::new(
                     arch_id,
                     table_id,
@@ -235,50 +276,24 @@ impl World {
                     component_desc,
                     vec![],
                 ));
-                arch_id
-            });
 
-        let table_row = TableRow(self.tables[self.archetypes[arch_id].table_id].len);
-        self.tables.push(Table::new_dyn(bundle));
-
-        let entity = self.new_entity(
-            self.archetypes[arch_id].table_id,
-            table_row,
-            self.archetypes[arch_id].id,
-            self.archetypes[arch_id].entities.len(),
-        );
-        self.archetypes[arch_id].entities.push((entity, table_row));
-
-        entity
+                MetaLocation::new(table_id, TableRow(0), arch_id, 0)
+            }
+        }
     }
 
-    pub fn new_entity(
-        &mut self,
-        table_id: usize,
-        table_row: TableRow,
-        archetype_id: usize,
-        archetype_index: usize,
-    ) -> Entity {
+    pub fn new_entity(&mut self, meta_location: MetaLocation) -> Entity {
         match self.free_entities.pop() {
             Some(free_space) => {
                 let meta = &mut self.entities[free_space as usize];
                 meta.free = false;
                 meta.generation += 1;
-
-                meta.table_id = table_id;
-                meta.table_row = table_row;
-                meta.archetype_index = archetype_index;
-                meta.archetype_id = archetype_id;
+                meta.location = meta_location;
 
                 Entity::new(meta.generation, free_space)
             }
             None => {
-                self.entities.push(EntityMeta::new(
-                    table_id,
-                    table_row,
-                    archetype_id,
-                    archetype_index,
-                ));
+                self.entities.push(EntityMeta::new(meta_location));
                 Entity::new(0, self.entities.len() as u32 - 1)
             }
         }
@@ -308,7 +323,7 @@ impl World {
         meta.free = true;
         self.free_entities.push(entity.index());
 
-        self.remove_entity_from_table(entity)?;
+        self.remove_entity(entity)?;
 
         Ok(())
     }
@@ -321,17 +336,24 @@ impl World {
         Err(())
     }
 
-    fn remove_entity_from_table(&mut self, entity: Entity) -> Result<(), ()> {
+    fn remove_entity(&mut self, entity: Entity) -> Result<(), ()> {
         let meta = self.get_entity(entity).ok_or(())?;
 
-        self.tables[meta.table_id].len -= 1;
+        self.tables[meta.location.table_id].len -= 1;
 
-        let changed_table_row = TableRow(self.tables[meta.table_id].len);
-        for v in self.tables[meta.table_id].storage.iter_mut() {
-            v.swap_remove(meta.table_row.0)?;
+        let changed_table_row = TableRow(self.tables[meta.location.table_id].len);
+        for v in self.tables[meta.location.table_id].storage.iter_mut() {
+            v.swap_remove(meta.location.table_row.0)?;
         }
 
-        if let Some(moved_entity) = self.archetypes[meta.archetype_id]
+        if changed_table_row == meta.location.table_row {
+            self.archetypes[meta.location.archetype_id]
+                .entities
+                .swap_remove(meta.location.archetype_index);
+            return Ok(());
+        }
+
+        if let Some(moved_entity) = self.archetypes[meta.location.archetype_id]
             .entities
             .iter()
             .rev()
@@ -339,11 +361,11 @@ impl World {
             .map(|(e, _)| e)
         {
             let changed_meta = self.get_entity_mut(*moved_entity).ok_or(())?;
-            changed_meta.table_row = meta.table_row;
+            changed_meta.location = meta.location;
         } else if let Some(moved_entity) = self
             .archetypes
             .iter()
-            .filter(|arch| arch.table_id == meta.table_id)
+            .filter(|arch| arch.table_id == meta.location.table_id)
             .map(|arch| {
                 arch.entities
                     .iter()
@@ -355,8 +377,15 @@ impl World {
             .map_err(|_| ())?
         {
             let changed_meta = self.get_entity_mut(*moved_entity).ok_or(())?;
-            changed_meta.table_row = changed_table_row;
+            changed_meta.location.table_row = changed_table_row;
         }
+
+        self.archetypes[meta.location.archetype_id]
+            .entities
+            .swap_remove(meta.location.archetype_index);
+
+        self.archetypes[meta.location.archetype_id].entities[meta.location.archetype_index].1 =
+            meta.location.table_row;
 
         Ok(())
     }
@@ -372,80 +401,39 @@ impl World {
         }
 
         let meta = self.get_entity(commands.entity).ok_or(())?;
-        let mut new_comp_set: Vec<_> = self.archetypes[meta.archetype_id]
-            .component_desc
-            .iter()
-            .filter(|id| !commands.remove.contains(&id.0))
-            .map(|(id, storage)| (*id, *storage))
-            .collect();
-        new_comp_set.append(
-            &mut commands
-                .insert
-                .iter()
-                .filter(|c| new_comp_set.contains(&(c.type_id, c.storage_type)))
-                .map(|c| (c.type_id, c.storage_type))
-                .collect(),
-        );
-
-        let new_set: Vec<_> = new_comp_set.iter().map(|(id, _)| id.clone()).collect();
-        let arch_id = self
-            .archetypes
-            .iter()
-            .find(|arch| arch.contains_id_set(&new_set))
-            .map(|arch| arch.id)
-            .unwrap_or_else(|| {
-                let table_id = self.tables.len();
-                let arch_id = self.archetypes.len();
-                let mut component_desc = FxHashMap::default();
-                for (id, storage) in new_comp_set.iter() {
-                    component_desc.insert(*id, *storage);
-                }
-
-                self.archetypes.push(Archetype::new(
-                    arch_id,
-                    table_id,
-                    new_set,
-                    component_desc,
-                    vec![],
-                ));
-                arch_id
-            });
-
-        let mut bundle: Vec<_> = self.tables[meta.table_id]
+        let mut bundle: Vec<_> = self.tables[meta.location.table_id]
             .storage
             .iter()
-            .filter(|vec| self.archetypes[arch_id].contains_id(&vec.stored_type_id()))
+            .filter(|vec| !commands.remove.contains(&vec.stored_type_id()))
             .filter(|vec| {
                 !commands
                     .insert
                     .iter()
                     .any(|c| c.type_id == vec.stored_type_id())
             })
-            .map(|vec| vec.duplicate(meta.table_row.0).expect("valid index"))
+            .map(|vec| {
+                vec.duplicate(meta.location.table_row.0)
+                    .expect("valid index")
+            })
             .collect();
         for insert_component in commands.insert.into_iter() {
             bundle.push(insert_component.component);
         }
 
-        self.tables.push(Table::new(bundle));
+        self.remove_entity(commands.entity).unwrap();
+        let new_location = self.find_or_create_archetype(bundle);
 
-        let table_row = TableRow(self.tables[self.archetypes[arch_id].table_id].len);
-        let table_id = self.archetypes[arch_id].table_id;
-        let archetype_id = self.archetypes[arch_id].id;
-        let archetype_index = self.archetypes[arch_id].entities.len();
+        {
+            let meta = self.get_entity_mut(commands.entity).ok_or(())?;
+            meta.location = new_location;
+        }
 
-        self.remove_entity_from_table(commands.entity).unwrap();
-
-        let meta = self.get_entity_mut(commands.entity).ok_or(()).unwrap();
-
-        meta.table_row = table_row;
-        meta.table_id = table_id;
-        meta.archetype_id = archetype_id;
-        meta.archetype_index = archetype_index;
-
-        self.archetypes[arch_id]
+        let meta = self.get_entity(commands.entity).ok_or(())?;
+        self.archetypes[meta.location.archetype_id]
             .entities
-            .push((commands.entity, table_row));
+            .push((commands.entity, meta.location.table_row));
+
+        // info!("{:#?}", self);
 
         Ok(())
     }

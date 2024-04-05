@@ -1,11 +1,11 @@
 #![allow(unused)]
 
-use core::panic;
 use std::ffi::c_char;
 use std::io::Read;
 use std::time::SystemTime;
 
 use ecs::World;
+use logging::*;
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -346,7 +346,7 @@ fn win32_grab_wgl_pointers() -> (
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
-    println!("> Extension Strings: {:?}", extensions);
+    // println!("> Extension Strings: {:?}", extensions);
 
     // Now we grab some extension functions
 
@@ -563,7 +563,7 @@ fn gl_error(id: &str, wnd_data: *mut WindowData) {
                 message_log.as_mut_ptr(),
             );
             if res == 0 {
-                println!("No debug messages");
+                // println!("No debug messages");
             }
             panic!(
                 "{}: 0x{:x},\tLog: {}",
@@ -641,14 +641,12 @@ fn dyn_load_game(path: &String) -> (SystemTime, HMODULE, UpdateGameAndRender) {
         core::mem::transmute(addr.unwrap())
     };
 
-    println!("## Loading DLL: {}", game_lib.0);
-    println!("{}", path);
+    trace!("Loading DLL: {}", path);
 
     (SystemTime::now(), game_lib, update_game_and_render)
 }
 
 fn read_file(path: String) -> Vec<u8> {
-    println!("{}", path);
     let mut f = std::fs::File::open(path).unwrap();
     let metadata = f.metadata().unwrap();
     let mut buf = vec![0u8; metadata.len() as usize];
@@ -671,7 +669,7 @@ fn dyn_refresh(
     if last_refresh > last_modified {
         return None;
     } else {
-        println!("## Refreshing DLL");
+        info!("## Refreshing DLL");
     }
 
     let res = unsafe { FreeLibrary(game_lib) };
@@ -830,9 +828,10 @@ impl IXAudio2VoiceCallback_Impl for XAudioCallback {
     }
 }
 
-pub fn win32_main(log: bool, reload_path: String, world: &mut World) {
+pub fn win32_main(reload_path: String, world: &mut World) {
     // We have to create a window to set the pixel format, but then
     // we have to create a new window to actually use it?
+    trace!("Initializing OpenGL");
     let (
         extensions,
         wgl_choose_pixel_format_arb,
@@ -841,6 +840,7 @@ pub fn win32_main(log: bool, reload_path: String, world: &mut World) {
     ) = win32_grab_wgl_pointers();
 
     // Creating the actual window this time
+    trace!("Creating Window");
     let class = wide_null("RegolithHillWindowClass");
     let w_name = wide_null("Regolith Hill");
     let h_instance = win32_register_window_class(class.clone(), Some(win32_window_callback));
@@ -876,9 +876,10 @@ pub fn win32_main(log: bool, reload_path: String, world: &mut World) {
     let pixels: Vec<u32> = vec![0x000000ff; (width * height) as usize];
     let mut back_buf = BitMap::new(pixels, width as usize, height as usize);
 
-    println!(
-        "# Allocating New Buffer -- Width: {},\tHeight: {}",
-        back_buf.width, back_buf.height
+    trace!(
+        "Allocating New Buffer -- Width: {}, Height: {}",
+        back_buf.width,
+        back_buf.height
     );
 
     let hdc = unsafe { GetDC(hwnd) };
@@ -898,6 +899,7 @@ pub fn win32_main(log: bool, reload_path: String, world: &mut World) {
     unsafe { SetPixelFormat(hdc, pix_format, &pfd) };
 
     // creating the opengl context
+    trace!("Creating OpenGL Context");
     const FLAGS: c_int = WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB
         | if cfg!(debug_assertions) {
             WGL_CONTEXT_DEBUG_BIT_ARB
@@ -942,18 +944,19 @@ pub fn win32_main(log: bool, reload_path: String, world: &mut World) {
     }
 
     // audio stuffs
-    let sample_rate = 44100;
-    let channels = 2;
-    let bits_per_sample = 16;
-    let bytes_per_second = sample_rate * channels * bits_per_sample / 8;
-    let buf_bytes = 2 * bytes_per_second;
-    let mut audio_buf = vec![0u8; buf_bytes];
+    // trace!("Initializing Audio");
+    // let sample_rate = 44100;
+    // let channels = 2;
+    // let bits_per_sample = 16;
+    // let bytes_per_second = sample_rate * channels * bits_per_sample / 8;
+    // let buf_bytes = 2 * bytes_per_second;
+    // let mut audio_buf = vec![0u8; buf_bytes];
 
-    let freq = 220.0;
+    // let freq = 220.0;
 
-    for (i, b) in audio_buf.iter_mut().enumerate() {
-        *b = (i as f32 * 2.0 * 3.145 * freq / sample_rate as f32).cos() as u8;
-    }
+    // for (i, b) in audio_buf.iter_mut().enumerate() {
+    //     *b = (i as f32 * 2.0 * 3.145 * freq / sample_rate as f32).cos() as u8;
+    // }
 
     // let xaudio =
     // let (xaudio, mastering_voice, source_voice) = xaudio_init(
@@ -1029,6 +1032,7 @@ pub fn win32_main(log: bool, reload_path: String, world: &mut World) {
 
     // game loop
     let mut game_loop = true;
+    trace!("Entering Game Loop");
     while game_loop {
         // unsafe {
         //     let mut pvoicestate = XAUDIO2_VOICE_STATE::default();
@@ -1082,7 +1086,7 @@ pub fn win32_main(log: bool, reload_path: String, world: &mut World) {
                 }
 
                 if show_perf {
-                    println!(
+                    trace!(
                         "> Measured Frame Length: {},\tTarget Frame Length: {},\tLoss: {}",
                         current_frame_len,
                         target_frame_len,
@@ -1115,9 +1119,13 @@ pub fn win32_main(log: bool, reload_path: String, world: &mut World) {
                 total_frames += frames;
 
                 if show_perf {
-                    println!(
+                    trace!(
                         "< Frames {},\tDuration: {},\tExpected {} Frames: {},\tLost Frames: {}",
-                        frames, duration, frames, frames_sum, lost_frames
+                        frames,
+                        duration,
+                        frames,
+                        frames_sum,
+                        lost_frames
                     );
                 }
 
@@ -1132,7 +1140,7 @@ pub fn win32_main(log: bool, reload_path: String, world: &mut World) {
             }
         }
     }
-    println!(
+    info!(
         ">> Iterations: {},\tFPS: {},\tTotal Lost Frames: {},\tAverage: {},\tHigh:{}",
         iterations,
         total_frames / iterations,

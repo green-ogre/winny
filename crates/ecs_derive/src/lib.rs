@@ -47,11 +47,13 @@ pub fn component_impl(input: TokenStream) -> TokenStream {
     };
 
     quote! {
-        impl winny::ecs::Storage for #name {
+        impl winny::ecs::storage::Storage for #name {
             fn storage_type() -> winny::ecs::storage::StorageType {
                 winny::ecs::storage::StorageType::#storage   
             }
         }
+
+        impl winny::ecs::storage::Component for #name {}
     }
     .into()
 }
@@ -264,7 +266,7 @@ pub fn bundle_impl(input: TokenStream) -> TokenStream {
             }
 
             quote! {
-                impl crate::storage::Bundle for #name {
+                impl winny::ecs::storage::Bundle for #name {
                     fn push_storage(
                         self,
                         table: &mut winny::ecs::storage::Table
@@ -273,10 +275,21 @@ pub fn bundle_impl(input: TokenStream) -> TokenStream {
                         Ok(())
                     }
 
+                    fn push_storage_box(
+                        self: Box<Self>,
+                        table: &mut winny::ecs::storage::Table
+                        ) -> Result<(), winny::ecs::storage::IntoStorageError> {
+                        self.push_storage(table)
+                    }
+
                     fn into_storage(self) -> Vec<Box<dyn winny::ecs::storage::ComponentVec>> {
                         vec![
                             #into_storage
                         ]
+                    }
+
+                    fn into_storage_box(self: Box<Self>) -> Vec<Box<dyn winny::ecs::storage::ComponentVec>> {
+                        self.into_storage_box()
                     }
 
                     fn ids(&self) -> Vec<winny::ecs::any::TypeId>  {
@@ -360,10 +373,21 @@ pub fn bundle_impl_test(input: TokenStream) -> TokenStream {
                         Ok(())
                     }
 
+                    fn push_storage_box(
+                        self: Box<Self>,
+                        table: &mut crate::storage::Table
+                        ) -> Result<(), crate::storage::IntoStorageError> {
+                        self.push_storage(table)
+                    }
+
                     fn into_storage(self) -> Vec<Box<dyn crate::storage::ComponentVec>> {
                         vec![
                             #into_storage
                         ]
+                    }
+
+                    fn into_storage_box(self: Box<Self>) -> Vec<Box<dyn crate::storage::ComponentVec>> {
+                        self.into_storage()
                     }
 
                     fn ids(&self) -> Vec<crate::any::TypeId>  {

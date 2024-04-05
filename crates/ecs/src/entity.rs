@@ -1,4 +1,4 @@
-use crate::{any::*, TableRow};
+use crate::{any::*, Component, Storage, TableRow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Entity(usize);
@@ -29,15 +29,30 @@ impl TypeGetter for Entity {
 
 #[derive(Debug, Clone, Copy)]
 pub struct EntityMeta {
-    pub table_id: usize,
-    pub table_row: TableRow,
-    pub archetype_id: usize,
-    pub archetype_index: usize,
+    pub location: MetaLocation,
     pub generation: u32,
     pub free: bool,
 }
 
 impl EntityMeta {
+    pub fn new(location: MetaLocation) -> Self {
+        Self {
+            location,
+            generation: 0,
+            free: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MetaLocation {
+    pub table_id: usize,
+    pub table_row: TableRow,
+    pub archetype_id: usize,
+    pub archetype_index: usize,
+}
+
+impl MetaLocation {
     pub fn new(
         table_id: usize,
         table_row: TableRow,
@@ -49,8 +64,6 @@ impl EntityMeta {
             table_row,
             archetype_id,
             archetype_index,
-            generation: 0,
-            free: false,
         }
     }
 }
