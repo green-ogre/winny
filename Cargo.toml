@@ -7,10 +7,6 @@ edition = "2021"
 name = "winny"
 path = "src/lib.rs"
 
-[[bin]]
-name = "winny"
-path = "src/bin.rs"
-
 [workspace]
 members = ["crates/*"]
 

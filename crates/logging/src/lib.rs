@@ -26,6 +26,7 @@ macro_rules! error {
     };
 }
 
+#[derive(PartialEq, Eq)]
 pub enum LogLevel {
     Trace,
     Info,

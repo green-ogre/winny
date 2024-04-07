@@ -20,7 +20,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::gfx::bitmap::*;
 use crate::gl::*;
-use crate::input::*;
+use crate::platform::*;
 
 pub const WGL_DRAW_TO_WINDOW_ARB: c_int = 0x2001;
 pub const WGL_SUPPORT_OPENGL_ARB: c_int = 0x2010;

@@ -1,17 +1,18 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
+    fmt::Debug,
     marker::PhantomData,
 };
 
 use crate::{any::*, World};
 
-pub trait Resource {}
+pub trait Resource: Send {}
 
-pub trait ResourceStorage: std::fmt::Debug {
+pub trait ResourceStorage: Send + Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
-impl<T: std::fmt::Debug + TypeGetter> ResourceStorage for RefCell<T> {
+impl<T: Send + Debug + TypeGetter> ResourceStorage for RefCell<T> {
     fn as_any(&self) -> &dyn Any {
         self as &dyn Any
     }

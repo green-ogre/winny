@@ -1,13 +1,10 @@
 [package]
-name = "ecs"
+name = "hot_reload"
 version = "0.1.0"
 edition = "2021"
 
+
 [dependencies]
 logging = { path = "../logging" }
-ecs_derive = { path = "../ecs_derive" }
 
 libloading = "0.8.3"
-itertools = "0.12.1"
-dyn-clone = "1.0.17"
-fxhash = "0.2.1"

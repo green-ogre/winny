@@ -132,6 +132,24 @@ mod winny {
         // panic!("{:#?}", world);
     }
 
+    fn hello_world(_commands: Commands) {
+        println!("Hello World!");
+    }
+
+    fn goodbye_world(_commands: Commands) {
+        println!("Goodbye World!");
+    }
+
+    #[test]
+    fn systems() {
+        let mut world = World::default();
+        let mut scheduler = SystemScheduler::new();
+        scheduler.add_systems(Schedule::StartUp, (hello_world, goodbye_world));
+
+        scheduler.startup(&mut world);
+        panic!();
+    }
+
     // #[test]
     // fn entities() {
     //     let mut world = World::default();

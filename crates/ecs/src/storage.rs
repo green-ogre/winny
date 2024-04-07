@@ -142,7 +142,7 @@ impl Archetype {
     }
 }
 
-pub trait Component: 'static + DynClone {}
+pub trait Component: 'static + DynClone + Send {}
 dyn_clone::clone_trait_object!(Component);
 
 pub trait ComponentStorageType {
@@ -183,7 +183,7 @@ impl ComponentSet {
     }
 }
 
-pub trait ComponentVec: std::fmt::Debug + DynClone {
+pub trait ComponentVec: Send + Debug + DynClone {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn stored_type_id(&self) -> TypeId;
@@ -228,7 +228,7 @@ impl<T: TypeGetter> TypeGetter for VecDeque<T> {
     }
 }
 
-impl<T: Storage + TypeGetter + std::fmt::Debug + Clone> ComponentVec for RefCell<Vec<T>> {
+impl<T: Send + Storage + TypeGetter + Debug + Clone> ComponentVec for RefCell<Vec<T>> {
     fn as_any(&self) -> &dyn Any {
         self as &dyn Any
     }
@@ -344,7 +344,7 @@ impl Bundle for Vec<Box<dyn ComponentVec>> {
 macro_rules! bundle {
     ($($t:ident)*) => {
         #[allow(non_snake_case)]
-        impl<$($t: std::fmt::Debug + Storage + Component + ComponentStorageType + TypeGetter + Clone + 'static),*> Bundle for ($($t,)*) {
+        impl<$($t: Send + Debug + Storage + Component + ComponentStorageType + TypeGetter + Clone + 'static),*> Bundle for ($($t,)*) {
             fn into_storage(self) -> Vec<Box<dyn ComponentVec>>  {
                let ($($t,)*) = self;
                 vec![

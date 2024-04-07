@@ -7,15 +7,15 @@ use std::{
 
 use crate::{any::*, World};
 
-pub trait Event {}
+pub trait Event: Send {}
 
-pub trait EventQueue: std::fmt::Debug {
+pub trait EventQueue: Send + Debug {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn flush(&mut self);
 }
 
-impl<T: TypeGetter + Debug> EventQueue for RefCell<VecDeque<T>> {
+impl<T: Send + TypeGetter + Debug> EventQueue for RefCell<VecDeque<T>> {
     fn as_any(&self) -> &dyn Any {
         self as &dyn Any
     }
