@@ -23,7 +23,7 @@ mod winny {
 
     use super::*;
 
-    #[derive(Event, Debug, TestTypeGetter)]
+    // #[derive(Event, Debug, TestTypeGetter)]
     struct TestEvent(usize);
 
     #[derive(Resource, TestTypeGetter, Debug, Default, PartialEq, Eq)]
@@ -132,34 +132,35 @@ mod winny {
         query_single: Query<Health>,
         entity_q: Query<(Entity, Weight)>,
     ) {
-        println!("I am a query! {:#?}", query);
+        println!("I am a query!");
+        // println!("I am a query! {:#?}", query);
 
-        println!();
-        println!();
+        // println!();
+        // println!();
 
-        for (health, weight) in query.iter() {
-            println!("{:?}", health);
-            println!("{:?}", weight);
-        }
+        // for (health, weight) in query.iter() {
+        //     println!("{:?}", health);
+        //     println!("{:?}", weight);
+        // }
 
-        println!();
-        println!();
+        // println!();
+        // println!();
 
-        for health in query_single.iter() {
-            println!("{:?}", health);
-        }
+        // for health in query_single.iter() {
+        //     println!("{:?}", health);
+        // }
 
-        println!();
-        println!();
+        // println!();
+        // println!();
 
-        // TODO: looks for archetypes with TypeId(Entity) in their component set
-        for (entity, weight) in entity_q.iter() {
-            println!("{:?}", entity);
-            println!("{:?}", weight);
-        }
+        // // TODO: looks for archetypes with TypeId(Entity) in their component set
+        // for (entity, weight) in entity_q.iter() {
+        //     println!("{:?}", entity);
+        //     println!("{:?}", weight);
+        // }
 
-        println!();
-        println!();
+        // println!();
+        // println!();
     }
 
     #[derive(Debug, TestTypeGetter)]
@@ -167,10 +168,11 @@ mod winny {
     impl Resource for Info {}
 
     fn i_am_a_resource(res: Res<Info>) {
-        println!("I am a resource! {:#?}", res);
+        println!("I am a resource!");
+        // println!("I am a resource! {:#?}", res);
 
-        let yeah = res.as_ref();
-        println!("{:?}", yeah);
+        //let yeah = res.as_ref();
+        //println!("{:?}", yeah);
     }
 
     fn goodbye_world(_commands: Commands) {
@@ -188,10 +190,11 @@ mod winny {
         world.spawn((Health(10), Weight(10)));
         world.spawn((Health(2),));
 
-        println!("{:#?}", world);
+        // println!("{:#?}", world);
 
-        scheduler.startup(&mut world);
-        scheduler.exit(&mut world);
+        scheduler.startup(&world);
+        scheduler.run(&world);
+        scheduler.exit(&world);
         panic!();
     }
 }

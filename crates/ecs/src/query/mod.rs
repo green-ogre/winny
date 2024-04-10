@@ -2,6 +2,7 @@ pub mod entity_query;
 pub mod filter;
 mod impl_macros;
 
+use ecs_derive::all_tuples;
 pub use entity_query::*;
 pub use filter::*;
 
@@ -23,13 +24,13 @@ use crate::{
     TableId, TableRow, TypeGetter, TypeId, World,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum AccessType {
     Immutable,
     Mutable,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct ComponentAccess {
     access_type: AccessType,
     id: TypeId,
@@ -92,16 +93,7 @@ macro_rules! impl_query_data {
     }
 }
 
-impl_query_data!(A);
-impl_query_data!(A, B);
-impl_query_data!(A, B, C);
-impl_query_data!(A, B, C, D);
-impl_query_data!(A, B, C, D, E);
-impl_query_data!(A, B, C, D, E, G);
-impl_query_data!(A, B, C, D, E, G, H);
-impl_query_data!(A, B, C, D, E, G, H, I);
-impl_query_data!(A, B, C, D, E, G, H, I, J);
-impl_query_data!(A, B, C, D, E, G, H, I, J, K);
+all_tuples!(impl_query_data, 1, 10, D);
 
 impl<T: Component + TypeGetter> QueryData for T {
     type Item<'d> = &'d T;
@@ -174,6 +166,24 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
         Self::new(storages)
     }
 
+    pub fn from_world_unsafe<'w>(world: UnsafeWorldCell<'w>) -> Self {
+        let storages = unsafe {
+            world
+                .read_only()
+                .archetypes
+                .iter()
+                .filter(|arch| arch.contains_query::<T>())
+                .filter(|arch| F::condition(arch))
+                .map(|arch| StorageId {
+                    table_id: arch.table_id,
+                    archetype_id: arch.id,
+                })
+                .collect()
+        };
+
+        Self::new(storages)
+    }
+
     pub fn new(storages: Vec<StorageId>) -> Self {
         Self {
             storages,
@@ -181,6 +191,10 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
             query: PhantomData,
             filter: PhantomData,
         }
+    }
+
+    pub fn component_access(&self) -> Vec<ComponentAccess> {
+        self.component_access.clone()
     }
 
     pub fn new_iter<'w>(&self, world: &'w UnsafeWorldCell<'w>) -> QueryIter<'_, T, F> {
@@ -288,7 +302,7 @@ impl<'s, T: QueryData, F> Iterator for QueryIter<'s, T, F> {
 
 pub struct Query<'w, 's, T, F = ()> {
     world: UnsafeWorldCell<'w>,
-    state: &'s QueryState<T, F>,
+    pub state: &'s QueryState<T, F>,
 }
 
 impl<'w, 's, T, F> Debug for Query<'w, 's, T, F> {

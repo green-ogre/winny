@@ -5,16 +5,20 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use ecs_derive::all_tuples;
 use libloading::{Error, Symbol};
 use logging::{error, trace};
 
 use crate::{
-    unsafe_world::UnsafeWorldCell, Commands, Filter, Query, QueryData, QueryState, Res, ResMut,
-    Resource, TypeGetter, TypeId, World,
+    unsafe_world::UnsafeWorldCell, AccessType, Commands, ComponentAccess, Filter, Query, QueryData,
+    QueryState, Res, ResMut, Resource, TypeGetter, TypeId, World,
 };
 
 pub type StoredSystem = Box<dyn System>;
+// A vec of systems that are run in parallel
 pub type SystemSet = Vec<StoredSystem>;
+// A vec of systems that are NOT run in parallel
+pub type ChainedSystemSet = Vec<StoredSystem>;
 
 pub struct Scheduler {
     startup: Vec<SystemSet>,
@@ -35,7 +39,7 @@ impl Scheduler {
         }
     }
 
-    pub fn add_system<M, S: IntoSystemSet<M>>(&mut self, schedule: Schedule, system: S) {
+    pub fn add_systems<M, S: IntoSystemStorage<M>>(&mut self, schedule: Schedule, systems: S) {
         let storage = match schedule {
             Schedule::StartUp => &mut self.startup,
             Schedule::PreUpdate => &mut self.pre_update,
@@ -44,23 +48,11 @@ impl Scheduler {
             Schedule::Exit => &mut self.exit,
         };
 
-        storage.push(system.set());
-    }
-
-    pub fn add_systems<M, S: IntoSystemSet<M>>(&mut self, schedule: Schedule, systems: S) {
-        let storage = match schedule {
-            Schedule::StartUp => &mut self.startup,
-            Schedule::PreUpdate => &mut self.pre_update,
-            Schedule::Update => &mut self.update,
-            Schedule::PostUpdate => &mut self.post_update,
-            Schedule::Exit => &mut self.exit,
-        };
-
-        storage.push(systems.set());
+        storage.push(systems.get());
     }
 
     fn run_schedule(&mut self, schedule: Schedule, world: &World) {
-        let storage = match schedule {
+        let schedule = match schedule {
             Schedule::StartUp => &mut self.startup,
             Schedule::PreUpdate => &mut self.pre_update,
             Schedule::Update => &mut self.update,
@@ -68,10 +60,17 @@ impl Scheduler {
             Schedule::Exit => &mut self.exit,
         };
 
-        for set in storage.iter_mut() {
-            for system in set.iter_mut() {
-                system.run_unsafe(world);
-            }
+        for set in schedule.iter_mut() {
+            std::thread::scope(|s| {
+                for system in set.iter_mut() {
+                    let world = unsafe { world.as_unsafe_world() };
+                    let f = system.as_mut();
+
+                    s.spawn(move || {
+                        f.run_unsafe(world);
+                    });
+                }
+            })
         }
     }
 
@@ -102,7 +101,8 @@ pub trait SystemParam {
     type State;
     type Item<'world, 'state>;
 
-    fn init_state(world: &World) -> Self::State;
+    fn access() -> Vec<ComponentAccess>;
+    fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State;
     fn to_param<'w, 's>(
         state: &'s mut Self::State,
         world: UnsafeWorldCell<'w>,
@@ -113,7 +113,11 @@ impl SystemParam for Commands {
     type State = TypeId;
     type Item<'world, 'state> = Commands;
 
-    fn init_state(world: &World) -> Self::State {
+    fn access() -> Vec<ComponentAccess> {
+        vec![]
+    }
+
+    fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
         TypeId::new(0)
     }
 
@@ -129,7 +133,11 @@ impl<'a, T: 'static + Resource + TypeGetter> SystemParam for Res<'a, T> {
     type State = TypeId;
     type Item<'world, 'state> = Res<'state, T>;
 
-    fn init_state(world: &World) -> Self::State {
+    fn access() -> Vec<ComponentAccess> {
+        vec![ComponentAccess::new::<T>(AccessType::Immutable)]
+    }
+
+    fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
         T::type_id()
     }
 
@@ -145,8 +153,12 @@ impl<T: 'static + QueryData, F: 'static + Filter> SystemParam for Query<'_, '_, 
     type State = QueryState<T, F>;
     type Item<'world, 'state> = Query<'world, 'state, T, F>;
 
-    fn init_state(world: &World) -> Self::State {
-        QueryState::from_world(world)
+    fn access() -> Vec<ComponentAccess> {
+        T::set_access()
+    }
+
+    fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
+        QueryState::from_world_unsafe(world)
     }
 
     fn to_param<'w, 's>(
@@ -158,11 +170,16 @@ impl<T: 'static + QueryData, F: 'static + Filter> SystemParam for Query<'_, '_, 
 }
 
 pub trait System: Send + Sync {
-    fn run_unsafe(&mut self, world: &World);
+    fn access(&self) -> Vec<ComponentAccess>;
+    fn run_unsafe<'w>(&mut self, world: UnsafeWorldCell<'w>);
 }
 
 pub trait SystemParamFunc<Marker>: 'static + Send + Sync {
     type Param: SystemParam;
+
+    fn access() -> Vec<ComponentAccess> {
+        Self::Param::access()
+    }
 
     fn run<'w, 's>(&mut self, params: <Self::Param as SystemParam>::Item<'w, 's>);
 }
@@ -195,12 +212,14 @@ where
     Marker: 'static,
     F: SystemParamFunc<Marker>,
 {
-    fn run_unsafe(&mut self, world: &World) {
+    fn access(&self) -> Vec<ComponentAccess> {
+        self.f.access()
+    }
+
+    fn run_unsafe<'w>(&mut self, world: UnsafeWorldCell<'w>) {
         unsafe {
-            self.f.run(F::Param::to_param(
-                &mut F::Param::init_state(world),
-                world.as_unsafe_world(),
-            ))
+            self.f
+                .run(F::Param::to_param(&mut F::Param::init_state(world), world))
         };
     }
 }
@@ -239,50 +258,7 @@ macro_rules! impl_system {
     }
 }
 
-impl_system!(A);
-impl_system!(A, B);
-impl_system!(A, B, C);
-// impl_system!(A, B, C, D);
-// impl_system!(A, B, C, D, E);
-// impl_system!(A, B, C, D, E, G);
-// impl_system!(A, B, C, D, E, G, H);
-// impl_system!(A, B, C, D, E, G, H, I);
-// impl_system!(A, B, C, D, E, G, H, I, J);
-// impl_system!(A, B, C, D, E, G, H, I, J, K);
-
-// macro_rules! impl_into_system {
-//     (
-//         $($params:ident),*
-//     ) => {
-//         impl<F: 'static + Sync + Send, $($params: 'static + SystemParam),*> IntoSystem<($($params,)*)> for F
-//             where
-//                 for<'a, 'b> &'a mut F:
-//                     FnMut( $($params),* ) +
-//                     FnMut( $(<$params as SystemParam>::Item<'b>),* ),
-//                     F: Send
-//         {
-//             type Sys = SystemFunc<($($params,)*), Self>;
-//
-//             fn into_system(self) -> Self::Sys {
-//                 SystemFunc {
-//                     f: self,
-//                     _phantom: Default::default(),
-//                 }
-//             }
-//         }
-//     }
-// }
-//
-// impl_into_system!(A);
-// impl_into_system!(A, B);
-// impl_into_system!(A, B, C);
-// impl_into_system!(A, B, C, D);
-// impl_into_system!(A, B, C, D, E);
-// impl_into_system!(A, B, C, D, E, G);
-// impl_into_system!(A, B, C, D, E, G, H);
-// impl_into_system!(A, B, C, D, E, G, H, I);
-// impl_into_system!(A, B, C, D, E, G, H, I, J);
-// impl_into_system!(A, B, C, D, E, G, H, I, J, K);
+all_tuples!(impl_system, 1, 10, P);
 
 macro_rules! expr {
     ($x:expr) => {
@@ -303,7 +279,16 @@ macro_rules! impl_system_param {
             type State = ($($params::State,)*);
             type Item<'w, 's> = ($($params::Item<'w, 's>,)*);
 
-            fn init_state(world: &World) -> Self::State {
+            fn access() -> Vec<ComponentAccess> {
+                let mut vec = vec![];
+                $(
+                    vec.append(&mut $params::access());
+                )*
+
+                vec
+            }
+
+            fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
                 (
                     $($params::init_state(world),)*
                 )
@@ -321,20 +306,26 @@ macro_rules! impl_system_param {
 impl_system_param!((A, 0));
 impl_system_param!((A, 0)(B, 1));
 impl_system_param!((A, 0)(B, 1)(C, 2));
+impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3));
+impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4));
+impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5));
+impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6));
+impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7));
+impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8));
+impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8)(K, 9));
 
-pub trait IntoSystemSet<M> {
-    fn set(self) -> SystemSet;
+pub trait IntoSystemStorage<M> {
+    fn get(self) -> Vec<Box<dyn System>>;
 }
 
 macro_rules! impl_into_system_tuple {
-    ($(($t:ident, $p:ident))*) => {
+    ($(($t:ident, $p:ident)),*) => {
         #[allow(non_snake_case)]
-        impl<$($t: 'static + Send + Sync, $p: 'static),*> IntoSystemSet<($($p,)*)> for ($($t,)*)
+        impl<$($t: 'static + Send + Sync, $p: 'static),*> IntoSystemStorage<($($p,)*)> for ($($t,)*)
             where
                 $($t: SystemParamFunc<$p>,)*
                 {
-                    fn set(self) -> SystemSet
-                    {
+                    fn get(self) -> Vec<Box<dyn System>> {
                         let ($($t,)*) = self;
 
                         vec![
@@ -342,13 +333,7 @@ macro_rules! impl_into_system_tuple {
                         ]
                     }
                 }
-    };
-
-    ($(($t:ident, $p:ident)),*, $next:ident) => {
-        impl_into_system_tuple!($(($t, $p)),*);
-        impl_into_system_tuple!($(($t, $p)),*, $next);
     }
 }
 
-impl_into_system_tuple!((A, B));
-impl_into_system_tuple!((A, B)(C, D));
+all_tuples!(impl_into_system_tuple, 1, 10, F, P);

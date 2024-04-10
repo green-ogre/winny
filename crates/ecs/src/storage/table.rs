@@ -146,6 +146,9 @@ pub struct Tables {
     descriptor_index: MutableSparseSet<Box<[ComponentDescription]>, TableId>,
 }
 
+unsafe impl Sync for Tables {}
+unsafe impl Send for Tables {}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TableId(pub usize);
 impl SparseHash for TableId {}

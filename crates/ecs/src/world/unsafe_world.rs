@@ -5,6 +5,9 @@ use crate::{Res, ResMut, Resource, TypeGetter, TypeName, World};
 #[derive(Clone, Copy)]
 pub struct UnsafeWorldCell<'w>(*mut World, PhantomData<&'w World>);
 
+unsafe impl<'w> Send for UnsafeWorldCell<'w> {}
+unsafe impl<'w> Sync for UnsafeWorldCell<'w> {}
+
 impl<'w> UnsafeWorldCell<'w> {
     pub fn new(world: &World) -> Self {
         Self(world as *const World as *mut World, PhantomData)

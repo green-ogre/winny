@@ -21,8 +21,8 @@ use itertools::Itertools;
 use logging::*;
 
 use crate::{
-    Any, Archetype, Component, ComponentSet, Event, EventQueue, Res, ResMut, Resource, Resources,
-    Table, TypeGetter, TypeId, TypeName,
+    Any, Archetype, Component, ComponentSet, Res, ResMut, Resource, Resources, Table, TypeGetter,
+    TypeId, TypeName,
 };
 
 use crate::entity::*;
@@ -45,7 +45,7 @@ pub struct World {
     pub free_entities: Vec<u32>,
 
     pub resources: Resources,
-    pub events: Vec<Box<dyn EventQueue>>,
+    // pub events: Vec<Box<dyn EventQueue>>,
 }
 
 impl Default for World {
@@ -57,7 +57,7 @@ impl Default for World {
             tables: Tables::new(),
 
             resources: Resources::new(),
-            events: Vec::new(),
+            // events: Vec::new(),
         }
     }
 }
@@ -279,10 +279,10 @@ impl World {
         unsafe { self.as_unsafe_world().insert_resource(resource) }
     }
 
-    pub fn register_event<T: Debug + Event + TypeGetter>(&mut self) {
-        let new_event: RefCell<VecDeque<T>> = RefCell::new(VecDeque::new());
-        self.events.push(Box::new(new_event));
-    }
+    // pub fn register_event<T: Debug + Event + TypeGetter>(&mut self) {
+    // let new_event: RefCell<VecDeque<T>> = RefCell::new(VecDeque::new());
+    // self.events.push(Box::new(new_event));
+    // }
 
     pub fn resource<R: Resource + TypeGetter>(&self) -> Res<'_, R> {
         Res::new(unsafe { self.as_unsafe_world() })
@@ -292,9 +292,9 @@ impl World {
         ResMut::new(unsafe { self.as_unsafe_world() })
     }
 
-    pub fn flush_events(&mut self) {
-        for event_queue in self.events.iter_mut() {
-            event_queue.flush();
-        }
-    }
+    // pub fn flush_events(&mut self) {
+    //     for event_queue in self.events.iter_mut() {
+    //         event_queue.flush();
+    //     }
+    // }
 }

@@ -75,6 +75,9 @@ pub struct Resources {
     resources: FxHashMap<TypeId, Box<dyn ResourceData>>,
 }
 
+unsafe impl Sync for Resources {}
+unsafe impl Send for Resources {}
+
 pub trait ResourceData: Debug {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
