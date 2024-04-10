@@ -49,6 +49,14 @@ impl Scheduler {
         };
 
         storage.push(systems.get());
+        for set in storage.iter() {
+            for system in set.iter() {
+                // TODO: filter:
+                //      - entities
+                //      - empty sets
+                println!("{:#?}", system.access());
+            }
+        }
     }
 
     fn run_schedule(&mut self, schedule: Schedule, world: &World) {
@@ -213,7 +221,7 @@ where
     F: SystemParamFunc<Marker>,
 {
     fn access(&self) -> Vec<ComponentAccess> {
-        self.f.access()
+        F::access()
     }
 
     fn run_unsafe<'w>(&mut self, world: UnsafeWorldCell<'w>) {
