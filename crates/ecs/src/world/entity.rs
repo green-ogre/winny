@@ -1,4 +1,4 @@
-use crate::{any::*, Component, Storage, TableRow};
+use crate::{any::*, ArchId, Component, Storage, TableId, TableRow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Entity(usize);
@@ -46,17 +46,17 @@ impl EntityMeta {
 
 #[derive(Debug, Clone, Copy)]
 pub struct MetaLocation {
-    pub table_id: usize,
+    pub table_id: TableId,
     pub table_row: TableRow,
-    pub archetype_id: usize,
+    pub archetype_id: ArchId,
     pub archetype_index: usize,
 }
 
 impl MetaLocation {
     pub fn new(
-        table_id: usize,
+        table_id: TableId,
         table_row: TableRow,
-        archetype_id: usize,
+        archetype_id: ArchId,
         archetype_index: usize,
     ) -> Self {
         Self {

@@ -2,34 +2,44 @@ use super::*;
 
 #[derive(Debug)]
 pub struct NewEntityCommands {
-    data: Box<dyn Bundle>,
+    data: Table,
 }
 
 impl NewEntityCommands {
     pub fn new<T: Bundle + 'static>(bundle: T) -> Self {
         Self {
-            data: Box::new(bundle),
+            data: Table::from_bundle(bundle),
         }
     }
 
     pub fn commit(self, world: &mut World) {
-        world.spawn_box(self.data);
+        // world.spawn_table(self.data);
     }
 }
 
 #[derive(Debug)]
-struct InsertComponent {
-    pub component: Box<dyn ComponentVec>,
+pub struct InsertComponent {
+    pub component: Box<DumbVec>,
     pub type_id: TypeId,
     pub storage_type: StorageType,
 }
 
 impl InsertComponent {
-    pub fn new<T: Component + TypeGetter + Storage + Clone + Debug>(component: T) -> Self {
+    pub fn new<T: Send + Component + TypeGetter + Storage + Clone + Debug>(component: T) -> Self {
+        let type_id = component.type_id();
+        let storage_type = component.storage_type();
+
+        let mut c = Box::new(DumbVec::new(
+            std::alloc::Layout::new::<T>(),
+            1,
+            new_dumb_drop::<T>(),
+        ));
+        c.push(component);
+
         Self {
-            type_id: component.type_id(),
-            storage_type: component.storage_type(),
-            component: Box::new(RefCell::new(vec![component])),
+            type_id,
+            storage_type,
+            component: c,
         }
     }
 }
@@ -52,7 +62,7 @@ impl EntityCommands {
         }
     }
 
-    pub fn insert<T: Component + TypeGetter + Storage + Debug + Clone>(
+    pub fn insert<T: Send + Component + TypeGetter + Storage + Debug + Clone>(
         &mut self,
         component: T,
     ) -> &mut Self {
