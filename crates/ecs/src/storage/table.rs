@@ -9,6 +9,14 @@ pub struct Column {
     storage: DumbVec,
 }
 
+// impl Debug for Column {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         f.debug_struct("Column")
+//             .field("storage", &self.storage.as_slice_unchecked())
+//             .finish()
+//     }
+// }
+
 impl Column {
     pub fn new(desc: ComponentDescription) -> Self {
         Self {
@@ -20,8 +28,14 @@ impl Column {
         self.storage.len()
     }
 
-    pub fn swap_remove(&mut self, row: TableRow) {
-        self.storage.swap_remove(row.0);
+    pub fn swap_remove(&mut self, row: TableRow) -> Result<(), ()> {
+        if self.len() <= row.0 {
+            return Err(());
+        }
+
+        self.storage.swap_remove_drop_unchecked(row.0);
+
+        Ok(())
     }
 
     pub unsafe fn get_row(&self, row: TableRow) -> NonNull<u8> {
@@ -238,7 +252,7 @@ impl Table {
             .as_ref()
     }
 
-    pub unsafe fn get_mut<T: TypeGetter>(&self, row: TableRow) -> &mut T {
+    pub unsafe fn get_entity_mut<T: TypeGetter>(&self, row: TableRow) -> &mut T {
         self.storage
             .get_value(&T::type_id())
             .get_row(row)

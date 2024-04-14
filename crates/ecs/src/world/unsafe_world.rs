@@ -17,6 +17,10 @@ impl<'w> UnsafeWorldCell<'w> {
         &*self.0 as &World
     }
 
+    pub unsafe fn read_and_write<'a>(&self) -> &'a mut World {
+        &mut *self.0 as &mut World
+    }
+
     unsafe fn world(&self) -> &World {
         &*self.0 as &World
     }

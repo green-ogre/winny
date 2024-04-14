@@ -54,6 +54,12 @@ impl<'a, T: TypeGetter + Resource> ResMut<'a, T> {
             value: unsafe { &mut *world.resource_mut::<T>() },
         }
     }
+
+    pub fn from_ref_mut(res: *mut T) -> Self {
+        Self {
+            value: unsafe { &mut *res },
+        }
+    }
 }
 
 impl<'a, T: Resource + TypeGetter> AsRef<T> for Res<'a, T> {

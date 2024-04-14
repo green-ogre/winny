@@ -6,7 +6,7 @@ use crate::{ComponentStorageType, SparseHash};
 pub struct TypeId(u64);
 impl SparseHash for TypeId {}
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct TypeName(&'static str);
 
 pub const ENTITY: TypeId = TypeId(0);

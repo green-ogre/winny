@@ -4,21 +4,19 @@ pub mod prelude;
 
 pub mod gfx;
 mod gl;
+pub mod math;
 pub mod platform;
 
 use std::{ffi::OsString, path::PathBuf};
 
-use ecs::{
-    any::TypeGetter, Event, Resource, Schedule, Scheduler, StartUpSystem, SystemBundle, World,
-};
+use ecs::{any::TypeGetter, Event, IntoSystemStorage, Resource, Schedule, Scheduler, World};
 use logging::trace;
-use prelude::LinkedLib;
+use prelude::KeyInput;
 
 pub struct App {
     world: World,
     scheduler: Scheduler,
     target_fps: Option<f64>,
-    log_perf: bool,
 }
 
 impl Default for App {
@@ -27,7 +25,6 @@ impl Default for App {
             world: World::default(),
             scheduler: Scheduler::new(),
             target_fps: None,
-            log_perf: false,
         }
     }
 }
@@ -72,12 +69,14 @@ impl App {
         self
     }
 
-    pub fn register_event<E: std::fmt::Debug + Event + TypeGetter>(&mut self) -> &mut Self {
+    pub fn register_event<E: std::fmt::Debug + ecs::events::Event + TypeGetter>(
+        &mut self,
+    ) -> &mut Self {
         self.world.register_event::<E>();
         self
     }
 
-    pub fn add_systems<M, B: SystemBundle<M>>(
+    pub fn add_systems<M, B: IntoSystemStorage<M>>(
         &mut self,
         schedule: Schedule,
         systems: B,
@@ -91,17 +90,8 @@ impl App {
         self
     }
 
-    pub fn log_perf(&mut self) -> &mut Self {
-        self.log_perf = true;
-        self
-    }
-
-    pub fn run(&mut self) {
-        platform::main_loop(
-            &mut self.scheduler,
-            &mut self.world,
-            self.target_fps,
-            self.log_perf,
-        );
+    // TODO: make this sync
+    pub async fn run(&mut self) {
+        platform::game_loop(&mut self.scheduler, &mut self.world, None, self.target_fps).await;
     }
 }

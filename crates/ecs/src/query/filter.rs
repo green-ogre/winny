@@ -2,6 +2,7 @@ use super::*;
 
 pub trait Filter {
     fn condition(arch: &Archetype) -> bool;
+    fn set_access() -> Vec<ComponentAccessFilter>;
 }
 
 pub struct With<T>(PhantomData<T>);
@@ -12,11 +13,19 @@ impl<T: TypeGetter> Filter for With<T> {
     fn condition(arch: &Archetype) -> bool {
         arch.contains::<T>()
     }
+
+    fn set_access() -> Vec<ComponentAccessFilter> {
+        vec![ComponentAccessFilter::new::<T>(AccessFilter::With)]
+    }
 }
 
 impl<T: TypeGetter> Filter for Without<T> {
     fn condition(arch: &Archetype) -> bool {
         !arch.contains::<T>()
+    }
+
+    fn set_access() -> Vec<ComponentAccessFilter> {
+        vec![ComponentAccessFilter::new::<T>(AccessFilter::Without)]
     }
 }
 
@@ -24,66 +33,57 @@ impl<T: TypeGetter> Filter for Or<T> {
     fn condition(arch: &Archetype) -> bool {
         arch.contains::<T>()
     }
+
+    fn set_access() -> Vec<ComponentAccessFilter> {
+        vec![ComponentAccessFilter::new::<T>(AccessFilter::Or)]
+    }
 }
 
 impl Filter for () {
     fn condition(_: &Archetype) -> bool {
         true
     }
+
+    fn set_access() -> Vec<ComponentAccessFilter> {
+        vec![]
+    }
 }
 
 macro_rules! or_expand {
-    ($($t:ident)*) => {
+    ($($t:ident),*) => {
         impl<$($t: Filter),*> Filter for Or<($($t,)*)> {
             fn condition(arch: &Archetype) -> bool {
                 $($t::condition(arch))||*
             }
-        }
-    };
 
-    ($(($t:ident)),*, $next:ident) => {
-        filter_expand!($(($t)),*);
-        filter_expand!($(($t)),*, $next);
+            fn set_access() -> Vec<ComponentAccessFilter> {
+                let mut access = vec![];
+                $(access.append(
+                        &mut $t::set_access()
+                        );
+                    )*
+                access
+            }
+        }
     }
 }
 
-or_expand!(A);
-or_expand!(A B);
-or_expand!(A B C);
-or_expand!(A B C D);
-or_expand!(A B C D E);
-or_expand!(A B C D E F);
-or_expand!(A B C D E F G);
-or_expand!(A B C D E F G H);
-or_expand!(A B C D E F G H I);
-or_expand!(A B C D E F G H I J);
-or_expand!(A B C D E F G H I J K);
-or_expand!(A B C D E F G H I J K L);
+all_tuples!(or_expand, 1, 10, O);
 
 macro_rules! filter_expand {
-    ($($t:ident)*) => {
+        ($($t:ident),*) => {
         impl<$($t: Filter),*> Filter for ($($t,)*) {
             fn condition(arch: &Archetype) -> bool {
                 $($t::condition(arch))&&*
             }
-        }
-    };
 
-    ($(($t:ident)),*, $next:ident) => {
-        filter_expand!($(($t)),*);
-        filter_expand!($(($t)),*, $next);
+            fn set_access() -> Vec<ComponentAccessFilter> {
+                let mut access = vec![];
+                $(access.append(&mut $t::set_access());)*
+                access
+            }
+        }
     }
 }
 
-filter_expand!(A);
-filter_expand!(A B);
-filter_expand!(A B C);
-filter_expand!(A B C D);
-filter_expand!(A B C D E);
-filter_expand!(A B C D E F);
-filter_expand!(A B C D E F G);
-filter_expand!(A B C D E F G H);
-filter_expand!(A B C D E F G H I);
-filter_expand!(A B C D E F G H I J);
-filter_expand!(A B C D E F G H I J K);
-filter_expand!(A B C D E F G H I J K L);
+all_tuples!(filter_expand, 1, 10, F);

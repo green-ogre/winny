@@ -5,107 +5,141 @@ use std::{
     marker::PhantomData,
 };
 
-use crate::{any::*, World};
+use crate::{
+    any::*, new_dumb_drop, unsafe_world::UnsafeWorldCell, world, DumbVec, MutableSparseSet, World,
+};
 
-// pub trait Event: Send {}
+pub trait Event: Send + Sync {}
 
-// pub trait EventQueue: Sync + Send + Debug {
-//     fn as_any(&self) -> &dyn Any;
-//     fn as_any_mut(&mut self) -> &mut dyn Any;
-//     fn flush(&mut self);
-// }
-//
-// impl<T: Send + TypeGetter + Debug> EventQueue for RefCell<VecDeque<T>> {
-//     fn as_any(&self) -> &dyn Any {
-//         self as &dyn Any
-//     }
-//
-//     fn as_any_mut(&mut self) -> &mut dyn Any {
-//         self as &mut dyn Any
-//     }
-//
-//     fn flush(&mut self) {
-//         let _ = self.replace(VecDeque::new());
-//     }
-// }
-//
-// pub trait RecieveWorldEvents {
-//     type Output;
-//
-//     fn read(self) -> Self::Output;
-// }
-//
-// pub trait SendWorldEvents {
-//     fn send<U: Event + TypeGetter>(&mut self, event: U);
-// }
-//
-// pub struct EventWriter<'a, T> {
-//     world: &'a World,
-//     event_type: PhantomData<T>,
-// }
-//
-// impl<'a, T: Event + TypeGetter> std::fmt::Debug for EventWriter<'a, T> {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         f.write_fmt(format_args!("EventWriter: {}", T::type_name().as_string()))
-//     }
-// }
-//
-// impl<'a, T> EventWriter<'a, T> {
-//     pub fn new(world: &'a World) -> Self {
-//         return Self {
-//             world,
-//             event_type: PhantomData,
-//         };
-//     }
-// }
-//
-// impl<'b, T: Event + TypeGetter> SendWorldEvents for EventWriter<'b, T> {
-//     fn send<U: Event + TypeGetter>(&mut self, event: U) {
-//         for event_vec in self.world.events.iter() {
-//             if let Some(event_vec) = event_vec.as_any().downcast_ref::<RefCell<VecDeque<U>>>() {
-//                 event_vec.borrow_mut().push_back(event);
-//                 return;
-//             }
-//         }
-//
-//         panic!(
-//             "Event not registered: {}",
-//             std::any::type_name::<dyn Event>()
-//         );
-//     }
-// }
-//
-// pub struct EventReader<'a, T> {
-//     world: &'a World,
-//     event_type: PhantomData<T>,
-// }
-//
-// impl<'a, T: Event + TypeGetter> std::fmt::Debug for EventReader<'a, T> {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         f.write_fmt(format_args!("EventReader: {}", T::type_name().as_string()))
-//     }
-// }
-//
-// impl<'a, T> EventReader<'a, T> {
-//     pub fn new(world: &'a World) -> Self {
-//         return Self {
-//             world,
-//             event_type: PhantomData,
-//         };
-//     }
-// }
-//
-// impl<'b, T: Event + TypeGetter> RecieveWorldEvents for EventReader<'b, T> {
-//     type Output = RefMut<'b, VecDeque<T>>;
-//
-//     fn read(self) -> Self::Output {
-//         for event_vec in self.world.events.iter() {
-//             if let Some(event_vec) = event_vec.as_any().downcast_ref::<RefCell<VecDeque<T>>>() {
-//                 // *self.drain.borrow_mut() = event_vec.borrow_mut().drain(..);
-//                 return event_vec.borrow_mut();
-//             }
-//         }
-//
-//         panic!("Event not registered: {}", std::any::type_name::<T>());
-//     }
-// }
+#[derive(Debug)]
+pub struct Events {
+    events: MutableSparseSet<TypeId, EventQueue>,
+}
+
+unsafe impl Sync for Events {}
+unsafe impl Send for Events {}
+
+impl Events {
+    pub fn new() -> Self {
+        Self {
+            events: MutableSparseSet::new(),
+        }
+    }
+
+    pub fn insert<E: Event + TypeGetter>(&mut self) {
+        self.events.insert(E::type_id(), EventQueue::new::<E>());
+    }
+
+    pub fn queue<E: Event + TypeGetter>(&self) -> Option<&EventQueue> {
+        self.events.get_value(&E::type_id())
+    }
+
+    pub fn queue_mut<E: Event + TypeGetter>(&mut self) -> Option<&mut EventQueue> {
+        self.events.get_value_mut(&E::type_id())
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut EventQueue> {
+        self.events.iter_mut()
+    }
+}
+
+#[derive(Debug)]
+pub struct EventQueue {
+    storage: DumbVec,
+}
+
+impl EventQueue {
+    pub fn new<E: Event + TypeGetter>() -> Self {
+        Self {
+            storage: DumbVec::new(std::alloc::Layout::new::<E>(), 0, new_dumb_drop::<E>()),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.storage.len()
+    }
+
+    pub fn flush(&mut self) {
+        self.storage.clear_drop();
+    }
+
+    pub fn push<E>(&mut self, val: E) -> Result<(), ()> {
+        self.storage.push(val)
+    }
+
+    pub fn read<E>(&mut self) -> impl Iterator<Item = E> {
+        self.storage.into_vec::<E>().into_iter()
+    }
+}
+
+pub struct EventWriter<'w, T> {
+    world: UnsafeWorldCell<'w>,
+    event_type: PhantomData<T>,
+}
+
+impl<'a, E: Event + TypeGetter> std::fmt::Debug for EventWriter<'a, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventWriter")
+            .field("{:#?}", unsafe {
+                self.world
+                    .read_and_write()
+                    .events
+                    .queue::<E>()
+                    .expect("Event type is registered")
+            })
+            .finish()
+    }
+}
+
+impl<'w, E: Event + TypeGetter> EventWriter<'w, E> {
+    pub fn new(world: UnsafeWorldCell<'w>) -> Self {
+        return Self {
+            world,
+            event_type: PhantomData,
+        };
+    }
+
+    pub fn send(&mut self, event: E) {
+        if let Some(queue) = unsafe { self.world.read_and_write().events.queue_mut::<E>() } {
+            queue.push(event);
+        } else {
+            panic!("Event not registered: {}", E::type_name().as_string());
+        }
+    }
+}
+
+pub struct EventReader<'w, T> {
+    world: UnsafeWorldCell<'w>,
+    event_type: PhantomData<T>,
+}
+
+impl<'a, E: Event + TypeGetter> std::fmt::Debug for EventReader<'a, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventReader")
+            .field("{:#?}", unsafe {
+                self.world
+                    .read_and_write()
+                    .events
+                    .queue::<E>()
+                    .expect("Event type is registered")
+            })
+            .finish()
+    }
+}
+
+impl<'w, E: Event + TypeGetter> EventReader<'w, E> {
+    pub fn new(world: UnsafeWorldCell<'w>) -> Self {
+        return Self {
+            world,
+            event_type: PhantomData,
+        };
+    }
+
+    pub fn read(self) -> impl Iterator<Item = E> {
+        if let Some(queue) = unsafe { self.world.read_and_write().events.queue_mut::<E>() } {
+            queue.read()
+        } else {
+            panic!("Event not registered: {}", E::type_name().as_string());
+        }
+    }
+}

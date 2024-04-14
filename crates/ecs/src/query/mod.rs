@@ -1,10 +1,14 @@
 pub mod entity_query;
 pub mod filter;
 mod impl_macros;
+pub mod iter;
+pub mod state;
 
 use ecs_derive::all_tuples;
 pub use entity_query::*;
 pub use filter::*;
+pub use iter::*;
+pub use state::*;
 
 use std::{
     borrow::{Borrow, BorrowMut},
@@ -20,20 +24,23 @@ use logging::{error, trace, warn};
 use crate::{
     entity::Entity,
     unsafe_world::{self, UnsafeWorldCell},
-    world, ArchEntity, ArchId, Archetype, Component, EntityMeta, Storage, StorageType, Table,
-    TableId, TableRow, TypeGetter, TypeId, World,
+    world, ArchEntity, ArchId, Archetype, Component, EntityMeta, Mut, Storage, StorageType, Table,
+    TableId, TableRow, TypeGetter, TypeId, TypeName, World,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AccessType {
     Immutable,
     Mutable,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ComponentAccess {
     access_type: AccessType,
     id: TypeId,
+
+    #[cfg(debug_assertions)]
+    name: TypeName,
 }
 
 impl ComponentAccess {
@@ -41,7 +48,62 @@ impl ComponentAccess {
         Self {
             access_type,
             id: TypeId::of::<T>(),
+
+            #[cfg(debug_assertions)]
+            name: TypeName::of::<T>(),
         }
+    }
+
+    pub fn id(&self) -> TypeId {
+        self.id
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.access_type == AccessType::Immutable
+    }
+
+    pub fn is_mut(&self) -> bool {
+        self.access_type == AccessType::Mutable
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum AccessFilter {
+    With,
+    Without,
+    Or,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct ComponentAccessFilter {
+    filter: AccessFilter,
+    id: TypeId,
+
+    #[cfg(debug_assertions)]
+    name: TypeName,
+}
+
+impl ComponentAccessFilter {
+    pub fn new<T: TypeGetter>(filter: AccessFilter) -> Self {
+        Self {
+            id: TypeId::of::<T>(),
+            filter,
+
+            #[cfg(debug_assertions)]
+            name: TypeName::of::<T>(),
+        }
+    }
+
+    pub fn with(&self) -> bool {
+        self.filter == AccessFilter::With
+    }
+
+    pub fn without(&self) -> bool {
+        self.filter == AccessFilter::Without
+    }
+
+    pub fn or(&self) -> bool {
+        self.filter == AccessFilter::Or
     }
 }
 
@@ -52,9 +114,11 @@ pub struct StorageId {
 }
 
 pub trait QueryData {
+    type ReadOnly<'d>;
     type Item<'d>;
 
     fn fetch<'d>(table: &'d Table, arch_entity: &ArchEntity) -> Self::Item<'d>;
+    fn read_only<'d>(table: &'d Table, arch_entity: &ArchEntity) -> Self::ReadOnly<'d>;
     fn set_access() -> Vec<ComponentAccess>;
     fn set_ids() -> Vec<TypeId>;
 }
@@ -64,11 +128,18 @@ macro_rules! impl_query_data {
         $($params:ident),*
     ) => {
         impl<$($params: QueryData + 'static),*> QueryData for ($($params,)*) {
+            type ReadOnly<'d> = ($($params::ReadOnly<'d>,)*);
             type Item<'d> = ($($params::Item<'d>,)*);
 
             fn fetch<'d>(table: &'d Table, arch_entity: &ArchEntity) -> Self::Item<'d> {
                 (
                     $($params::fetch(table, arch_entity),)*
+                )
+            }
+
+            fn read_only<'d>(table: &'d Table, arch_entity: &ArchEntity) -> Self::ReadOnly<'d> {
+                (
+                    $($params::read_only(table, arch_entity),)*
                 )
             }
 
@@ -95,11 +166,37 @@ macro_rules! impl_query_data {
 
 all_tuples!(impl_query_data, 1, 10, D);
 
+impl<T: Component + TypeGetter> QueryData for Mut<T> {
+    type ReadOnly<'d> = &'d T;
+    type Item<'d> = &'d mut T;
+
+    fn fetch<'d>(table: &'d Table, arch_entity: &ArchEntity) -> Self::Item<'d> {
+        unsafe { table.get_entity_mut::<T>(arch_entity.row) }
+    }
+
+    fn read_only<'d>(table: &'d Table, arch_entity: &ArchEntity) -> Self::ReadOnly<'d> {
+        unsafe { table.get_entity::<T>(arch_entity.row) }
+    }
+
+    fn set_access() -> Vec<ComponentAccess> {
+        vec![ComponentAccess::new::<T>(AccessType::Mutable)]
+    }
+
+    fn set_ids() -> Vec<TypeId> {
+        vec![T::type_id()]
+    }
+}
+
 impl<T: Component + TypeGetter> QueryData for T {
+    type ReadOnly<'d> = &'d T;
     type Item<'d> = &'d T;
 
     fn fetch<'d>(table: &'d Table, arch_entity: &ArchEntity) -> Self::Item<'d> {
         unsafe { table.get_entity::<T>(arch_entity.row) }
+    }
+
+    fn read_only<'d>(table: &'d Table, arch_entity: &ArchEntity) -> Self::ReadOnly<'d> {
+        T::fetch(table, arch_entity)
     }
 
     fn set_access() -> Vec<ComponentAccess> {
@@ -112,9 +209,14 @@ impl<T: Component + TypeGetter> QueryData for T {
 }
 
 impl QueryData for Entity {
+    type ReadOnly<'d> = Entity;
     type Item<'d> = Entity;
 
     fn fetch<'d>(_table: &'d Table, arch_entity: &ArchEntity) -> Self::Item<'d> {
+        arch_entity.entity
+    }
+
+    fn read_only<'d>(table: &'d Table, arch_entity: &ArchEntity) -> Self::ReadOnly<'d> {
         arch_entity.entity
     }
 
@@ -124,179 +226,6 @@ impl QueryData for Entity {
 
     fn set_ids() -> Vec<TypeId> {
         vec![Entity::type_id()]
-    }
-}
-
-// TODO: this can easily be cached in the world with an id
-pub struct QueryState<T, F> {
-    storages: Vec<StorageId>,
-    component_access: Vec<ComponentAccess>,
-    query: PhantomData<T>,
-    filter: PhantomData<F>,
-}
-
-impl<T, F> Debug for QueryState<T, F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("QueryState")
-            .field("query", &self.query)
-            .field("filter", &self.filter)
-            .field("storages", &self.storages)
-            .field("component_access", &self.component_access)
-            .finish()
-    }
-}
-
-impl<T: QueryData, F: Filter> QueryState<T, F> {
-    pub fn from_world(world: &World) -> Self {
-        let storages = unsafe {
-            world
-                .as_unsafe_world()
-                .read_only()
-                .archetypes
-                .iter()
-                .filter(|arch| arch.contains_query::<T>())
-                .filter(|arch| F::condition(arch))
-                .map(|arch| StorageId {
-                    table_id: arch.table_id,
-                    archetype_id: arch.id,
-                })
-                .collect()
-        };
-
-        Self::new(storages)
-    }
-
-    pub fn from_world_unsafe<'w>(world: UnsafeWorldCell<'w>) -> Self {
-        let storages = unsafe {
-            world
-                .read_only()
-                .archetypes
-                .iter()
-                .filter(|arch| arch.contains_query::<T>())
-                .filter(|arch| F::condition(arch))
-                .map(|arch| StorageId {
-                    table_id: arch.table_id,
-                    archetype_id: arch.id,
-                })
-                .collect()
-        };
-
-        Self::new(storages)
-    }
-
-    pub fn new(storages: Vec<StorageId>) -> Self {
-        Self {
-            storages,
-            component_access: T::set_access(),
-            query: PhantomData,
-            filter: PhantomData,
-        }
-    }
-
-    pub fn component_access(&self) -> Vec<ComponentAccess> {
-        self.component_access.clone()
-    }
-
-    pub fn new_iter<'w>(&self, world: &'w UnsafeWorldCell<'w>) -> QueryIter<'_, T, F> {
-        let storage: Vec<_> = self
-            .storages
-            .iter()
-            .map(|id| unsafe {
-                (
-                    world.read_only().archetypes.get(id.archetype_id),
-                    world.read_only().tables.get(id.table_id),
-                )
-            })
-            .collect();
-
-        QueryIter::new(storage)
-    }
-}
-
-pub struct QueryIterStorage<'s> {
-    storage: Vec<(&'s Archetype, &'s Table)>,
-    table: &'s Table,
-    archetype: &'s Archetype,
-}
-
-impl<'s> QueryIterStorage<'s> {
-    pub fn new(storage: Vec<(&'s Archetype, &'s Table)>) -> Self {
-        let (archetype, table) = storage.first().expect("cannot be empty");
-
-        Self {
-            table,
-            archetype,
-            storage,
-        }
-    }
-}
-
-pub struct QueryIter<'s, T, F> {
-    cursor: std::slice::Iter<'s, ArchEntity>,
-    storage: Option<QueryIterStorage<'s>>,
-    next_storage: usize,
-    query: PhantomData<T>,
-    filter: PhantomData<F>,
-}
-
-impl<'s, T, F> QueryIter<'s, T, F> {
-    fn new(storage: Vec<(&'s Archetype, &'s Table)>) -> Self {
-        if storage.first().is_none() {
-            return Self::empty();
-        }
-
-        let storage = QueryIterStorage::new(storage);
-
-        Self {
-            cursor: storage.archetype.entities.iter(),
-            next_storage: 1,
-            storage: Some(storage),
-            query: PhantomData,
-            filter: PhantomData,
-        }
-    }
-
-    fn empty() -> Self {
-        Self {
-            cursor: [].iter(),
-            next_storage: 0,
-            storage: None,
-            query: PhantomData,
-            filter: PhantomData,
-        }
-    }
-}
-
-impl<'s, T: QueryData, F> Iterator for QueryIter<'s, T, F> {
-    type Item = T::Item<'s>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.storage.is_none() {
-            return None;
-        }
-
-        let Some(arch_entity) = self.cursor.next().or_else(|| {
-            let storage = self.storage.as_mut().unwrap();
-
-            let Some(next_storage) = storage.storage.get(self.next_storage) else {
-                return None;
-            };
-
-            self.next_storage += 1;
-            storage.archetype = &next_storage.0;
-            storage.table = &next_storage.1;
-
-            self.cursor = storage.archetype.entities.iter();
-            let Some(next) = self.cursor.next() else {
-                return None;
-            };
-
-            Some(next)
-        }) else {
-            return None;
-        };
-
-        Some(T::fetch(self.storage.as_ref().unwrap().table, arch_entity))
     }
 }
 
@@ -313,8 +242,6 @@ impl<'w, 's, T, F> Debug for Query<'w, 's, T, F> {
 
 impl<'w, 's, T: QueryData, F: Filter> Query<'w, 's, T, F> {
     pub fn new(unsafe_world: UnsafeWorldCell<'w>, state: &'s mut QueryState<T, F>) -> Self {
-        // TODO: This is really something that should be cached. I'm not sure where to put it though
-
         Self {
             state,
             world: unsafe_world,
@@ -323,6 +250,10 @@ impl<'w, 's, T: QueryData, F: Filter> Query<'w, 's, T, F> {
 
     pub fn iter(&self) -> QueryIter<'s, T, F> {
         self.state.new_iter(&self.world)
+    }
+
+    pub fn iter_mut(&self) -> QueryIterMut<'s, T, F> {
+        self.state.new_iter_mut(&self.world)
     }
 }
 

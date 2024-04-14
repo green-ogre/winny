@@ -9,7 +9,11 @@ ecs = { path = "../ecs" }
 logging = { path = "../logging" }
 hot_reload = { path = "../hot_reload" }
 
+gilrs = "0.10.3"
 winit = "0.29.15"
+wgpu = "0.19.3"
+env_logger = "0.10"
+log = "0.4"
 
 # [target.'cfg(target_os = "windows")'.dependencies]
 # windows = { version = "0.54.0", features = [

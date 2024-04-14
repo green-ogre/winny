@@ -108,8 +108,22 @@ pub fn resource_impl(input: TokenStream) -> TokenStream {
 
     let mut gen = proc_macro2::TokenStream::new();
 
+    quote! {
+        impl ecs::storage::Resource for #name {}
+    }.into()
+}
+
+#[proc_macro_derive(InternalResource)]
+pub fn internal_resource_impl(input: TokenStream) -> TokenStream {
+    let input: DeriveInput = syn::parse(input).unwrap();
+    let name = &input.ident;
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    let mut gen = proc_macro2::TokenStream::new();
+
     let impl_block = quote! {
-        impl Resource for #name {}
+        impl #impl_generics crate::storage::Resource for #name #ty_generics #where_clause {}
     };
 
     gen.extend(impl_block);
@@ -160,23 +174,25 @@ pub fn type_getter_impl(input: TokenStream) -> TokenStream {
     let id = hasher.finish();
 
     quote! {
-        impl winny::ecs::any::TypeGetter for #name {
-            fn type_id() -> winny::ecs::any::TypeId {
-                winny::ecs::any::TypeId::new(#id)
+        impl ecs::any::TypeGetter for #name {
+            fn type_id() -> ecs::any::TypeId {
+                ecs::any::TypeId::new(#id)
             }
 
-            fn type_name() -> winny::ecs::any::TypeName {
-                winny::ecs::any::TypeName::new(#name_str)
+            fn type_name() -> ecs::any::TypeName {
+                ecs::any::TypeName::new(#name_str)
             }
         }
     }
     .into()
 }
 
-#[proc_macro_derive(TestTypeGetter)]
-pub fn test_type_getter_impl(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(InternalTypeGetter)]
+pub fn internal_type_getter_impl(input: TokenStream) -> TokenStream {
     let input: DeriveInput = syn::parse(input).unwrap();
     let name = &input.ident;
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let data = &input.data;
     let data_decon = match data {
         syn::Data::Enum(data) => {
@@ -200,13 +216,13 @@ pub fn test_type_getter_impl(input: TokenStream) -> TokenStream {
     let id = hasher.finish();
 
     quote! {
-        impl TypeGetter for #name {
-            fn type_id() -> TypeId {
-                TypeId::new(#id)
+        impl #impl_generics crate::any::TypeGetter for #name #ty_generics #where_clause {
+            fn type_id() -> crate::any::TypeId {
+                crate::any::TypeId::new(#id)
             }
 
-            fn type_name() -> TypeName {
-                TypeName::new(#name_str)
+            fn type_name() -> crate::any::TypeName {
+                crate::any::TypeName::new(#name_str)
             }
         }
     }

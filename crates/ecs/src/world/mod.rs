@@ -10,19 +10,13 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     collections::VecDeque,
     fmt::Debug,
-    marker::PhantomData,
-    num::NonZeroUsize,
-    ops::Deref,
 };
 
-use ecs_derive::TestTypeGetter;
 use fxhash::FxHashMap;
-use itertools::Itertools;
-use logging::*;
 
 use crate::{
-    Any, Archetype, Component, ComponentSet, Res, ResMut, Resource, Resources, Table, TypeGetter,
-    TypeId, TypeName,
+    Any, Archetype, Component, ComponentSet, Event, Events, Res, ResMut, Resource, Resources,
+    Table, TypeGetter, TypeId, TypeName,
 };
 
 use crate::entity::*;
@@ -41,11 +35,11 @@ use self::unsafe_world::UnsafeWorldCell;
 pub struct World {
     pub archetypes: Archetypes,
     pub tables: Tables,
+    pub events: Events,
+    pub resources: Resources,
+
     pub entities: Vec<EntityMeta>,
     pub free_entities: Vec<u32>,
-
-    pub resources: Resources,
-    // pub events: Vec<Box<dyn EventQueue>>,
 }
 
 impl Default for World {
@@ -55,6 +49,7 @@ impl Default for World {
             entities: Vec::new(),
             free_entities: Vec::new(),
             tables: Tables::new(),
+            events: Events::new(),
 
             resources: Resources::new(),
             // events: Vec::new(),
@@ -279,10 +274,9 @@ impl World {
         unsafe { self.as_unsafe_world().insert_resource(resource) }
     }
 
-    // pub fn register_event<T: Debug + Event + TypeGetter>(&mut self) {
-    // let new_event: RefCell<VecDeque<T>> = RefCell::new(VecDeque::new());
-    // self.events.push(Box::new(new_event));
-    // }
+    pub fn register_event<E: Debug + Event + TypeGetter>(&mut self) {
+        self.events.insert::<E>()
+    }
 
     pub fn resource<R: Resource + TypeGetter>(&self) -> Res<'_, R> {
         Res::new(unsafe { self.as_unsafe_world() })
@@ -292,9 +286,9 @@ impl World {
         ResMut::new(unsafe { self.as_unsafe_world() })
     }
 
-    // pub fn flush_events(&mut self) {
-    //     for event_queue in self.events.iter_mut() {
-    //         event_queue.flush();
-    //     }
-    // }
+    pub fn flush_events(&mut self) {
+        for event_queue in self.events.iter_mut() {
+            event_queue.flush();
+        }
+    }
 }

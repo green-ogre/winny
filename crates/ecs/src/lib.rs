@@ -8,6 +8,7 @@ pub mod events;
 pub mod query;
 pub mod storage;
 pub mod systems;
+pub mod threads;
 pub mod world;
 
 pub use any::*;
@@ -15,11 +16,13 @@ pub use events::*;
 pub use query::*;
 pub use storage::*;
 pub use systems::*;
+pub use threads::*;
 pub use world::*;
 
 #[cfg(test)]
 mod winny {
     use core::panic;
+    use std::time::SystemTime;
 
     use super::*;
 
@@ -123,44 +126,35 @@ mod winny {
         // panic!("{:#?}", world);
     }
 
-    fn hello_world(_commands: Commands) {
-        println!("Hello World!");
+    fn crunch_lots_of_numbers() {
+        let mut y: isize = 0;
+        for x in 0..10_000_000 {
+            y = (x as isize) % 10;
+            y -= 4;
+            y += 4 * (x as isize) % 3;
+        }
     }
 
-    fn i_am_a_query(
-        query: Query<(Health, Weight)>,
-        query_single: Query<Health>,
-        entity_q: Query<(Entity, Weight)>,
-    ) {
-        println!("I am a query!");
-        // println!("I am a query! {:#?}", query);
+    fn hello_world(_commands: Commands) {
+        // println!("Hello World!");
+    }
 
-        // println!();
-        // println!();
+    fn q1(query: Query<Weight>) {
+        // println!("I am a query!");
 
-        // for (health, weight) in query.iter() {
-        //     println!("{:?}", health);
-        //     println!("{:?}", weight);
-        // }
+        crunch_lots_of_numbers();
+    }
 
-        // println!();
-        // println!();
+    fn q2(query: Query<(Health, Weight)>, entity_q: Query<Entity>) {
+        // println!("I am a query!");
 
-        // for health in query_single.iter() {
-        //     println!("{:?}", health);
-        // }
+        crunch_lots_of_numbers();
+    }
 
-        // println!();
-        // println!();
+    fn q3(query_single: Query<Health>) {
+        // println!("I am a query!");
 
-        // // TODO: looks for archetypes with TypeId(Entity) in their component set
-        // for (entity, weight) in entity_q.iter() {
-        //     println!("{:?}", entity);
-        //     println!("{:?}", weight);
-        // }
-
-        // println!();
-        // println!();
+        crunch_lots_of_numbers();
     }
 
     #[derive(Debug, TestTypeGetter)]
@@ -168,15 +162,11 @@ mod winny {
     impl Resource for Info {}
 
     fn i_am_a_resource(res: Res<Info>) {
-        println!("I am a resource!");
-        // println!("I am a resource! {:#?}", res);
-
-        //let yeah = res.as_ref();
-        //println!("{:?}", yeah);
+        // println!("I am a resource!");
     }
 
     fn goodbye_world(_commands: Commands) {
-        println!("Goodbye World!");
+        // println!("Goodbye World!");
     }
 
     #[test]
@@ -184,17 +174,51 @@ mod winny {
         let mut world = World::default();
         world.insert_resource(Info);
         let mut scheduler = Scheduler::new();
-        scheduler.add_systems(Schedule::StartUp, (hello_world, i_am_a_query));
-        scheduler.add_systems(Schedule::Exit, (i_am_a_resource, goodbye_world));
+        scheduler.add_systems(Schedule::StartUp, hello_world);
+        scheduler.add_systems(Schedule::Update, (q1, q2, q3));
+        scheduler.add_systems(Schedule::Exit, goodbye_world);
 
         world.spawn((Health(10), Weight(10)));
         world.spawn((Health(2),));
 
         // println!("{:#?}", world);
 
+        let start = SystemTime::now();
         scheduler.startup(&world);
         scheduler.run(&world);
         scheduler.exit(&world);
+        let end = SystemTime::now();
+
+        let duration = end.duration_since(start);
+
+        if let Ok(duration) = duration {
+            println!(
+                "MULTITHREADED TIME: {:?}s, {:?}ms",
+                duration.as_secs(),
+                duration.as_millis(),
+            );
+        } else {
+            println!("CLOCK ERROR");
+        }
+
+        let start = SystemTime::now();
+        scheduler.startup_single_thread(&world);
+        scheduler.run_single_thread(&world);
+        scheduler.exit_single_thread(&world);
+        let end = SystemTime::now();
+
+        let duration = end.duration_since(start);
+
+        if let Ok(duration) = duration {
+            println!(
+                "SINGLETHREADED TIME: {:?}s, {:?}ms",
+                duration.as_secs(),
+                duration.as_millis(),
+            );
+        } else {
+            println!("CLOCK ERROR");
+        }
+
         panic!();
     }
 }
