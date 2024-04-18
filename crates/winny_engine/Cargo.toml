@@ -12,13 +12,13 @@ plugins = { path = "../plugins" }
 bytemuck = { version = "1.12", features = [ "derive" ] }
 pollster = "0.3.0"
 gilrs = "0.10.3"
-winit = "0.29.15"
 wgpu = "0.19.3"
 anyhow = "1.0.82"
 cgmath = "0.18"
 tobj = { version = "3.2.1", features = [
     "async",
 ]}
+winit = "0.29.15"
 
 [dependencies.image]
 version = "0.24"
