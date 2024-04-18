@@ -5,7 +5,7 @@ use std::io::Read;
 use std::time::SystemTime;
 
 use ecs::World;
-use logging::*;
+use logger::*;
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;

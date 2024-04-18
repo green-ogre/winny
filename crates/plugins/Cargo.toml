@@ -1,5 +1,5 @@
 [package]
-name = "hot_reload"
+name = "plugins"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,7 +7,3 @@ edition = "2021"
 [dependencies]
 logger = { path = "../logger" }
 ecs = { path = "../ecs" }
-ecs_derive = { path = "../ecs_derive" }
-plugins = { path = "../plugins" }
-
-libloading = "0.8.3"

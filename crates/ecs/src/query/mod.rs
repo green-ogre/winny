@@ -19,7 +19,7 @@ use std::{
 };
 
 use itertools::*;
-use logging::{error, trace, warn};
+use logger::{error, trace, warn};
 
 use crate::{
     entity::Entity,

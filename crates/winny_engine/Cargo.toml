@@ -6,19 +6,20 @@ edition = "2021"
 
 [dependencies]
 ecs = { path = "../ecs" }
-logging = { path = "../logging" }
-hot_reload = { path = "../hot_reload" }
+logger = { path = "../logger" }
+plugins = { path = "../plugins" }
 
+bytemuck = { version = "1.12", features = [ "derive" ] }
+pollster = "0.3.0"
 gilrs = "0.10.3"
 winit = "0.29.15"
 wgpu = "0.19.3"
-env_logger = "0.10"
-log = "0.4"
+anyhow = "1.0.82"
+cgmath = "0.18"
+tobj = { version = "3.2.1", features = [
+    "async",
+]}
 
-# [target.'cfg(target_os = "windows")'.dependencies]
-# windows = { version = "0.54.0", features = [
-#     "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", 
-#     "Win32_System_LibraryLoader", "Win32_Graphics_Gdi",
-#     "Win32_Graphics_OpenGL", "Win32_System_Performance",
-#     "Win32_System_Com", "Win32_Media_Audio_XAudio2",
-#     "implement"]}
+[dependencies.image]
+version = "0.24"
+features = ["png", "jpeg"]

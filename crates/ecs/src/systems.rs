@@ -8,7 +8,7 @@ use std::{
 
 use ecs_derive::all_tuples;
 use libloading::{Error, Symbol};
-use logging::{error, trace};
+use logger::{error, trace};
 
 use crate::{
     unsafe_world::UnsafeWorldCell, AccessType, Commands, ComponentAccess, ComponentAccessFilter,
@@ -135,7 +135,7 @@ impl Scheduler {
     }
 
     pub fn startup(&mut self, world: &World) {
-        self.run_schedule(Schedule::StartUp, world);
+        self.run_schedule(Schedule::StartUp, &world);
     }
 
     pub fn run(&mut self, world: &World) {
@@ -471,10 +471,8 @@ where
     }
 
     fn run_unsafe<'w>(&mut self, world: UnsafeWorldCell<'w>) {
-        unsafe {
-            self.f
-                .run(F::Param::to_param(&mut F::Param::init_state(world), world))
-        };
+        self.f
+            .run(F::Param::to_param(&mut F::Param::init_state(world), world))
     }
 
     fn debug_print(&self) {

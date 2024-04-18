@@ -12,4 +12,8 @@ members = ["crates/*"]
 
 [dependencies]
 winny_engine = { path = "crates/winny_engine" }
+hot_reload = { path = "crates/hot_reload" }
 
+
+[features]
+hot_reload = []

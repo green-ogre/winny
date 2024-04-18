@@ -2,11 +2,11 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     fmt::Debug,
     marker::PhantomData,
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 
 use fxhash::FxHashMap;
-use logging::error;
+use logger::error;
 
 use crate::{any::*, unsafe_world::UnsafeWorldCell, World};
 
@@ -14,6 +14,14 @@ pub trait Resource: Debug + Send {}
 
 pub struct Res<'a, T> {
     value: &'a T,
+}
+
+impl<'a, T> Deref for Res<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.value
+    }
 }
 
 impl<'a, T: Debug> Debug for Res<'a, T> {
@@ -36,7 +44,11 @@ impl<'a, T: TypeGetter + Resource> Res<'a, T> {
     }
 }
 
-impl<'a, T: Resource> Deref for Res<'_, T> {
+pub struct ResMut<'a, T> {
+    value: &'a mut T,
+}
+
+impl<'a, T> Deref for ResMut<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -44,8 +56,10 @@ impl<'a, T: Resource> Deref for Res<'_, T> {
     }
 }
 
-pub struct ResMut<'a, T> {
-    value: &'a mut T,
+impl<'a, T> DerefMut for ResMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value
+    }
 }
 
 impl<'a, T: TypeGetter + Resource> ResMut<'a, T> {
