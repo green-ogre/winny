@@ -10,12 +10,15 @@ use ecs::{
     all_tuples, unsafe_world::UnsafeWorldCell, ResMut, Resource, Schedule, Scheduler, System,
     SystemAccess, SystemParam, SystemParamFunc, TypeGetter, World,
 };
+use libloading::Symbol;
 use logger::{error, info, trace};
 use plugins::Plugin;
 
+pub use hot_reload_macro::*;
+
 #[derive(Debug)]
-struct Lib {
-    lib: libloading::Library,
+pub struct Lib {
+    pub lib: libloading::Library,
 }
 
 impl Lib {
@@ -25,7 +28,7 @@ impl Lib {
     ) -> Result<Self, libloading::Error> {
         if std::fs::metadata(path_to_write).is_err() {
             std::fs::write(path_to_write, "").unwrap();
-            trace!("File does not exist, writing new : {:?}", path_to_write);
+            info!("File does not exist, writing new : {:?}", path_to_write);
         }
 
         if let Err(e) = std::fs::copy(path_to_lib, path_to_write) {
@@ -74,9 +77,9 @@ impl Lib {
     // }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Resource, TypeGetter)]
 pub struct LinkedLib {
-    linked_lib: Lib,
+    pub linked_lib: Lib,
     last_refresh: Duration,
     path_to_lib: OsString,
     path_to_write: OsString,
@@ -120,38 +123,28 @@ impl LinkedLib {
     }
 }
 
-pub struct HotReloadPlugin;
-
-#[derive(Debug, Resource, TypeGetter)]
-pub struct HotReloadResource {
-    linked_lib: LinkedLib,
+pub struct HotReloadPlugin {
+    pub crate_name: String,
 }
 
 impl Plugin for HotReloadPlugin {
     fn build(&self, world: &mut World, scheduler: &mut Scheduler) {
         let lib_path: PathBuf = [
             format!("{}", current_dir().unwrap().to_str().unwrap()),
+            self.crate_name.clone(),
             "target".into(),
             #[cfg(debug_assertions)]
             "debug".into(),
             #[cfg(not(debug_assertions))]
             "release".into(),
-            format!(
-                "lib{}.dylib",
-                current_dir()
-                    .unwrap()
-                    .iter()
-                    .last()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-            ),
+            format!("lib{}.dylib", self.crate_name.clone()),
         ]
         .iter()
         .collect();
 
         let write_path: PathBuf = [
             format!("{}", current_dir().unwrap().to_str().unwrap()),
+            self.crate_name.clone(),
             "target".into(),
             #[cfg(debug_assertions)]
             "debug".into(),
@@ -162,55 +155,21 @@ impl Plugin for HotReloadPlugin {
         .iter()
         .collect();
 
-        info!(
-            "Path to lib: {}, Path to write: {}",
-            lib_path.to_str().unwrap(),
-            write_path.to_str().unwrap()
-        );
+        // info!(
+        //     "Path to lib: {}, Path to write: {}",
+        //     lib_path.to_str().unwrap(),
+        //     write_path.to_str().unwrap()
+        // );
 
         let linked_lib =
             LinkedLib::new(lib_path.into(), write_path.into()).expect("Could not find library");
 
-        world.insert_resource(HotReloadResource { linked_lib });
+        world.insert_resource(linked_lib);
 
         scheduler.add_systems(ecs::Schedule::PreUpdate, reload_if_changed);
     }
 }
 
-fn reload_if_changed(mut reload: ResMut<HotReloadResource>) {
-    reload.linked_lib.refresh_if_modified();
-}
-
-struct DynamicFunc<'lib, I, Marker, F> {
-    f: LinkedFunc<'lib, I>,
-    _phantom_func: PhantomData<F>,
-    _phantom_marker: PhantomData<Marker>,
-}
-
-impl<I, Marker, F> System for DynamicFunc<'_, I, Marker, F>
-where
-    Marker: 'static + Send + Sync,
-    F: SystemParamFunc<Marker>,
-{
-    fn access(&self) -> SystemAccess {
-        SystemAccess::new(F::access())
-    }
-
-    fn run_unsafe<'w>(&mut self, world: UnsafeWorldCell<'w>) {
-        self.f
-            .run(F::Param::to_param(&mut F::Param::init_state(world), world))
-    }
-
-    fn debug_print(&self) {
-        println!("{:?}", self._phantom);
-        // println!("{:#?}", self.access());
-    }
-}
-
-struct LinkedFunc<'lib, I = ()> {
-    f: libloading::Symbol<'lib, fn(I)>,
-}
-
-impl<I> LinkedFunc<'_, I> {
-    pub fn run<'w>(&mut self, world: UnsafeWorldCell<'w>) {}
+fn reload_if_changed(mut reload: ResMut<LinkedLib>) {
+    reload.refresh_if_modified();
 }
