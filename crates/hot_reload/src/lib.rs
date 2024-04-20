@@ -18,7 +18,7 @@ pub use hot_reload_macro::*;
 
 #[derive(Debug)]
 pub struct Lib {
-    pub lib: libloading::Library,
+    pub lib: Option<libloading::Library>,
 }
 
 impl Lib {
@@ -38,7 +38,7 @@ impl Lib {
 
         unsafe {
             Ok(Self {
-                lib: libloading::Library::new(path_to_write)?,
+                lib: Some(libloading::Library::new(path_to_write)?),
             })
         }
     }
@@ -53,13 +53,14 @@ impl Lib {
             trace!("File does not exist, writing new : {:?}", path_to_write);
         }
 
-        if let Err(e) = std::fs::copy(path_to_lib, path_to_write) {
+        let _ = self.lib.take().unwrap().close();
+
+        while let Err(e) = std::fs::copy(path_to_lib, path_to_write) {
             error!("{}", e);
-            panic!();
         }
 
         unsafe {
-            self.lib = libloading::Library::new(path_to_write)?;
+            self.lib = Some(libloading::Library::new(path_to_write)?);
         }
 
         Ok(())
@@ -114,7 +115,7 @@ impl LinkedLib {
             return;
         }
 
-        info!("app :: Refreshing App");
+        info!("Reloading App...");
 
         self.linked_lib
             .refresh(&self.path_to_lib, &self.path_to_write)
@@ -129,44 +130,46 @@ pub struct HotReloadPlugin {
 
 impl Plugin for HotReloadPlugin {
     fn build(&self, world: &mut World, scheduler: &mut Scheduler) {
-        let lib_path: PathBuf = [
-            format!("{}", current_dir().unwrap().to_str().unwrap()),
-            self.crate_name.clone(),
-            "target".into(),
-            #[cfg(debug_assertions)]
-            "debug".into(),
-            #[cfg(not(debug_assertions))]
-            "release".into(),
-            format!("lib{}.dylib", self.crate_name.clone()),
-        ]
-        .iter()
-        .collect();
+        if cfg!(windows) {
+            let lib_path: PathBuf = [
+                format!("{}", current_dir().unwrap().to_str().unwrap()),
+                self.crate_name.clone(),
+                "target".into(),
+                #[cfg(debug_assertions)]
+                "debug".into(),
+                #[cfg(not(debug_assertions))]
+                "release".into(),
+                format!("{}.dll", self.crate_name.clone()),
+            ]
+            .iter()
+            .collect();
 
-        let write_path: PathBuf = [
-            format!("{}", current_dir().unwrap().to_str().unwrap()),
-            self.crate_name.clone(),
-            "target".into(),
-            #[cfg(debug_assertions)]
-            "debug".into(),
-            #[cfg(not(debug_assertions))]
-            "release".into(),
-            "libtemp.dylib".into(),
-        ]
-        .iter()
-        .collect();
+            let write_path: PathBuf = [
+                format!("{}", current_dir().unwrap().to_str().unwrap()),
+                self.crate_name.clone(),
+                "target".into(),
+                #[cfg(debug_assertions)]
+                "debug".into(),
+                #[cfg(not(debug_assertions))]
+                "release".into(),
+                "libtemp.dll".into(),
+            ]
+            .iter()
+            .collect();
 
-        // info!(
-        //     "Path to lib: {}, Path to write: {}",
-        //     lib_path.to_str().unwrap(),
-        //     write_path.to_str().unwrap()
-        // );
+            // info!(
+            //     "Path to lib: {}, Path to write: {}",
+            //     lib_path.to_str().unwrap(),
+            //     write_path.to_str().unwrap()
+            // );
 
-        let linked_lib =
-            LinkedLib::new(lib_path.into(), write_path.into()).expect("Could not find library");
+            let linked_lib =
+                LinkedLib::new(lib_path.into(), write_path.into()).expect("Could not find library");
 
-        world.insert_resource(linked_lib);
+            world.insert_resource(linked_lib);
 
-        scheduler.add_systems(ecs::Schedule::PreUpdate, reload_if_changed);
+            scheduler.add_systems(ecs::Schedule::PreUpdate, reload_if_changed);
+        }
     }
 }
 

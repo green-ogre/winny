@@ -1,7 +1,8 @@
 pub use crate::camera::*;
 pub use crate::gfx::*;
 pub use crate::math::*;
-pub use crate::platform::*;
+// pub use crate::platform::*;
+pub use crate::platform2::*;
 pub use crate::plugins::*;
 pub use crate::App;
 pub use crate::Schedule::*;
