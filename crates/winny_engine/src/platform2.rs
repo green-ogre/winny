@@ -14,7 +14,10 @@ use std::{
 use ecs::{Event, EventWriter, Res, ResMut, Resource, Scheduler, TypeGetter, World};
 use gilrs::{EventType, Gilrs};
 use image::GenericImageView;
-use wgpu::{util::DeviceExt, SurfaceTargetUnsafe};
+use wgpu::{
+    util::{DeviceExt, RenderEncoder},
+    SurfaceTargetUnsafe,
+};
 use winit::{
     event::{DeviceEvent, ElementState, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -26,7 +29,7 @@ use logger::*;
 
 use crate::{
     prelude::{
-        load_model,
+        load_model, load_texture,
         texture::{DepthTexture, DiffuseTexture, NormalTexture},
         Camera, CameraController, DrawLight, DrawModel, FullscreenQuad, Instance, InstanceRaw,
         Material, Model, ModelVertex, PointLightUniform, Projection, Vertex, NUM_INSTANCES_PER_ROW,
@@ -60,12 +63,13 @@ impl CameraUniform {
 struct State<'w> {
     render_pipeline: wgpu::RenderPipeline,
     // camera_buffer: wgpu::Buffer,
-    // camera_bind_group: wgpu::BindGroup,
+    tileset_bind_group: wgpu::BindGroup,
     surface: wgpu::Surface<'w>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
+    tileset: DiffuseTexture,
     // instances: Vec<Instance>,
     // instance_buffer: wgpu::Buffer,
     // camera_controller: CameraController,
@@ -143,7 +147,7 @@ impl<'w> State<'w> {
         info!("Surface Config: {:#?}", config);
         surface.configure(&device, &config);
 
-        let texture_bind_group_layout =
+        let tileset_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
@@ -183,38 +187,24 @@ impl<'w> State<'w> {
                 label: Some("texture_bind_group_layout"),
             });
 
-        // Lighting
-        // let light_uniform = PointLightUniform::new([2.0, -3.0, 2.0], [1.0, 1.0, 1.0]);
+        let tileset = load_texture("Anno_16x16.png".into(), &device, &queue)
+            .await
+            .unwrap();
 
-        // let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //     label: Some("Light VB"),
-        //     contents: bytemuck::cast_slice(&[light_uniform]),
-        //     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        // });
-
-        // let light_bind_group_layout =
-        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        //         entries: &[wgpu::BindGroupLayoutEntry {
-        //             binding: 0,
-        //             visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-        //             ty: wgpu::BindingType::Buffer {
-        //                 ty: wgpu::BufferBindingType::Uniform,
-        //                 has_dynamic_offset: false,
-        //                 min_binding_size: None,
-        //             },
-        //             count: None,
-        //         }],
-        //         label: None,
-        //     });
-
-        // let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     layout: &light_bind_group_layout,
-        //     entries: &[wgpu::BindGroupEntry {
-        //         binding: 0,
-        //         resource: light_buffer.as_entire_binding(),
-        //     }],
-        //     label: None,
-        // });
+        let tileset_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &tileset_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&tileset.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&tileset.sampler),
+                },
+            ],
+            label: None,
+        });
 
         // CAMERA
 
@@ -306,7 +296,7 @@ impl<'w> State<'w> {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[
-                    // &texture_bind_group_layout,
+                    &tileset_bind_group_layout,
                     // &camera_bind_group_layout,
                     // &light_bind_group_layout,
                 ],
@@ -403,6 +393,8 @@ impl<'w> State<'w> {
         // };
 
         Self {
+            tileset,
+            tileset_bind_group,
             // light_uniform,
             // light_render_pipeline,
             // light_bind_group,
@@ -431,8 +423,6 @@ impl<'w> State<'w> {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
-
-            // self.depth_texture = DepthTexture::new(&self.device, &self.config, "depth_texture");
         }
     }
 
@@ -532,6 +522,7 @@ impl<'w> State<'w> {
             // );
 
             render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.tileset_bind_group, &[]);
             render_pass.draw(0..3, 0..1);
         }
 
