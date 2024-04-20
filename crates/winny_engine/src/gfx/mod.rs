@@ -97,6 +97,24 @@ pub trait Vertex {
     fn desc() -> wgpu::VertexBufferLayout<'static>;
 }
 
+pub struct FullscreenQuad {
+    pub position: [f32; 3],
+}
+
+impl Vertex for FullscreenQuad {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<FullscreenQuad>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            }],
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ModelVertex {

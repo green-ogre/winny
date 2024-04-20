@@ -4,7 +4,7 @@ mod camera;
 mod gfx;
 mod gl;
 mod math;
-mod platform;
+mod platform2;
 mod plugins;
 
 use ::plugins::{Plugin, PluginSet};
@@ -68,6 +68,6 @@ impl App {
             plugin.build(&mut self.world, &mut self.scheduler);
         }
 
-        pollster::block_on(platform::game_loop(self.world, self.scheduler));
+        pollster::block_on(platform2::game_loop(self.world, self.scheduler));
     }
 }
