@@ -1,7 +1,8 @@
-use core::time;
+use core::{panic, time};
 use std::{
     env::{self, current_dir},
     error::Error,
+    f64::NAN,
     ffi::OsString,
     io::Read,
     marker::PhantomData,
@@ -19,6 +20,7 @@ use wgpu::{
     SurfaceTargetUnsafe,
 };
 use winit::{
+    dpi::PhysicalSize,
     event::{DeviceEvent, ElementState, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::PhysicalKey,
@@ -31,13 +33,14 @@ use crate::{
     prelude::{
         load_model, load_texture,
         texture::{DepthTexture, DiffuseTexture, NormalTexture},
-        Camera, CameraController, DrawLight, DrawModel, FullscreenQuad, Instance, InstanceRaw,
-        Material, Model, ModelVertex, PointLightUniform, Projection, Vertex, NUM_INSTANCES_PER_ROW,
+        Boid, BoidRaw, BoidVertex, Camera, CameraController, DrawLight, DrawModel, FullscreenQuad,
+        Instance, InstanceRaw, Material, Model, ModelVertex, PointLightUniform, Projection, Vertex,
+        NUM_INSTANCES_PER_ROW,
     },
     App,
 };
 
-use cgmath::prelude::*;
+use cgmath::{num_traits::Signed, prelude::*, Vector2};
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -60,33 +63,31 @@ impl CameraUniform {
     }
 }
 
+const NUM_BOIDS: usize = 1000;
+
 struct State<'w> {
     render_pipeline: wgpu::RenderPipeline,
-    // camera_buffer: wgpu::Buffer,
-    tileset_bind_group: wgpu::BindGroup,
+    // tileset_bind_group: wgpu::BindGroup,
+    boid_sprite_bind_group: wgpu::BindGroup,
     surface: wgpu::Surface<'w>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    tileset: DiffuseTexture,
-    // instances: Vec<Instance>,
-    // instance_buffer: wgpu::Buffer,
-    // camera_controller: CameraController,
-    // camera_uniform: CameraUniform,
-    // depth_texture: DepthTexture,
-    // obj_model: Model,
-    // light_uniform: PointLightUniform,
-    // light_buffer: wgpu::Buffer,
-    // light_bind_group: wgpu::BindGroup,
-    // light_render_pipeline: wgpu::RenderPipeline,
-    // debug_material: Material,
+    // tileset: DiffuseTexture,
+    boids: Vec<Boid>,
+    boid_buffer: wgpu::Buffer,
+    vertex_buffer: wgpu::Buffer,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
+    camera_uniform: CameraUniform,
 }
 
 impl<'w> State<'w> {
     async fn new(window: &Window) -> Self {
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
+
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
@@ -147,7 +148,7 @@ impl<'w> State<'w> {
         info!("Surface Config: {:#?}", config);
         surface.configure(&device, &config);
 
-        let tileset_bind_group_layout =
+        let boid_sprite_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
@@ -166,138 +167,112 @@ impl<'w> State<'w> {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
-                    // Normal mapping
-                    // wgpu::BindGroupLayoutEntry {
-                    //     binding: 2,
-                    //     visibility: wgpu::ShaderStages::FRAGMENT,
-                    //     ty: wgpu::BindingType::Texture {
-                    //         multisampled: false,
-                    //         sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    //         view_dimension: wgpu::TextureViewDimension::D2,
-                    //     },
-                    //     count: None,
-                    // },
-                    // wgpu::BindGroupLayoutEntry {
-                    //     binding: 3,
-                    //     visibility: wgpu::ShaderStages::FRAGMENT,
-                    //     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    //     count: None,
-                    // },
                 ],
                 label: Some("texture_bind_group_layout"),
             });
 
-        let tileset = load_texture("Anno_16x16.png".into(), &device, &queue)
+        // let tileset_bind_group_layout =
+        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //         entries: &[
+        //             wgpu::BindGroupLayoutEntry {
+        //                 binding: 0,
+        //                 visibility: wgpu::ShaderStages::FRAGMENT,
+        //                 ty: wgpu::BindingType::Texture {
+        //                     multisampled: false,
+        //                     view_dimension: wgpu::TextureViewDimension::D2,
+        //                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
+        //                 },
+        //                 count: None,
+        //             },
+        //             wgpu::BindGroupLayoutEntry {
+        //                 binding: 1,
+        //                 visibility: wgpu::ShaderStages::FRAGMENT,
+        //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        //                 count: None,
+        //             },
+        //         ],
+        //         label: Some("texture_bind_group_layout"),
+        //     });
+
+        // let tileset = load_texture("Anno_16x16.png".into(), &device, &queue)
+        //     .await
+        //     .unwrap();
+
+        // let tileset_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     layout: &tileset_bind_group_layout,
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::TextureView(&tileset.view),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::Sampler(&tileset.sampler),
+        //         },
+        //     ],
+        //     label: None,
+        // });
+
+        // Camera
+
+        let camera_uniform = CameraUniform::new();
+
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[camera_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("camera_bind_group_layout"),
+            });
+
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+            label: Some("camera_bind_group"),
+        });
+
+        let boid_sprite = load_texture("boid.png".into(), &device, &queue)
             .await
             .unwrap();
 
-        let tileset_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &tileset_bind_group_layout,
+        let boid_sprite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &boid_sprite_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&tileset.view),
+                    resource: wgpu::BindingResource::TextureView(&boid_sprite.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&tileset.sampler),
+                    resource: wgpu::BindingResource::Sampler(&boid_sprite.sampler),
                 },
             ],
             label: None,
         });
 
-        // CAMERA
-
-        // let camera_uniform = CameraUniform::new();
-
-        // let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //     label: Some("Camera Buffer"),
-        //     contents: bytemuck::cast_slice(&[camera_uniform]),
-        //     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        // });
-
-        // let camera_bind_group_layout =
-        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        //         entries: &[wgpu::BindGroupLayoutEntry {
-        //             binding: 0,
-        //             visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-        //             ty: wgpu::BindingType::Buffer {
-        //                 ty: wgpu::BufferBindingType::Uniform,
-        //                 has_dynamic_offset: false,
-        //                 min_binding_size: None,
-        //             },
-        //             count: None,
-        //         }],
-        //         label: Some("camera_bind_group_layout"),
-        //     });
-
-        // let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     layout: &camera_bind_group_layout,
-        //     entries: &[wgpu::BindGroupEntry {
-        //         binding: 0,
-        //         resource: camera_buffer.as_entire_binding(),
-        //     }],
-        //     label: Some("camera_bind_group"),
-        // });
-
-        // fullscreen FullscreenQuad
-
-        // let quad = FullscreenQuad {
-        //     position: [0.0, 0.0, 0.0],
-        // };
-
-        // let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //     label: Some("Camera Buffer"),
-        //     contents: bytemuck::cast_slice(&[camera_uniform]),
-        //     usage: wgpu::BufferUsages::VERTEX,
-        // });
-
-        // let camera_bind_group_layout =
-        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        //         entries: &[wgpu::BindGroupLayoutEntry {
-        //             binding: 0,
-        //             visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-        //             ty: wgpu::BindingType::Buffer {
-        //                 ty: wgpu::BufferBindingType::Uniform,
-        //                 has_dynamic_offset: false,
-        //                 min_binding_size: None,
-        //             },
-        //             count: None,
-        //         }],
-        //         label: Some("camera_bind_group_layout"),
-        //     });
-
-        // let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     layout: &camera_bind_group_layout,
-        //     entries: &[wgpu::BindGroupEntry {
-        //         binding: 0,
-        //         resource: camera_buffer.as_entire_binding(),
-        //     }],
-        //     label: Some("camera_bind_group"),
-        // });
-
-        // gfx
-        // let depth_texture = DepthTexture::new(&device, &config, "depth_texture");
-
-        for index in 0..3 {
-            let x = (index & 2) as f32 * 2.0 - 1.0;
-            let y = (index & 1) as f32 * 4.0 - 1.0;
-            let tex = [(x + 1.0) / 4.0, (y + 1.0) / 4.0];
-            println!("x: {}, y: {}, tex: {:?}", x, y, tex);
-        }
-
-        // for index in 0..3 {
-        //     let x = (1 - index as i32) as f32 * 0.5;
-        //     let y = (index & 1) as f32 * (2 - 1) as f32 * 0.5;
-        //     println!("x: {}, y: {}", x, y);
-        // }
-
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[
-                    &tileset_bind_group_layout,
-                    // &camera_bind_group_layout,
+                    &boid_sprite_bind_group_layout,
+                    // &tileset_bind_group_layout,
+                    &camera_bind_group_layout,
                     // &light_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
@@ -314,106 +289,85 @@ impl<'w> State<'w> {
                 config.format,
                 // Some(wgpu::TextureFormat::Depth32Float),
                 None,
-                &[],
+                &[BoidVertex::desc(), BoidRaw::desc()],
                 shader,
             )
         };
 
-        // let light_render_pipeline = {
-        //     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        //         label: Some("Light Pipeline Layout"),
-        //         bind_group_layouts: &[&camera_bind_group_layout, &light_bind_group_layout],
-        //         push_constant_ranges: &[],
-        //     });
-        //     let shader = wgpu::ShaderModuleDescriptor {
-        //         label: Some("Light Shader"),
-        //         source: wgpu::ShaderSource::Wgsl(include_str!("gfx/light.wgsl").into()),
-        //     };
-        //     create_render_pipeline(
-        //         &device,
-        //         &layout,
-        //         config.format,
-        //         Some(wgpu::TextureFormat::Depth32Float),
-        //         &[ModelVertex::desc()],
-        //         shader,
-        //     )
-        // };
-
         // instances
 
-        // const SPACE_BETWEEN: f32 = 3.0;
-        // let instances = (0..NUM_INSTANCES_PER_ROW)
-        //     .flat_map(|z| {
-        //         (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-        //             let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-        //             let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+        let boids = (0..NUM_BOIDS)
+            .map(move |_| {
+                use rand::prelude::*;
 
-        //             let position = cgmath::Vector3 { x, y: 0.0, z };
+                let mut rng = rand::thread_rng();
 
-        //             let rotation = if position.is_zero() {
-        //                 cgmath::Quaternion::from_axis_angle(
-        //                     cgmath::Vector3::unit_z(),
-        //                     cgmath::Deg(0.0),
-        //                 )
-        //             } else {
-        //                 cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
-        //             };
+                let x = rng.gen_range(0.0..1.0);
+                let y = rng.gen_range(0.0..1.0);
 
-        //             Instance { position, rotation }
-        //         })
-        //     })
-        //     .collect::<Vec<_>>();
+                let vel_x = rng.gen_range(-1.0..1.0);
+                let vel_y = rng.gen_range(-1.0..1.0);
 
-        // let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
-        // let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //     label: Some("Instance Buffer"),
-        //     contents: bytemuck::cast_slice(&instance_data),
-        //     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        // });
+                let position = cgmath::Vector2 { x, y };
+                let velocity = cgmath::Vector2 { x: vel_x, y: vel_y };
 
-        // let obj_model = load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
-        //     .await
-        //     .unwrap();
+                Boid { position, velocity }
+            })
+            .collect::<Vec<_>>();
 
-        // let debug_material = {
-        //     let diffuse_bytes = include_bytes!("../../../../res/cobble-diffuse.png");
-        //     let normal_bytes = include_bytes!("../../../../res/cobble-normal.png");
+        let boid_data = boids.iter().map(Boid::to_raw).collect::<Vec<_>>();
+        let boid_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&boid_data),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
 
-        //     let diffuse_texture =
-        //         DiffuseTexture::from_bytes(diffuse_bytes, &device, &queue).unwrap();
-        //     let normal_texture = NormalTexture::from_bytes(normal_bytes, &device, &queue).unwrap();
+        const BOID_SIZE: f32 = 0.01;
+        const VERTICES: [BoidVertex; 3] = [
+            BoidVertex {
+                position: [-BOID_SIZE, -BOID_SIZE, 0.0],
+                tex_coord: [0.0, 0.0],
+            },
+            BoidVertex {
+                position: [0.0, BOID_SIZE, 0.0],
+                tex_coord: [0.5, 1.0],
+            },
+            BoidVertex {
+                position: [BOID_SIZE, -BOID_SIZE, 0.0],
+                tex_coord: [1.0, 0.0],
+            },
+        ];
 
-        //     Material::new(
-        //         &device,
-        //         "alt-material",
-        //         diffuse_texture,
-        //         normal_texture,
-        //         &texture_bind_group_layout,
-        //     )
-        // };
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(
+                &(0..NUM_BOIDS)
+                    .map(|_| VERTICES)
+                    .flatten()
+                    .collect::<Vec<_>>(),
+            ),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // info!("{:#?}", boid_data);
+        // info!("{:#?}", boid_vertex_data);
 
         Self {
-            tileset,
-            tileset_bind_group,
-            // light_uniform,
-            // light_render_pipeline,
-            // light_bind_group,
-            // light_buffer,
+            camera_buffer,
+            camera_uniform,
+            camera_bind_group,
+            // tileset,
+            // tileset_bind_group,
+            boid_sprite_bind_group,
             render_pipeline,
-            // camera_bind_group,
-            // debug_material,
             surface,
             device,
             queue,
             config,
             size,
-            // camera_controller,
-            // camera_uniform,
-            // camera_buffer,
-            // instance_buffer,
-            // instances,
-            // depth_texture,
-            // obj_model,
+            vertex_buffer,
+            boid_buffer,
+            boids,
         }
     }
 
@@ -426,7 +380,112 @@ impl<'w> State<'w> {
         }
     }
 
-    fn update(&mut self, dt: &DeltaT, camera: &mut Camera, controller: &mut CameraController) {
+    fn update(
+        &mut self,
+        dt: &DeltaT,
+        boid_params: &BoidParams,
+        camera: &mut Camera,
+        controller: &mut CameraController,
+    ) {
+        for i in 0..self.boids.len() {
+            let mut seperation_vec = Vector2::zero();
+            let mut alignment_vec = Vector2::zero();
+
+            let mut friends = Vec::new();
+
+            for j in 0..self.boids.len() {
+                if i == j {
+                    continue;
+                }
+
+                let outer_boid = &self.boids[i];
+                let inner_boid = &self.boids[j];
+
+                let dst_vec = outer_boid.position - inner_boid.position;
+                let dx = dst_vec.x.abs();
+                let dy = dst_vec.y.abs();
+
+                if dx <= boid_params.enemy_radius.x && dy <= boid_params.enemy_radius.y {
+                    seperation_vec += dst_vec;
+                } else if dx <= boid_params.friend_radius.x && dy <= boid_params.friend_radius.y {
+                    alignment_vec += inner_boid.velocity;
+                    friends.push(inner_boid.position);
+                }
+            }
+
+            let boid = &mut self.boids[i];
+
+            let mut cohesion_vec = Vector2::zero();
+            if friends.len() != 0 {
+                let avg_x = friends.iter().map(|p| p.x).sum::<f32>() / friends.len() as f32;
+                let avg_y = friends.iter().map(|p| p.y).sum::<f32>() / friends.len() as f32;
+
+                cohesion_vec = Vector2::new(avg_x, avg_y) - boid.position;
+                alignment_vec /= friends.len() as f32;
+
+                if !seperation_vec.is_zero() {
+                    seperation_vec = seperation_vec.normalize();
+                }
+                if !alignment_vec.is_zero() {
+                    alignment_vec = alignment_vec.normalize();
+                }
+                if !cohesion_vec.is_zero() {
+                    cohesion_vec = cohesion_vec.normalize();
+                }
+            }
+
+            boid.velocity += seperation_vec * boid_params.seperation_force
+                + alignment_vec * boid_params.alignment_force
+                + cohesion_vec * boid_params.cohesion_force;
+
+            if boid.velocity.x.is_negative() {
+                boid.velocity.x = boid
+                    .velocity
+                    .x
+                    .clamp(-boid_params.max_speed, -boid_params.min_speed);
+            } else {
+                boid.velocity.x = boid
+                    .velocity
+                    .x
+                    .clamp(boid_params.min_speed, boid_params.max_speed);
+            }
+
+            if boid.velocity.y.is_negative() {
+                boid.velocity.y = boid
+                    .velocity
+                    .y
+                    .clamp(-boid_params.max_speed, -boid_params.min_speed);
+            } else {
+                boid.velocity.y = boid
+                    .velocity
+                    .y
+                    .clamp(boid_params.min_speed, boid_params.max_speed);
+            }
+
+            boid.position += boid.velocity * dt.0 as f32;
+
+            // BOUNDS
+            if boid.position.x > 2.0 {
+                boid.position.x = 0.0;
+            }
+            if boid.position.y > 2.0 {
+                boid.position.y = 0.0;
+            }
+
+            if boid.position.x < 0.0 {
+                boid.position.x = 2.0;
+            }
+            if boid.position.y < 0.0 {
+                boid.position.y = 2.0;
+            }
+        }
+
+        self.queue.write_buffer(
+            &self.boid_buffer,
+            0,
+            bytemuck::cast_slice(&self.boids.iter().map(|b| b.to_raw()).collect::<Vec<_>>()),
+        );
+
         // controller.update_camera(camera, dt);
         // self.camera_uniform.update_view_proj(camera);
         // self.queue.write_buffer(
@@ -522,8 +581,12 @@ impl<'w> State<'w> {
             // );
 
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.tileset_bind_group, &[]);
-            render_pass.draw(0..3, 0..1);
+            // render_pass.set_bind_group(0, &self.tileset_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.boid_sprite_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.boid_buffer.slice(..));
+            render_pass.draw(0..NUM_BOIDS as u32 * 3, 0..NUM_BOIDS as u32);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -531,6 +594,17 @@ impl<'w> State<'w> {
 
         Ok(())
     }
+}
+
+#[derive(Debug, Resource, TypeGetter)]
+pub struct BoidParams {
+    pub max_speed: f32,
+    pub min_speed: f32,
+    pub seperation_force: f32,
+    pub alignment_force: f32,
+    pub cohesion_force: f32,
+    pub friend_radius: Vector2<f32>,
+    pub enemy_radius: Vector2<f32>,
 }
 
 fn create_render_pipeline(
@@ -557,7 +631,7 @@ fn create_render_pipeline(
             targets: &[Some(wgpu::ColorTargetState {
                 format: color_format,
                 blend: Some(wgpu::BlendState {
-                    alpha: wgpu::BlendComponent::REPLACE,
+                    alpha: wgpu::BlendComponent::OVER,
                     color: wgpu::BlendComponent::REPLACE,
                 }),
                 write_mask: wgpu::ColorWrites::ALL,
@@ -583,7 +657,7 @@ fn create_render_pipeline(
         multisample: wgpu::MultisampleState {
             count: 1,
             mask: !0,
-            alpha_to_coverage_enabled: false,
+            alpha_to_coverage_enabled: true,
         },
         multiview: None,
     })
@@ -594,7 +668,10 @@ pub struct DeltaT(pub f64);
 
 pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
     let event_loop = EventLoop::new().unwrap();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+    let window = WindowBuilder::new()
+        .with_inner_size(PhysicalSize::new(1200, 1200))
+        .build(&event_loop)
+        .unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut state = State::new(&window).await;
 
@@ -822,7 +899,13 @@ fn update_and_render(
         let mut camera_controller =
             unsafe { ResMut::<CameraController>::new(world.as_unsafe_world()) };
         let dt = unsafe { Res::new(world.as_unsafe_world()) };
-        state.update(&dt, camera.as_mut(), camera_controller.as_mut());
+        let boid_params = unsafe { Res::<BoidParams>::new(world.as_unsafe_world()) };
+        state.update(
+            &dt,
+            boid_params.as_ref(),
+            camera.as_mut(),
+            camera_controller.as_mut(),
+        );
     }
 
     match state.render() {
