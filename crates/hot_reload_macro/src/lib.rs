@@ -45,7 +45,7 @@ pub fn hot_reload(
 
         let loader_f = quote! {
             use ::winny::prelude::*;
-            pub fn #name (#args __internal_lib: Res<::winny::hot_reload::LinkedLib>) {
+            pub fn #name (__internal_lib: Res<::winny::hot_reload::LinkedLib>, #args) {
                 let f = unsafe {
                     __internal_lib
                         .linked_lib

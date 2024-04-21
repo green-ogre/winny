@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
+use cgmath::{Quaternion, Rotation3, Vector3};
 use logger::{info, warn};
 use wgpu::util::DeviceExt;
 
@@ -22,6 +23,90 @@ pub const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
     NUM_INSTANCES_PER_ROW as f32 * 0.5,
 );
 
+#[derive(Debug)]
+pub struct Boid {
+    pub position: cgmath::Vector2<f32>,
+    pub velocity: cgmath::Vector2<f32>,
+}
+
+impl Boid {
+    pub fn to_raw(&self) -> BoidRaw {
+        BoidRaw {
+            position: (cgmath::Matrix4::from_translation(cgmath::Vector3 {
+                x: self.position.x,
+                y: self.position.y,
+                z: 0.0,
+            }) * cgmath::Matrix4::from(Quaternion::from_arc(
+                cgmath::Vector3 {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                },
+                cgmath::Vector3 {
+                    x: self.velocity.x,
+                    y: self.velocity.y,
+                    z: 0.0,
+                },
+                None,
+            )))
+            .into(),
+        }
+
+        // const BOID_SIZE: f32 = 0.02;
+        // [
+        //     BoidVertex {
+        //         position: [
+        //             self.position.x - BOID_SIZE,
+        //             self.position.y - BOID_SIZE,
+        //             0.0,
+        //         ],
+        //         tex_coord: [0.0, 0.0],
+        //     },
+        //     BoidVertex {
+        //         position: [self.position.x, self.position.y + BOID_SIZE, 0.0],
+        //         tex_coord: [0.5, 1.0],
+        //     },
+        //     BoidVertex {
+        //         position: [
+        //             self.position.x + BOID_SIZE,
+        //             self.position.y - BOID_SIZE,
+        //             0.0,
+        //         ],
+        //         tex_coord: [1.0, 0.0],
+        //     },
+        // ]
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct BoidVertex {
+    pub position: [f32; 3],
+    pub tex_coord: [f32; 2],
+}
+
+impl BoidVertex {
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<BoidVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ],
+        }
+    }
+}
+
 pub struct Instance {
     pub position: cgmath::Vector3<f32>,
     pub rotation: cgmath::Quaternion<f32>,
@@ -34,6 +119,45 @@ impl Instance {
         InstanceRaw {
             model: model.into(),
             normal: cgmath::Matrix3::from(self.rotation).into(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[allow(dead_code)]
+pub struct BoidRaw {
+    position: [[f32; 4]; 4],
+}
+
+impl Vertex for BoidRaw {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<BoidRaw>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+            ],
         }
     }
 }
