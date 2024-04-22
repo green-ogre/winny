@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
-use cgmath::{Quaternion, Rotation3, Vector3};
+use cgmath::{InnerSpace, Quaternion, Rotation3, Vector3};
 use logger::{info, warn};
 use wgpu::util::DeviceExt;
 
@@ -27,29 +27,64 @@ pub const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
 pub struct Boid {
     pub position: cgmath::Vector2<f32>,
     pub velocity: cgmath::Vector2<f32>,
+    pub state: BoidState,
+    pub num_friends: u32,
+}
+
+#[derive(Debug)]
+pub enum BoidState {
+    Selected,
+    Friend,
+    Enemy,
+    None,
 }
 
 impl Boid {
     pub fn to_raw(&self) -> BoidRaw {
+        let rot = cgmath::Matrix4::from(Quaternion::from_arc(
+            cgmath::Vector3 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            },
+            cgmath::Vector3 {
+                x: self.velocity.x / 50.0,
+                y: self.velocity.y / 50.0,
+                z: 0.0,
+            },
+            None,
+        ));
+
+        let v1 = cgmath::Vector3 {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        };
+        let v2 = cgmath::Vector3 {
+            x: self.velocity.x / 50.0,
+            y: self.velocity.y / 50.0,
+            z: 0.0,
+        };
+
+        let rotation = v1.angle(v2).0 / (2.0 * 3.14);
+
         BoidRaw {
             position: (cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                x: self.position.x,
-                y: self.position.y,
+                x: self.position.x / 50.0,
+                y: self.position.y / 50.0,
                 z: 0.0,
-            }) * cgmath::Matrix4::from(Quaternion::from_arc(
-                cgmath::Vector3 {
-                    x: 0.0,
-                    y: 1.0,
-                    z: 0.0,
-                },
-                cgmath::Vector3 {
-                    x: self.velocity.x,
-                    y: self.velocity.y,
-                    z: 0.0,
-                },
-                None,
-            )))
-            .into(),
+            }) * rot)
+                .into(),
+            color: match self.state {
+                BoidState::Selected => [0.2, 1.0, 1.0, 1.0],
+                BoidState::Friend => [0.0, 1.0, 0.0, 1.0],
+                BoidState::Enemy => [1.0, 0.0, 0.0, 1.0],
+                BoidState::None => [1.0, 1.0, 1.0, 1.0],
+            },
+            num_friends: self.num_friends,
+            _padding: [0.0, 0.0, 0.0],
+            rotation,
+            _padding2: [0.0, 0.0, 0.0],
         }
 
         // const BOID_SIZE: f32 = 0.02;
@@ -128,6 +163,11 @@ impl Instance {
 #[allow(dead_code)]
 pub struct BoidRaw {
     position: [[f32; 4]; 4],
+    color: [f32; 4],
+    num_friends: u32,
+    _padding: [f32; 3],
+    rotation: f32,
+    _padding2: [f32; 3],
 }
 
 impl Vertex for BoidRaw {
@@ -156,6 +196,21 @@ impl Vertex for BoidRaw {
                     offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
                     shader_location: 5,
                     format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 20]>() as wgpu::BufferAddress,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 24]>() as wgpu::BufferAddress,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32,
                 },
             ],
         }

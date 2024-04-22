@@ -20,6 +20,9 @@ tobj = { version = "3.2.1", features = [
 ]}
 winit = "0.29.15"
 rand = "0.8.5"
+egui = "0.27.2"
+egui-wgpu = "0.27.2"
+egui-winit = "0.27.2"
 
 [dependencies.image]
 version = "0.24"
