@@ -7,20 +7,22 @@ use std::{
     io::Read,
     marker::PhantomData,
     num::NonZeroU32,
-    sync::mpsc::{channel, Receiver},
+    sync::mpsc::{channel, Receiver, Sender},
     thread::sleep,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use ecs::{Event, EventWriter, Res, ResMut, Resource, Scheduler, TypeGetter, World};
+use egui_winit::EventResponse;
 use gilrs::{EventType, Gilrs};
 use image::GenericImageView;
 use wgpu::{
+    rwh::HasDisplayHandle,
     util::{DeviceExt, RenderEncoder},
     SurfaceTargetUnsafe,
 };
 use winit::{
-    dpi::PhysicalSize,
+    dpi::{PhysicalPosition, PhysicalSize},
     event::{DeviceEvent, ElementState, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::PhysicalKey,
@@ -33,9 +35,9 @@ use crate::{
     prelude::{
         load_model, load_texture,
         texture::{DepthTexture, DiffuseTexture, NormalTexture},
-        Boid, BoidRaw, BoidVertex, Camera, CameraController, DrawLight, DrawModel, FullscreenQuad,
-        Instance, InstanceRaw, Material, Model, ModelVertex, PointLightUniform, Projection, Vertex,
-        NUM_INSTANCES_PER_ROW,
+        Boid, BoidRaw, BoidState, BoidVertex, Camera, CameraController, DrawLight, DrawModel,
+        FullscreenQuad, Instance, InstanceRaw, Material, Model, ModelVertex, PointLightUniform,
+        Projection, Vertex, NUM_INSTANCES_PER_ROW,
     },
     App,
 };
@@ -63,12 +65,15 @@ impl CameraUniform {
     }
 }
 
-const NUM_BOIDS: usize = 1000;
+const NUM_BOIDS: usize = 1500;
 
 struct State<'w> {
     render_pipeline: wgpu::RenderPipeline,
+    primitive_render_pipeline: wgpu::RenderPipeline,
     // tileset_bind_group: wgpu::BindGroup,
     boid_sprite_bind_group: wgpu::BindGroup,
+    boid_color_bind_group: wgpu::BindGroup,
+    boid_rot_color_bind_group: wgpu::BindGroup,
     surface: wgpu::Surface<'w>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -81,10 +86,110 @@ struct State<'w> {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     camera_uniform: CameraUniform,
+    egui_renderer: EguiRenderer,
+    window: Window,
+}
+
+pub struct EguiRenderer {
+    state: egui_winit::State,
+    renderer: egui_wgpu::Renderer,
+}
+
+impl EguiRenderer {
+    pub fn new(
+        device: &wgpu::Device,
+        output_color_format: wgpu::TextureFormat,
+        msaa_samples: u32,
+        window: &Window,
+    ) -> Self {
+        let egui_context = egui::Context::default();
+        let egui_state =
+            egui_winit::State::new(egui_context, egui::ViewportId::ROOT, &window, None, None);
+        let egui_renderer =
+            egui_wgpu::Renderer::new(device, output_color_format, None, msaa_samples);
+
+        Self {
+            state: egui_state,
+            renderer: egui_renderer,
+        }
+    }
+
+    pub fn handle_input(
+        &mut self,
+        window: &Window,
+        event: Option<&WindowEvent>,
+        mouse_delta: Option<(f64, f64)>,
+    ) -> Option<EventResponse> {
+        if let Some(event) = event.and_then(|e| Some(e)) {
+            Some(self.state.on_window_event(&window, &event))
+        } else if let Some(mouse_delta) = mouse_delta.and_then(|d| Some(d)) {
+            let _ = self.state.on_mouse_motion(mouse_delta);
+            None
+        } else {
+            None
+        }
+    }
+
+    pub fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        window: &Window,
+        window_surface_view: &wgpu::TextureView,
+        screen_descriptor: egui_wgpu::ScreenDescriptor,
+        run_ui: impl FnOnce(&egui::Context),
+    ) {
+        // Call before take_egui_input
+        egui_winit::update_viewport_info(
+            &mut egui::ViewportInfo::default(),
+            self.state.egui_ctx(),
+            window,
+        );
+        let raw_input = self.state.take_egui_input(&window);
+        let full_output = self.state.egui_ctx().run(raw_input, |_| {
+            run_ui(&self.state.egui_ctx());
+        });
+
+        self.state
+            .handle_platform_output(&window, full_output.platform_output);
+
+        let tris = self
+            .state
+            .egui_ctx()
+            .tessellate(full_output.shapes, window.scale_factor() as f32);
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.renderer
+                .update_texture(&device, &queue, *id, &image_delta);
+        }
+        self.renderer
+            .update_buffers(&device, &queue, encoder, &tris, &screen_descriptor);
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &window_surface_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            label: Some("egui main render pass"),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        self.renderer.render(&mut rpass, &tris, &screen_descriptor);
+        drop(rpass);
+        for id in &full_output.textures_delta.free {
+            self.renderer.free_texture(id);
+        }
+    }
 }
 
 impl<'w> State<'w> {
-    async fn new(window: &Window) -> Self {
+    async fn new(window: Window) -> Self {
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
 
@@ -168,7 +273,53 @@ impl<'w> State<'w> {
                         count: None,
                     },
                 ],
-                label: Some("texture_bind_group_layout"),
+                label: Some("boid_sprite_bind_group_layout"),
+            });
+
+        let boid_color_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("boid_color_bind_group_layout"),
+            });
+
+        let boid_rot_color_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("boid_rot_color_bind_group_layout"),
             });
 
         // let tileset_bind_group_layout =
@@ -266,6 +417,44 @@ impl<'w> State<'w> {
             label: None,
         });
 
+        let boid_color = load_texture("boid_color.png".into(), &device, &queue)
+            .await
+            .unwrap();
+
+        let boid_color_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &boid_color_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&boid_color.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&boid_color.sampler),
+                },
+            ],
+            label: None,
+        });
+
+        let boid_rot_color = load_texture("boid_rot_color.png".into(), &device, &queue)
+            .await
+            .unwrap();
+
+        let boid_rot_color_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &boid_color_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&boid_rot_color.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&boid_rot_color.sampler),
+                },
+            ],
+            label: None,
+        });
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -273,7 +462,8 @@ impl<'w> State<'w> {
                     &boid_sprite_bind_group_layout,
                     // &tileset_bind_group_layout,
                     &camera_bind_group_layout,
-                    // &light_bind_group_layout,
+                    &boid_color_bind_group_layout,
+                    &boid_rot_color_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
@@ -294,16 +484,43 @@ impl<'w> State<'w> {
             )
         };
 
+        let primitive_render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[
+                    &boid_sprite_bind_group_layout,
+                    // &tileset_bind_group_layout,
+                    &camera_bind_group_layout,
+                    // &light_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
+
+        let primitive_render_pipeline = {
+            let shader = wgpu::ShaderModuleDescriptor {
+                label: Some("Primitives Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("gfx/primitives.wgsl").into()),
+            };
+            create_render_pipeline(
+                &device,
+                &primitive_render_pipeline_layout,
+                config.format,
+                None,
+                &[],
+                shader,
+            )
+        };
+
         // instances
 
         let boids = (0..NUM_BOIDS)
-            .map(move |_| {
+            .map(move |i| {
                 use rand::prelude::*;
 
-                let mut rng = rand::thread_rng();
+                let mut rng = StdRng::seed_from_u64(150);
 
-                let x = rng.gen_range(0.0..1.0);
-                let y = rng.gen_range(0.0..1.0);
+                let x = rng.gen_range(0.0..100.0);
+                let y = rng.gen_range(0.0..100.0);
 
                 let vel_x = rng.gen_range(-1.0..1.0);
                 let vel_y = rng.gen_range(-1.0..1.0);
@@ -311,7 +528,18 @@ impl<'w> State<'w> {
                 let position = cgmath::Vector2 { x, y };
                 let velocity = cgmath::Vector2 { x: vel_x, y: vel_y };
 
-                Boid { position, velocity }
+                let state = if i == 0 {
+                    crate::prelude::BoidState::Selected
+                } else {
+                    crate::prelude::BoidState::None
+                };
+
+                Boid {
+                    position,
+                    velocity,
+                    state,
+                    num_friends: 0,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -322,7 +550,7 @@ impl<'w> State<'w> {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
-        const BOID_SIZE: f32 = 0.01;
+        const BOID_SIZE: f32 = 0.008;
         const VERTICES: [BoidVertex; 3] = [
             BoidVertex {
                 position: [-BOID_SIZE, -BOID_SIZE, 0.0],
@@ -349,16 +577,20 @@ impl<'w> State<'w> {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
-        // info!("{:#?}", boid_data);
-        // info!("{:#?}", boid_vertex_data);
+        let egui_renderer = EguiRenderer::new(&device, config.format, 1, &window);
 
         Self {
+            primitive_render_pipeline,
+            window,
+            egui_renderer,
             camera_buffer,
             camera_uniform,
             camera_bind_group,
             // tileset,
             // tileset_bind_group,
             boid_sprite_bind_group,
+            boid_color_bind_group,
+            boid_rot_color_bind_group,
             render_pipeline,
             surface,
             device,
@@ -380,13 +612,10 @@ impl<'w> State<'w> {
         }
     }
 
-    fn update(
-        &mut self,
-        dt: &DeltaT,
-        boid_params: &BoidParams,
-        camera: &mut Camera,
-        controller: &mut CameraController,
-    ) {
+    fn update(&mut self, dt: &DeltaT, boid_params: &BoidParams) {
+        let dst_vec = self.boids[0].position - self.boids[1].position;
+        // info!("{:?}", dst_vec);
+
         for i in 0..self.boids.len() {
             let mut seperation_vec = Vector2::zero();
             let mut alignment_vec = Vector2::zero();
@@ -398,30 +627,39 @@ impl<'w> State<'w> {
                     continue;
                 }
 
-                let outer_boid = &self.boids[i];
-                let inner_boid = &self.boids[j];
+                let dst_to = self.boids[i].position.distance(self.boids[j].position);
+                let dst_vec = self.boids[i].position - self.boids[j].position;
 
-                let dst_vec = outer_boid.position - inner_boid.position;
-                let dx = dst_vec.x.abs();
-                let dy = dst_vec.y.abs();
-
-                if dx <= boid_params.enemy_radius.x && dy <= boid_params.enemy_radius.y {
+                if dst_to <= boid_params.enemy_radius {
                     seperation_vec += dst_vec;
-                } else if dx <= boid_params.friend_radius.x && dy <= boid_params.friend_radius.y {
-                    alignment_vec += inner_boid.velocity;
-                    friends.push(inner_boid.position);
+                    if i == 0 {
+                        self.boids[j].state = BoidState::Enemy;
+                    }
+                } else if dst_to <= boid_params.friend_radius {
+                    alignment_vec += self.boids[j].velocity;
+                    friends.push(self.boids[j].position);
+                    if i == 0 {
+                        self.boids[j].state = BoidState::Friend;
+                    }
+                } else {
+                    if i == 0 {
+                        self.boids[j].state = BoidState::None;
+                    }
                 }
             }
 
             let boid = &mut self.boids[i];
 
+            boid.num_friends = friends.len() as u32;
+
             let mut cohesion_vec = Vector2::zero();
             if friends.len() != 0 {
                 let avg_x = friends.iter().map(|p| p.x).sum::<f32>() / friends.len() as f32;
                 let avg_y = friends.iter().map(|p| p.y).sum::<f32>() / friends.len() as f32;
-
                 cohesion_vec = Vector2::new(avg_x, avg_y) - boid.position;
+
                 alignment_vec /= friends.len() as f32;
+                alignment_vec -= boid.position;
 
                 if !seperation_vec.is_zero() {
                     seperation_vec = seperation_vec.normalize();
@@ -438,46 +676,35 @@ impl<'w> State<'w> {
                 + alignment_vec * boid_params.alignment_force
                 + cohesion_vec * boid_params.cohesion_force;
 
-            if boid.velocity.x.is_negative() {
-                boid.velocity.x = boid
-                    .velocity
-                    .x
-                    .clamp(-boid_params.max_speed, -boid_params.min_speed);
-            } else {
-                boid.velocity.x = boid
-                    .velocity
-                    .x
-                    .clamp(boid_params.min_speed, boid_params.max_speed);
-            }
-
-            if boid.velocity.y.is_negative() {
-                boid.velocity.y = boid
-                    .velocity
-                    .y
-                    .clamp(-boid_params.max_speed, -boid_params.min_speed);
-            } else {
-                boid.velocity.y = boid
-                    .velocity
-                    .y
-                    .clamp(boid_params.min_speed, boid_params.max_speed);
-            }
-
-            boid.position += boid.velocity * dt.0 as f32;
+            let mut speed = boid.velocity.magnitude();
+            let dir = boid.velocity / speed;
+            speed = speed.clamp(boid_params.min_speed, boid_params.max_speed);
 
             // BOUNDS
-            if boid.position.x > 2.0 {
-                boid.position.x = 0.0;
+            if boid.position.x > 90.0 {
+                // let strength = 100.0 - boid.position.x;
+                // dir.x -= boid_params.steering_force * strength * dt.0 as f32;
+                boid.position.x = 10.0;
             }
-            if boid.position.y > 2.0 {
-                boid.position.y = 0.0;
+            if boid.position.y > 90.0 {
+                // let strength = 100.0 - boid.position.y;
+                // dir.y -= boid_params.steering_force * strength * dt.0 as f32;
+                boid.position.y = 10.0;
             }
 
-            if boid.position.x < 0.0 {
-                boid.position.x = 2.0;
+            if boid.position.x < 10.0 {
+                // let strength = 10.0 - boid.position.x;
+                // dir.x += boid_params.steering_force * strength * dt.0 as f32;
+                boid.position.x = 90.0;
             }
-            if boid.position.y < 0.0 {
-                boid.position.y = 2.0;
+            if boid.position.y < 10.0 {
+                // let strength = 10.0 - boid.position.y;
+                // dir.y += boid_params.steering_force * strength * dt.0 as f32;
+                boid.position.y = 90.0;
             }
+
+            boid.velocity = speed * dir;
+            boid.position += boid.velocity * dt.0 as f32;
         }
 
         self.queue.write_buffer(
@@ -485,47 +712,15 @@ impl<'w> State<'w> {
             0,
             bytemuck::cast_slice(&self.boids.iter().map(|b| b.to_raw()).collect::<Vec<_>>()),
         );
-
-        // controller.update_camera(camera, dt);
-        // self.camera_uniform.update_view_proj(camera);
-        // self.queue.write_buffer(
-        //     &self.camera_buffer,
-        //     0,
-        //     bytemuck::cast_slice(&[self.camera_uniform]),
-        // );
-
-        // update cudes
-        // let dt = perf.last_frame_duration().unwrap_or_default();
-        // for inst in state.instances.iter_mut() {
-        //     inst.rotation = inst.rotation
-        //         * cgmath::Quaternion::from_angle_y(cgmath::Rad((dt.as_secs_f64() * 1.0) as f32));
-        // }
-
-        // Update the lights
-        // let old_color = self.light_uniform.color;
-        // self.light_uniform.color = [
-        //     (old_color[0] + 0.001) % 1.0,
-        //     (old_color[1] + 0.002) % 1.0,
-        //     (old_color[2] + 0.003) % 1.0,
-        // ];
-
-        // let old_position: cgmath::Vector3<_> = self.light_uniform.position.into();
-        // self.light_uniform.position = (cgmath::Quaternion::from_axis_angle(
-        //     (0.0, 0.0, 1.0).into(),
-        //     cgmath::Deg((dt.0 * 50.0) as f32),
-        // ) * old_position)
-        //     .into();
-
-        // self.queue.write_buffer(
-        //     &self.light_buffer,
-        //     0,
-        //     bytemuck::cast_slice(&[self.light_uniform]),
-        // );
     }
 
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+    fn render(
+        &mut self,
+        params: &mut BoidParams,
+        param_presets: &mut BoidParamPresets,
+    ) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
-        let view = output
+        let mut view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -535,59 +730,113 @@ impl<'w> State<'w> {
                 label: Some("Render Encoder"),
             });
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.1,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                // depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                //     view: &self.depth_texture.view,
-                //     depth_ops: Some(wgpu::Operations {
-                //         load: wgpu::LoadOp::Clear(1.0),
-                //         store: wgpu::StoreOp::Store,
-                //     }),
-                //     stencil_ops: None,
-                // }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
 
-            // render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            // render_pass.set_pipeline(&self.light_render_pipeline); // NEW!
-            // render_pass.draw_light_model(
-            //     &self.obj_model,
-            //     &self.camera_bind_group,
-            //     &self.light_bind_group,
-            // );
+        render_pass.set_pipeline(&self.render_pipeline);
+        // render_pass.set_bind_group(0, &self.tileset_bind_group, &[]);
+        render_pass.set_bind_group(0, &self.boid_sprite_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+        render_pass.set_bind_group(2, &self.boid_color_bind_group, &[]);
+        render_pass.set_bind_group(3, &self.boid_rot_color_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, self.boid_buffer.slice(..));
+        render_pass.draw(0..NUM_BOIDS as u32 * 3, 0..NUM_BOIDS as u32);
+        drop(render_pass);
 
-            // render_pass.set_pipeline(&self.render_pipeline);
-            // render_pass.draw_model_instanced(
-            //     &self.obj_model,
-            //     0..self.instances.len() as u32,
-            //     &self.camera_bind_group,
-            //     &self.light_bind_group,
-            // );
+        self.egui_renderer.draw(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &self.window,
+            &mut view,
+            egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [
+                    self.window.inner_size().width,
+                    self.window.inner_size().height,
+                ],
+                pixels_per_point: self.window.scale_factor() as f32,
+            },
+            |ui| {
+                egui::Window::new("Boid Parameters")
+                    .resizable(true)
+                    .show(&ui, |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut params.seperation_force, 0.0..=2.0)
+                                .text("Seperation Force"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut params.alignment_force, 0.0..=2.0)
+                                .text("Alignment Force"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut params.cohesion_force, 0.0..=1.0)
+                                .text("Cohesion Force"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut params.max_speed, 0.0..=20.0).text("Max Speed"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut params.min_speed, 0.0..=20.0).text("Min Speed"),
+                        );
 
-            render_pass.set_pipeline(&self.render_pipeline);
-            // render_pass.set_bind_group(0, &self.tileset_bind_group, &[]);
-            render_pass.set_bind_group(0, &self.boid_sprite_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.boid_buffer.slice(..));
-            render_pass.draw(0..NUM_BOIDS as u32 * 3, 0..NUM_BOIDS as u32);
-        }
+                        if params.min_speed > params.max_speed {
+                            params.max_speed = params.min_speed;
+                        }
+
+                        ui.add(
+                            egui::Slider::new(&mut params.friend_radius, 0.0..=20.0)
+                                .text("Friend Radius"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut params.enemy_radius, 0.0..=20.0)
+                                .text("Enemy Radius"),
+                        );
+
+                        if params.enemy_radius > params.friend_radius {
+                            params.friend_radius = params.enemy_radius;
+                        }
+
+                        ui.add(
+                            egui::Slider::new(&mut params.steering_force, 0.0..=20.0)
+                                .text("Steering Force"),
+                        );
+
+                        ui.label("Presets");
+                        for i in 0..5 {
+                            if i == param_presets.index {
+                                ui.add_enabled(false, egui::Button::new(format!("{}", i + 1)));
+                            } else {
+                                if ui.add(egui::Button::new(format!("{}", i + 1))).clicked() {
+                                    *params = param_presets.presets[i];
+                                    param_presets.index = i;
+                                }
+                            }
+                        }
+
+                        if ui.add(egui::Button::new("Set")).clicked() {
+                            param_presets.presets[param_presets.index] = *params;
+                        }
+                    });
+            },
+        );
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -596,15 +845,31 @@ impl<'w> State<'w> {
     }
 }
 
-#[derive(Debug, Resource, TypeGetter)]
+#[derive(Debug, Resource, TypeGetter, Clone, Copy)]
 pub struct BoidParams {
     pub max_speed: f32,
     pub min_speed: f32,
     pub seperation_force: f32,
     pub alignment_force: f32,
     pub cohesion_force: f32,
-    pub friend_radius: Vector2<f32>,
-    pub enemy_radius: Vector2<f32>,
+    pub friend_radius: f32,
+    pub enemy_radius: f32,
+    pub steering_force: f32,
+}
+
+impl Default for BoidParams {
+    fn default() -> Self {
+        Self {
+            max_speed: 19.0,
+            min_speed: 16.0,
+            seperation_force: 0.2,
+            alignment_force: 0.2,
+            cohesion_force: 0.05,
+            friend_radius: 6.0,
+            enemy_radius: 2.0,
+            steering_force: 2.0,
+        }
+    }
 }
 
 fn create_render_pipeline(
@@ -647,13 +912,6 @@ fn create_render_pipeline(
             conservative: false,
         },
         depth_stencil: None,
-        // depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
-        //     format,
-        //     depth_write_enabled: true,
-        //     depth_compare: wgpu::CompareFunction::Less,
-        //     stencil: wgpu::StencilState::default(),
-        //     bias: wgpu::DepthBiasState::default(),
-        // }),
         multisample: wgpu::MultisampleState {
             count: 1,
             mask: !0,
@@ -670,10 +928,11 @@ pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()
         .with_inner_size(PhysicalSize::new(1200, 1200))
+        .with_position(PhysicalPosition::new(100, 100))
         .build(&event_loop)
         .unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut state = State::new(&window).await;
+    let mut state = State::new(window).await;
 
     let projection = Projection::new(
         state.config.width,
@@ -689,6 +948,11 @@ pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
         cgmath::Deg(-20.0),
         projection,
     );
+
+    world.insert_resource(BoidParamPresets {
+        presets: vec![BoidParams::default(); 5],
+        index: 0,
+    });
 
     world.insert_resource(DeltaT(0.0));
     world.insert_resource(camera_controller);
@@ -738,7 +1002,8 @@ pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
         }
     });
 
-    let (winit_event_tx, winit_event_rx) = channel();
+    let (winit_window_event_tx, winit_window_event_rx) = channel();
+    let (winit_device_event_tx, winit_device_event_rx) = channel::<DeviceEvent>();
     // This is necessary because exiting the winit event_loop will exit the program, so a message
     // is sent to the event_loop when the game_loop has finished exiting
     let (winit_exit_tx, winit_exit_rx) = channel();
@@ -747,27 +1012,27 @@ pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
     std::thread::spawn(move || loop {
         perf.start();
 
-        for event in winit_event_rx.try_iter() {
+        for event in winit_window_event_rx.try_iter() {
+            if let Some(response) =
+                state
+                    .egui_renderer
+                    .handle_input(&state.window, Some(&event), None)
+            {
+                if response.consumed {
+                    continue;
+                }
+            }
+
             match event {
-                winit::event::Event::WindowEvent {
-                    event: WindowEvent::Resized(new_size),
-                    ..
-                } => {
+                WindowEvent::Resized(new_size) => {
                     state.resize(new_size);
                 }
-                winit::event::Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
+                WindowEvent::CloseRequested => {
                     exit_game(&perf, &mut world, &mut scheduler);
                     winit_exit_tx.send(()).unwrap();
                 }
-                winit::event::Event::WindowEvent {
-                    event:
-                        WindowEvent::KeyboardInput {
-                            event: key_event, ..
-                        },
-                    ..
+                WindowEvent::KeyboardInput {
+                    event: key_event, ..
                 } => {
                     let mut user_input = unsafe { EventWriter::new(world.as_unsafe_world()) };
 
@@ -781,12 +1046,19 @@ pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
                         ));
                     }
                 }
-                winit::event::Event::DeviceEvent {
-                    event: DeviceEvent::MouseMotion { delta },
-                    ..
-                } => {
+                _ => {}
+            }
+        }
+
+        for event in winit_device_event_rx.try_iter() {
+            match event {
+                DeviceEvent::MouseMotion { delta } => {
                     let mut user_input = unsafe { EventWriter::new(world.as_unsafe_world()) };
                     user_input.send(MouseInput::new(delta.0, delta.1));
+
+                    state
+                        .egui_renderer
+                        .handle_input(&state.window, None, Some(delta));
                 }
                 _ => (),
             }
@@ -805,32 +1077,15 @@ pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
 
     // Pipe these events into the update and render thread
     let _ = event_loop.run(move |event, elwt| match event {
-        winit::event::Event::WindowEvent {
-            event: WindowEvent::Resized(_),
-            ..
-        } => {
-            winit_event_tx.send(event).unwrap();
-        }
-        winit::event::Event::WindowEvent {
-            event: WindowEvent::CloseRequested,
-            ..
-        } => {
-            winit_event_tx.send(event).unwrap();
-            winit_exit_rx.recv().unwrap();
+        winit::event::Event::WindowEvent { event, .. } => {
+            winit_window_event_tx.send(event.clone()).unwrap();
 
-            elwt.exit();
+            if let Ok(_) = winit_exit_rx.try_recv() {
+                elwt.exit();
+            }
         }
-        winit::event::Event::WindowEvent {
-            event: WindowEvent::KeyboardInput { .. },
-            ..
-        } => {
-            winit_event_tx.send(event).unwrap();
-        }
-        winit::event::Event::DeviceEvent {
-            event: DeviceEvent::MouseMotion { .. },
-            ..
-        } => {
-            winit_event_tx.send(event).unwrap();
+        winit::event::Event::DeviceEvent { event, .. } => {
+            winit_device_event_tx.send(event).unwrap();
         }
         _ => (),
     });
@@ -895,30 +1150,26 @@ fn update_and_render(
 
     // Render
     {
-        let mut camera = unsafe { ResMut::<Camera>::new(world.as_unsafe_world()) };
-        let mut camera_controller =
-            unsafe { ResMut::<CameraController>::new(world.as_unsafe_world()) };
         let dt = unsafe { Res::new(world.as_unsafe_world()) };
         let boid_params = unsafe { Res::<BoidParams>::new(world.as_unsafe_world()) };
-        state.update(
-            &dt,
-            boid_params.as_ref(),
-            camera.as_mut(),
-            camera_controller.as_mut(),
-        );
+        state.update(&dt, boid_params.as_ref());
     }
 
-    match state.render() {
-        Ok(_) => {}
-        // Reconfigure the surface if lost
-        Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-        // The system is out of memory, we should probably quit
-        Err(wgpu::SurfaceError::OutOfMemory) => {
-            exit_game(perf, world, scheduler);
-            return false;
+    {
+        let mut params = unsafe { ResMut::new(world.as_unsafe_world()) };
+        let mut param_presets = unsafe { ResMut::<BoidParamPresets>::new(world.as_unsafe_world()) };
+        match state.render(&mut params, &mut param_presets) {
+            Ok(_) => {}
+            // Reconfigure the surface if lost
+            Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+            // The system is out of memory, we should probably quit
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                exit_game(perf, world, scheduler);
+                return false;
+            }
+            // All other errors (Outdated, Timeout) should be resolved by the next frame
+            Err(e) => error!("{:?}", e),
         }
-        // All other errors (Outdated, Timeout) should be resolved by the next frame
-        Err(e) => error!("{:?}", e),
     }
 
     perf.stop_debug_event();
@@ -947,6 +1198,12 @@ fn read_file(path: &String) -> Result<Vec<u8>, Box<dyn Error>> {
     f.read(&mut buf)?;
 
     Ok(buf)
+}
+
+#[derive(Debug, Resource, TypeGetter)]
+pub struct BoidParamPresets {
+    presets: Vec<BoidParams>,
+    index: usize,
 }
 
 pub struct InputBuffer {
