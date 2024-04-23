@@ -65,7 +65,7 @@ impl CameraUniform {
     }
 }
 
-const NUM_BOIDS: usize = 1500;
+const NUM_BOIDS: usize = 1000;
 
 struct State<'w> {
     render_pipeline: wgpu::RenderPipeline,
@@ -514,16 +514,16 @@ impl<'w> State<'w> {
         // instances
 
         let boids = (0..NUM_BOIDS)
-            .map(move |i| {
+            .map(|i| {
                 use rand::prelude::*;
 
-                let mut rng = StdRng::seed_from_u64(150);
+                let mut rng = thread_rng();
 
                 let x = rng.gen_range(0.0..100.0);
                 let y = rng.gen_range(0.0..100.0);
 
-                let vel_x = rng.gen_range(-1.0..1.0);
-                let vel_y = rng.gen_range(-1.0..1.0);
+                let vel_x = rng.gen_range(0.9..1.0);
+                let vel_y = rng.gen_range(0.9..1.0);
 
                 let position = cgmath::Vector2 { x, y };
                 let velocity = cgmath::Vector2 { x: vel_x, y: vel_y };
@@ -550,7 +550,7 @@ impl<'w> State<'w> {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
-        const BOID_SIZE: f32 = 0.008;
+        const BOID_SIZE: f32 = 0.004;
         const VERTICES: [BoidVertex; 3] = [
             BoidVertex {
                 position: [-BOID_SIZE, -BOID_SIZE, 0.0],
@@ -777,6 +777,7 @@ impl<'w> State<'w> {
             |ui| {
                 egui::Window::new("Boid Parameters")
                     .resizable(true)
+                    .open(&mut false)
                     .show(&ui, |ui| {
                         ui.add(
                             egui::Slider::new(&mut params.seperation_force, 0.0..=2.0)
@@ -860,10 +861,10 @@ pub struct BoidParams {
 impl Default for BoidParams {
     fn default() -> Self {
         Self {
-            max_speed: 19.0,
-            min_speed: 16.0,
+            max_speed: 15.0,
+            min_speed: 12.0,
             seperation_force: 0.2,
-            alignment_force: 0.2,
+            alignment_force: 0.03,
             cohesion_force: 0.05,
             friend_radius: 6.0,
             enemy_radius: 2.0,
@@ -927,7 +928,7 @@ pub struct DeltaT(pub f64);
 pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()
-        .with_inner_size(PhysicalSize::new(1200, 1200))
+        .with_inner_size(PhysicalSize::new(1800, 1800))
         .with_position(PhysicalPosition::new(100, 100))
         .build(&event_loop)
         .unwrap();
