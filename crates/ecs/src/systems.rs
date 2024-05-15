@@ -186,9 +186,9 @@ pub trait SystemParam {
 
 pub struct Mut<T>(PhantomData<T>);
 
-impl SystemParam for Commands {
+impl SystemParam for Commands<'_> {
     type State = TypeId;
-    type Item<'world, 'state> = Commands;
+    type Item<'world, 'state> = Commands<'world>;
 
     fn access() -> Vec<Access> {
         vec![Access::empty()]
@@ -201,9 +201,9 @@ impl SystemParam for Commands {
 
     fn to_param<'w, 's>(
         _state: &'s mut Self::State,
-        _world: UnsafeWorldCell<'w>,
+        world: UnsafeWorldCell<'w>,
     ) -> Self::Item<'w, 's> {
-        Commands::new()
+        Commands::new(world)
     }
 }
 

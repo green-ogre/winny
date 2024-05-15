@@ -8,35 +8,110 @@ use std::{
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use cgmath::{InnerSpace, Quaternion, Rotation3, Vector3};
+use ecs::{Component, InternalComponent, InternalTypeGetter, TypeGetter, WinnyTypeGetter};
 use logger::{info, warn};
 use wgpu::util::DeviceExt;
 
 use self::texture::{DiffuseTexture, NormalTexture};
 
 pub mod bitmap;
+pub mod camera;
+pub mod gui;
+pub mod renderer;
 pub mod texture;
 
-pub const NUM_INSTANCES_PER_ROW: u32 = 10;
-pub const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
-    NUM_INSTANCES_PER_ROW as f32 * 0.5,
-    0.0,
-    NUM_INSTANCES_PER_ROW as f32 * 0.5,
-);
+// pub const NUM_INSTANCES_PER_ROW: u32 = 10;
+// pub const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
+//     NUM_INSTANCES_PER_ROW as f32 * 0.5,
+//     0.0,
+//     NUM_INSTANCES_PER_ROW as f32 * 0.5,
+// );
 
 #[derive(Debug)]
-pub struct Boid {
-    pub position: cgmath::Vector2<f32>,
-    pub velocity: cgmath::Vector2<f32>,
-    pub state: BoidState,
-    pub num_friends: u32,
+pub struct RGBA {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+
+impl RGBA {
+    pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
+        Self { r, g, b, a }
+    }
+
+    pub fn clear() -> Self {
+        Self {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        }
+    }
 }
 
 #[derive(Debug)]
-pub enum BoidState {
-    Selected,
-    Friend,
-    Enemy,
-    None,
+pub struct Sprite {
+    pub path: PathBuf,
+    pub scale: f32,
+    pub rotation: f32,
+    pub position: Vector2,
+    pub mask: RGBA,
+}
+
+impl Default for Sprite {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::new(),
+            scale: 1.0,
+            rotation: 0.0,
+            position: Vector2::zero(),
+            mask: RGBA::clear(),
+        }
+    }
+}
+
+impl Sprite {}
+
+#[derive(Debug, InternalComponent, WinnyTypeGetter)]
+pub struct Transform2D {
+    t: Vector2,
+}
+
+impl Transform2D {
+    pub fn zero() -> Self {
+        Self { t: Vector2::zero() }
+    }
+
+    pub fn new(x: f32, y: f32) -> Self {
+        Self {
+            t: Vector2::new(x, y),
+        }
+    }
+
+    pub fn as_matrix(&self) -> [f32; 2] {
+        self.t.as_matrix()
+    }
+}
+
+#[derive(Debug, InternalComponent, WinnyTypeGetter)]
+pub struct Vector2 {
+    x: f32,
+    y: f32,
+}
+
+impl Vector2 {
+    pub fn zero() -> Self {
+        Vector2 { x: 0.0, y: 0.0 }
+    }
+
+    pub fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+
+    pub fn as_matrix(&self) -> [f32; 2] {
+        [self.x, self.y]
+    }
 }
 
 impl Boid {

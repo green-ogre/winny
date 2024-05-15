@@ -12,7 +12,7 @@ impl NewEntityCommands {
         }
     }
 
-    pub fn commit(self, world: &mut World) {
+    pub fn commit<'w>(self, world: &mut UnsafeWorldCell<'w>) {
         // world.spawn_table(self.data);
     }
 }
@@ -79,21 +79,22 @@ impl EntityCommands {
         self.despawn = true;
     }
 
-    pub fn commit(self, world: &mut World) {
-        let res = world.apply_entity_commands(self);
-        debug_assert!(res.is_ok());
+    pub fn commit<'w>(self, world: &mut UnsafeWorldCell<'w>) {
+        unsafe { world.apply_entity_commands() };
     }
 }
 
 #[derive(Debug)]
-pub struct Commands {
+pub struct Commands<'w> {
+    world: UnsafeWorldCell<'w>,
     entity_commands: VecDeque<EntityCommands>,
     new_entity_commands: VecDeque<NewEntityCommands>,
 }
 
-impl Commands {
-    pub fn new() -> Self {
+impl<'w> Commands<'w> {
+    pub fn new(world: UnsafeWorldCell<'w>) -> Self {
         Self {
+            world,
             entity_commands: VecDeque::new(),
             new_entity_commands: VecDeque::new(),
         }
@@ -111,14 +112,18 @@ impl Commands {
 
         self.entity_commands.back_mut().unwrap()
     }
+}
 
-    pub fn sync(&mut self, world: &mut World) {
+impl<'w> Drop for Commands<'w> {
+    fn drop(&mut self) {
         self.new_entity_commands
             .drain(..)
-            .for_each(|ec| ec.commit(world));
+            .for_each(|ec| ec.commit(&mut self.world));
 
         self.entity_commands
             .drain(..)
-            .for_each(|ec| ec.commit(world));
+            .for_each(|ec| ec.commit(&mut self.world));
+
+        drop(self)
     }
 }

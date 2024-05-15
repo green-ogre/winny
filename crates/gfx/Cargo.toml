@@ -1,0 +1,21 @@
+[package]
+name = "gfx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+logger = { path = "../logger" }
+
+tobj = { version = "3.2.1", features = [
+    "async",
+]}
+bytemuck = { version = "1.12", features = [ "derive" ] }
+wgpu = "0.19.3"
+egui = "0.27.2"
+winit = "0.29.15"
+egui-wgpu = "0.27.2"
+egui-winit = "0.27.2"
+
+[dependencies.image]
+version = "0.24"
+features = ["png", "jpeg"]

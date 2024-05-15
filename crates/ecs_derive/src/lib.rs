@@ -58,6 +58,49 @@ pub fn component_impl(input: TokenStream) -> TokenStream {
     .into()
 }
 
+#[proc_macro_derive(InternalComponent, attributes(component))]
+pub fn internal_component_impl(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    
+    let mut storage = StorageType::Table;
+
+    for meta in input.attrs.iter().filter(|a| a.path().is_ident("component")) {
+        meta.parse_nested_meta(|nested| {
+            if nested.path.is_ident("storage") {
+                storage = match nested.value()?.parse::<LitStr>()?.value() {
+                    s if s == TABLE => StorageType::Table,
+                    s if s == SPARSE_SET => StorageType::SparseSet,
+                    _ => {
+                        return Err(nested.error("Invalid storage type"));
+                    }
+                };              
+                Ok(())
+            } else {
+                panic!("Invalid component attribute. Use \n\"component(storage = SparseSet)\"\nfor sparse set.");
+            }
+        }).expect("Invalid attribute(s)");
+    }
+
+    let storage = match storage {
+        StorageType::Table => 
+            Ident::new("Table", Span::call_site()),
+        StorageType::SparseSet => 
+            Ident::new("SparseSet", Span::call_site()),
+    };
+
+    quote! {
+        impl crate::prelude::ecs::storage::Storage for #name {
+            fn storage_type() -> crate::prelude::ecs::storage::StorageType {
+                crate::prelude::ecs::storage::StorageType::#storage   
+            }
+        }
+
+        impl crate::prelude::ecs::storage::Component for #name {}
+    }
+    .into()
+}
+
 #[proc_macro_derive(ComponentTest, attributes(component))]
 pub fn component_impl_test(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -187,6 +230,49 @@ pub fn type_getter_impl(input: TokenStream) -> TokenStream {
     .into()
 }
 
+#[proc_macro_derive(WinnyTypeGetter)]
+pub fn winny_type_getter_impl(input: TokenStream) -> TokenStream {
+    let input: DeriveInput = syn::parse(input).unwrap();
+    let name = &input.ident;
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let data = &input.data;
+    let data_decon = match data {
+        syn::Data::Enum(data) => {
+            let d = &data.variants;
+            quote! { #d }.to_string()
+        }
+        syn::Data::Union(_data) => {
+            panic!()
+        }
+        syn::Data::Struct(data) => {
+            let d = &data.fields;
+            quote! {  #d }.to_string()
+        }
+    };
+
+    let names = name.to_string() + &data_decon;
+    let name_str = name.to_string();
+
+    let mut hasher = DefaultHasher::default();
+    hasher.write(names.as_bytes());
+    let id = hasher.finish();
+
+    quote! {
+        use crate::prelude::ecs::any::*;
+        impl #impl_generics TypeGetter for #name #ty_generics #where_clause {
+            fn type_id() -> TypeId {
+                TypeId::new(#id)
+            }
+
+            fn type_name() -> TypeName {
+                TypeName::new(#name_str)
+            }
+        }
+    }
+    .into()
+}
+
 #[proc_macro_derive(InternalTypeGetter)]
 pub fn internal_type_getter_impl(input: TokenStream) -> TokenStream {
     let input: DeriveInput = syn::parse(input).unwrap();
@@ -199,7 +285,7 @@ pub fn internal_type_getter_impl(input: TokenStream) -> TokenStream {
             let d = &data.variants;
             quote! { #d }.to_string()
         }
-        syn::Data::Union(data) => {
+        syn::Data::Union(_data) => {
             panic!()
         }
         syn::Data::Struct(data) => {

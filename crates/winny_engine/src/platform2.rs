@@ -42,156 +42,9 @@ use crate::{
     App,
 };
 
-use cgmath::{num_traits::Signed, prelude::*, Vector2};
-
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct CameraUniform {
-    view_position: [f32; 4],
-    view_proj: [[f32; 4]; 4],
-}
-
-impl CameraUniform {
-    pub fn new() -> Self {
-        Self {
-            view_position: [0.0; 4],
-            view_proj: cgmath::Matrix4::identity().into(),
-        }
-    }
-
-    pub fn update_view_proj(&mut self, camera: &Camera) {
-        self.view_position = camera.position.to_homogeneous().into();
-        self.view_proj = (camera.projection.calc_matrix() * camera.calc_matrix()).into();
-    }
-}
-
-const NUM_BOIDS: usize = 1000;
-
-struct State<'w> {
-    render_pipeline: wgpu::RenderPipeline,
-    primitive_render_pipeline: wgpu::RenderPipeline,
-    // tileset_bind_group: wgpu::BindGroup,
-    boid_sprite_bind_group: wgpu::BindGroup,
-    boid_color_bind_group: wgpu::BindGroup,
-    boid_rot_color_bind_group: wgpu::BindGroup,
-    surface: wgpu::Surface<'w>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    size: winit::dpi::PhysicalSize<u32>,
-    // tileset: DiffuseTexture,
-    boids: Vec<Boid>,
-    boid_buffer: wgpu::Buffer,
-    vertex_buffer: wgpu::Buffer,
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-    camera_uniform: CameraUniform,
-    egui_renderer: EguiRenderer,
-    window: Window,
-}
-
-pub struct EguiRenderer {
-    state: egui_winit::State,
-    renderer: egui_wgpu::Renderer,
-}
-
-impl EguiRenderer {
-    pub fn new(
-        device: &wgpu::Device,
-        output_color_format: wgpu::TextureFormat,
-        msaa_samples: u32,
-        window: &Window,
-    ) -> Self {
-        let egui_context = egui::Context::default();
-        let egui_state =
-            egui_winit::State::new(egui_context, egui::ViewportId::ROOT, &window, None, None);
-        let egui_renderer =
-            egui_wgpu::Renderer::new(device, output_color_format, None, msaa_samples);
-
-        Self {
-            state: egui_state,
-            renderer: egui_renderer,
-        }
-    }
-
-    pub fn handle_input(
-        &mut self,
-        window: &Window,
-        event: Option<&WindowEvent>,
-        mouse_delta: Option<(f64, f64)>,
-    ) -> Option<EventResponse> {
-        if let Some(event) = event.and_then(|e| Some(e)) {
-            Some(self.state.on_window_event(&window, &event))
-        } else if let Some(mouse_delta) = mouse_delta.and_then(|d| Some(d)) {
-            let _ = self.state.on_mouse_motion(mouse_delta);
-            None
-        } else {
-            None
-        }
-    }
-
-    pub fn draw(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        window: &Window,
-        window_surface_view: &wgpu::TextureView,
-        screen_descriptor: egui_wgpu::ScreenDescriptor,
-        run_ui: impl FnOnce(&egui::Context),
-    ) {
-        // Call before take_egui_input
-        egui_winit::update_viewport_info(
-            &mut egui::ViewportInfo::default(),
-            self.state.egui_ctx(),
-            window,
-        );
-        let raw_input = self.state.take_egui_input(&window);
-        let full_output = self.state.egui_ctx().run(raw_input, |_| {
-            run_ui(&self.state.egui_ctx());
-        });
-
-        self.state
-            .handle_platform_output(&window, full_output.platform_output);
-
-        let tris = self
-            .state
-            .egui_ctx()
-            .tessellate(full_output.shapes, window.scale_factor() as f32);
-        for (id, image_delta) in &full_output.textures_delta.set {
-            self.renderer
-                .update_texture(&device, &queue, *id, &image_delta);
-        }
-        self.renderer
-            .update_buffers(&device, &queue, encoder, &tris, &screen_descriptor);
-
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &window_surface_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            label: Some("egui main render pass"),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        self.renderer.render(&mut rpass, &tris, &screen_descriptor);
-        drop(rpass);
-        for id in &full_output.textures_delta.free {
-            self.renderer.free_texture(id);
-        }
-    }
-}
-
 impl<'w> State<'w> {
     async fn new(window: Window) -> Self {
-        // The instance is a handle to our GPU
-        // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
+        // START
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
@@ -213,8 +66,6 @@ impl<'w> State<'w> {
             .await
             .unwrap();
 
-        // info!("Adapter: {:#?}", adapter);
-
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -227,8 +78,6 @@ impl<'w> State<'w> {
             .await
             .unwrap();
 
-        // info!("Device: {:#?}", device);
-
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
             .formats
@@ -240,7 +89,6 @@ impl<'w> State<'w> {
 
         let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration {
-            // magic numbers
             desired_maximum_frame_latency: 3,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -252,6 +100,8 @@ impl<'w> State<'w> {
         };
         info!("Surface Config: {:#?}", config);
         surface.configure(&device, &config);
+
+        // END
 
         let boid_sprite_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -613,9 +463,6 @@ impl<'w> State<'w> {
     }
 
     fn update(&mut self, dt: &DeltaT, boid_params: &BoidParams) {
-        let dst_vec = self.boids[0].position - self.boids[1].position;
-        // info!("{:?}", dst_vec);
-
         for i in 0..self.boids.len() {
             let mut seperation_vec = Vector2::zero();
             let mut alignment_vec = Vector2::zero();
