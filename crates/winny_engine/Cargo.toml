@@ -8,22 +8,11 @@ edition = "2021"
 ecs = { path = "../ecs" }
 logger = { path = "../logger" }
 plugins = { path = "../plugins" }
+gfx = { path = "../gfx" }
 
-bytemuck = { version = "1.12", features = [ "derive" ] }
 pollster = "0.3.0"
 gilrs = "0.10.3"
 wgpu = "0.19.3"
 anyhow = "1.0.82"
 cgmath = "0.18"
-tobj = { version = "3.2.1", features = [
-    "async",
-]}
 winit = "0.29.15"
-rand = "0.8.5"
-egui = "0.27.2"
-egui-wgpu = "0.27.2"
-egui-winit = "0.27.2"
-
-[dependencies.image]
-version = "0.24"
-features = ["png", "jpeg"]

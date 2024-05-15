@@ -2,7 +2,7 @@ use std::{cell::UnsafeCell, marker::PhantomData};
 
 use crate::{Res, ResMut, Resource, TypeGetter, TypeName, World};
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct UnsafeWorldCell<'w>(*mut World, PhantomData<&'w World>);
 
 unsafe impl<'w> Send for UnsafeWorldCell<'w> {}
@@ -52,4 +52,6 @@ impl<'w> UnsafeWorldCell<'w> {
 
         unsafe { self.mut_world().resources.get_resource_mut_by_id(id) }
     }
+
+    pub unsafe fn apply_entity_commands(&mut self) {}
 }
