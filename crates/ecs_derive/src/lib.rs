@@ -4,7 +4,7 @@ use std::hash::Hasher;
 use std::collections::hash_map::DefaultHasher;
 
 use proc_macro::{TokenStream};
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use syn::{parse::{Parse, ParseStream}, parse_macro_input, token::Comma, DeriveInput, Fields, LitInt, LitStr, Result};
 
 enum StorageType {
@@ -47,19 +47,19 @@ pub fn component_impl(input: TokenStream) -> TokenStream {
     };
 
     quote! {
-        impl winny::ecs::storage::Storage for #name {
-            fn storage_type() -> winny::ecs::storage::StorageType {
-                winny::ecs::storage::StorageType::#storage   
+        impl winny::prelude::ecs::storage::Storage for #name {
+            fn storage_type() -> winny::prelude::ecs::storage::StorageType {
+                winny::prelude::ecs::storage::StorageType::#storage   
             }
         }
 
-        impl winny::ecs::storage::Component for #name {}
+        impl winny::prelude::ecs::storage::Component for #name {}
     }
     .into()
 }
 
-#[proc_macro_derive(InternalComponent, attributes(component))]
-pub fn internal_component_impl(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(WinnyComponent, attributes(component))]
+pub fn winny_component_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     
@@ -97,6 +97,49 @@ pub fn internal_component_impl(input: TokenStream) -> TokenStream {
         }
 
         impl crate::prelude::ecs::storage::Component for #name {}
+    }
+    .into()
+}
+
+#[proc_macro_derive(InternalComponent, attributes(component))]
+pub fn internal_component_impl(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    
+    let mut storage = StorageType::Table;
+
+    for meta in input.attrs.iter().filter(|a| a.path().is_ident("component")) {
+        meta.parse_nested_meta(|nested| {
+            if nested.path.is_ident("storage") {
+                storage = match nested.value()?.parse::<LitStr>()?.value() {
+                    s if s == TABLE => StorageType::Table,
+                    s if s == SPARSE_SET => StorageType::SparseSet,
+                    _ => {
+                        return Err(nested.error("Invalid storage type"));
+                    }
+                };              
+                Ok(())
+            } else {
+                panic!("Invalid component attribute. Use \n\"component(storage = SparseSet)\"\nfor sparse set.");
+            }
+        }).expect("Invalid attribute(s)");
+    }
+
+    let storage = match storage {
+        StorageType::Table => 
+            Ident::new("Table", Span::call_site()),
+        StorageType::SparseSet => 
+            Ident::new("SparseSet", Span::call_site()),
+    };
+
+    quote! {
+        impl ::ecs::storage::Storage for #name {
+            fn storage_type() -> ::ecs::storage::StorageType {
+                ::ecs::storage::StorageType::#storage   
+            }
+        }
+
+        impl ::ecs::storage::Component for #name {}
     }
     .into()
 }
@@ -148,11 +191,11 @@ pub fn component_impl_test(input: TokenStream) -> TokenStream {
 pub fn resource_impl(input: TokenStream) -> TokenStream {
     let input: DeriveInput = syn::parse(input).unwrap();
     let name = &input.ident;
-
-    let mut gen = proc_macro2::TokenStream::new();
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     quote! {
-        impl ecs::storage::Resource for #name {}
+        impl #impl_generics winny::prelude::ecs::storage::Resource for #name #ty_generics #where_clause {}
     }.into()
 }
 
@@ -163,31 +206,33 @@ pub fn internal_resource_impl(input: TokenStream) -> TokenStream {
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    let mut gen = proc_macro2::TokenStream::new();
-
-    let impl_block = quote! {
+    quote! {
         impl #impl_generics crate::storage::Resource for #name #ty_generics #where_clause {}
-    };
+    }.into()
+}
 
-    gen.extend(impl_block);
+#[proc_macro_derive(WinnyResource)]
+pub fn winny_resource_impl(input: TokenStream) -> TokenStream {
+    let input: DeriveInput = syn::parse(input).unwrap();
+    let name = &input.ident;
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    gen.into()
+    quote! {
+        impl #impl_generics ::ecs::storage::Resource for #name #ty_generics #where_clause {}
+    }.into()
 }
 
 #[proc_macro_derive(Event)]
 pub fn event_impl(input: TokenStream) -> TokenStream {
     let input: DeriveInput = syn::parse(input).unwrap();
     let name = &input.ident;
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    let mut gen = proc_macro2::TokenStream::new();
-
-    let impl_block = quote! {
-        impl Event for #name {}
-    };
-
-    gen.extend(impl_block);
-
-    gen.into()
+    quote! {
+        impl #impl_generics Event for #name #ty_generics #where_clause {}
+    }.into()
 }
 
 #[proc_macro_derive(TypeGetter)]
@@ -200,7 +245,7 @@ pub fn type_getter_impl(input: TokenStream) -> TokenStream {
             let d = &data.variants;
             quote! { #d }.to_string()
         }
-        syn::Data::Union(data) => {
+        syn::Data::Union(_data) => {
             panic!()
         }
         syn::Data::Struct(data) => {
@@ -208,6 +253,8 @@ pub fn type_getter_impl(input: TokenStream) -> TokenStream {
             quote! {  #d }.to_string()
         }
     };
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let names = name.to_string() + &data_decon;
     let name_str = name.to_string();
@@ -217,7 +264,7 @@ pub fn type_getter_impl(input: TokenStream) -> TokenStream {
     let id = hasher.finish();
 
     quote! {
-        impl ecs::any::TypeGetter for #name {
+        impl #impl_generics ecs::any::TypeGetter for #name #ty_generics #where_clause {
             fn type_id() -> ecs::any::TypeId {
                 ecs::any::TypeId::new(#id)
             }
@@ -261,12 +308,12 @@ pub fn winny_type_getter_impl(input: TokenStream) -> TokenStream {
     quote! {
         use crate::prelude::ecs::any::*;
         impl #impl_generics TypeGetter for #name #ty_generics #where_clause {
-            fn type_id() -> TypeId {
-                TypeId::new(#id)
+            fn type_id() -> crate::prelude::ecs::any::TypeId {
+                crate::prelude::ecs::any::TypeId::new(#id)
             }
 
-            fn type_name() -> TypeName {
-                TypeName::new(#name_str)
+            fn type_name() -> crate::prelude::ecs::any::TypeName {
+                crate::prelude::ecs::any::TypeName::new(#name_str)
             }
         }
     }
@@ -322,17 +369,17 @@ pub fn bundle_impl(input: TokenStream) -> TokenStream {
     let data = &input.data;
 
     match data {
-        syn::Data::Enum(data) => {
+        syn::Data::Enum(_data) => {
             panic!("bunlde must have fields: {}", name.to_string());
         }
-        syn::Data::Union(data) => {
+        syn::Data::Union(_data) => {
             panic!("bunlde must have fields: {}", name.to_string())
         }
         syn::Data::Struct(data) => {
             let mut push = quote!();
-            let mut into_storage = quote!();
             let mut component_ids = quote!();
             let mut component_storage = quote!();
+            let mut desc = quote!();
 
             match &data.fields {
                 Fields::Named(data) => {
@@ -340,20 +387,18 @@ pub fn bundle_impl(input: TokenStream) -> TokenStream {
                         let name = field.ident.as_ref().unwrap();
 
                         push.extend(quote!(
-                        {
-                            let id = self.#name.type_id();
-                            let index = self
-                            .ids()
-                            .iter()
-                            .enumerate()
-                            .find(|(_, other)| **other == id)
-                            .ok_or(winny::ecs::storage::IntoStorageError::MismatchedShape)?.0;
-                            table.storage[index].try_push(&self.#name as &dyn Any).expect("sad");
-                        }
+                            table.push_column(self.#name)?;
                         ));
 
-                        into_storage
-                            .extend(quote!(Box::new(std::cell::RefCell::new(vec![self.#name])),));
+                        let ty = &field.ty.to_token_stream();
+
+                        desc.extend(quote!(
+                            winny::ecs::storage::ComponentDescription {
+                                type_id: winny::ecs::any::TypeId::of::<#ty>(),
+                                layout: std::alloc::Layout::new::<#ty>(),
+                                drop: winny::ecs::storage::new_dumb_drop::<#ty>()
+                            },
+                        ));
 
                         component_ids.extend(quote!(
                             self.#name.type_id(),
@@ -369,29 +414,16 @@ pub fn bundle_impl(input: TokenStream) -> TokenStream {
 
             quote! {
                 impl winny::ecs::storage::Bundle for #name {
-                    fn push_storage(
-                        self,
-                        table: &mut winny::ecs::storage::Table
-                        ) -> Result<(), winny::ecs::storage::IntoStorageError> {
+                    fn push_storage(self, table: &mut winny::ecs::storage::Table) -> Result<(), ()> {
                         #push
+
                         Ok(())
                     }
 
-                    fn push_storage_box(
-                        self: Box<Self>,
-                        table: &mut winny::ecs::storage::Table
-                        ) -> Result<(), winny::ecs::storage::IntoStorageError> {
-                        self.push_storage(table)
-                    }
-
-                    fn into_storage(self) -> Vec<Box<dyn winny::ecs::storage::ComponentVec>> {
+                    fn descriptions(&self) -> Vec<winny::ecs::storage::ComponentDescription> {
                         vec![
-                            #into_storage
+                            #desc
                         ]
-                    }
-
-                    fn into_storage_box(self: Box<Self>) -> Vec<Box<dyn winny::ecs::storage::ComponentVec>> {
-                        self.into_storage_box()
                     }
 
                     fn ids(&self) -> Vec<winny::ecs::any::TypeId>  {
@@ -412,25 +444,24 @@ pub fn bundle_impl(input: TokenStream) -> TokenStream {
     }
 }
 
-
-#[proc_macro_derive(BundleTest)]
-pub fn bundle_impl_test(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(InternalBundle)]
+pub fn internal_bundle_impl(input: TokenStream) -> TokenStream {
     let input: DeriveInput = syn::parse(input).unwrap();
     let name = &input.ident;
     let data = &input.data;
 
     match data {
-        syn::Data::Enum(data) => {
+        syn::Data::Enum(_data) => {
             panic!("bunlde must have fields: {}", name.to_string());
         }
-        syn::Data::Union(data) => {
+        syn::Data::Union(_data) => {
             panic!("bunlde must have fields: {}", name.to_string())
         }
         syn::Data::Struct(data) => {
             let mut push = quote!();
-            let mut into_storage = quote!();
             let mut component_ids = quote!();
             let mut component_storage = quote!();
+            let mut desc = quote!();
 
             match &data.fields {
                 Fields::Named(data) => {
@@ -438,23 +469,21 @@ pub fn bundle_impl_test(input: TokenStream) -> TokenStream {
                         let name = field.ident.as_ref().unwrap();
 
                         push.extend(quote!(
-                        {
-                            let id = self.#name.type_id();
-                            let index = self
-                            .ids()
-                            .iter()
-                            .enumerate()
-                            .find(|(_, other)| **other == id)
-                            .ok_or(crate::storage::IntoStorageError::MismatchedShape)?.0;
-                            table.storage[index].try_push(&self.#name as &dyn Any).expect("sad");
-                        }
+                            table.push_column(self.#name)?;
                         ));
 
-                        into_storage
-                            .extend(quote!(Box::new(std::cell::RefCell::new(vec![self.#name])),));
+                        let ty = &field.ty.to_token_stream();
+
+                        desc.extend(quote!(
+                            ::ecs::storage::ComponentDescription {
+                                type_id: #ty::type_id(),
+                                layout: std::alloc::Layout::new::<#ty>(),
+                                drop: ::ecs::storage::new_dumb_drop::<#ty>()
+                            },
+                        ));
 
                         component_ids.extend(quote!(
-                            self.#name.type_id(),
+                            #ty::type_id(),
                         ));
 
                         component_storage.extend(quote!(
@@ -466,39 +495,27 @@ pub fn bundle_impl_test(input: TokenStream) -> TokenStream {
             }
 
             quote! {
-                impl crate::storage::Bundle for #name {
-                    fn push_storage(
-                        self,
-                        table: &mut crate::storage::Table
-                        ) -> Result<(), crate::storage::IntoStorageError> {
+                use ::ecs::storage::components::ComponentStorageType;
+                impl ::ecs::storage::Bundle for #name {
+                    fn push_storage(self, table: &mut ::ecs::storage::Table) -> Result<(), ::ecs::storage::IntoStorageError> {
                         #push
+
                         Ok(())
                     }
 
-                    fn push_storage_box(
-                        self: Box<Self>,
-                        table: &mut crate::storage::Table
-                        ) -> Result<(), crate::storage::IntoStorageError> {
-                        self.push_storage(table)
-                    }
-
-                    fn into_storage(self) -> Vec<Box<dyn crate::storage::ComponentVec>> {
+                    fn descriptions(&self) -> Vec<::ecs::storage::ComponentDescription> {
                         vec![
-                            #into_storage
+                            #desc
                         ]
                     }
 
-                    fn into_storage_box(self: Box<Self>) -> Vec<Box<dyn crate::storage::ComponentVec>> {
-                        self.into_storage()
-                    }
-
-                    fn ids(&self) -> Vec<crate::any::TypeId>  {
+                    fn ids(&self) -> Vec<::ecs::any::TypeId>  {
                         vec![
                             #component_ids
                         ]
                     }
 
-                    fn storage_locations(&self) -> Vec<crate::storage::StorageType> {
+                    fn storage_locations(&self) -> Vec<::ecs::storage::StorageType> {
                         vec![
                             #component_storage
                         ]

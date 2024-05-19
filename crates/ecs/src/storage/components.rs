@@ -1,9 +1,6 @@
-use std::ptr::NonNull;
-
 use super::*;
 
-pub trait Component: 'static + DynClone {}
-dyn_clone::clone_trait_object!(Component);
+pub trait Component: 'static {}
 
 pub trait ComponentStorageType {
     fn storage_type(&self) -> StorageType;

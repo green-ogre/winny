@@ -24,13 +24,6 @@ use crate::storage::*;
 
 use self::unsafe_world::UnsafeWorldCell;
 
-/*
- * TODO:
- *
- * - Add event types and resource types so that they can index into storage,
- *      instead of iterating over all types.
- * */
-
 #[derive(Debug)]
 pub struct World {
     pub archetypes: Archetypes,
@@ -74,10 +67,68 @@ impl World {
         entity
     }
 
+    // pub fn spawn_table(&mut self, table: Table, ids: Box<[TypeId]>) -> Entity {
+    //     let meta_location = self.append_or_create_storage(table, ids);
+
+    //     let entity = self.new_entity(meta_location);
+    //     self.archetypes
+    //         .get_mut(meta_location.archetype_id)
+    //         .entities
+    //         .push(ArchEntity::new(entity, meta_location.table_row));
+
+    //     let table = self.tables.get_mut(meta_location.table_id);
+    //     for (key, value) in table.storage.into_iter_pair() {
+    //         table.storage.get_value_mut(&key).append(value);
+    //     }
+
+    //     entity
+    // }
+
+    // // TODO: this is shit
+    // fn append_or_create_storage(&mut self, table: Table, ids: Box<[TypeId]>) -> MetaLocation {
+    //     if let Some(arch) = self.archetypes.get_from_comps(&ids) {
+    //         MetaLocation::new(
+    //             arch.table_id,
+    //             TableRow(self.tables.get(arch.table_id).len() - 1),
+    //             arch.id,
+    //             arch.entities.len().saturating_sub(1),
+    //         )
+    //     } else {
+    //         let table_id = self.tables.new_id();
+    //         let arch_id = self.archetypes.new_id();
+    //         let component_ids = table.storage.keys();
+    //         let mut component_desc = FxHashMap::default();
+
+    //         let component_storage_locations = bundle.storage_locations();
+    //         for (id, location) in component_ids.iter().zip(component_storage_locations.iter()) {
+    //             component_desc.insert(*id, *location);
+    //         }
+
+    //         let desc = bundle.descriptions();
+    //         self.tables
+    //             .new_table(table_id, Table::from_bundle(bundle), desc);
+    //         self.archetypes.new_archetype(
+    //             arch_id,
+    //             Archetype::new(arch_id, table_id, component_ids, component_desc, vec![]),
+    //         );
+
+    //         let arch = self.archetypes.get(arch_id);
+
+    //         MetaLocation::new(
+    //             arch.table_id,
+    //             TableRow(self.tables.get(arch.table_id).len() - 1),
+    //             arch.id,
+    //             arch.entities.len().saturating_sub(1),
+    //         )
+    //     }
+    // }
+
     fn find_or_create_storage<T: Bundle>(&mut self, bundle: T) -> MetaLocation {
         let comp_ids = bundle.ids().into_boxed_slice();
 
         if let Some(arch) = self.archetypes.get_from_comps(&comp_ids) {
+            self.tables.get_mut(arch.table_id).new_entity(bundle);
+
             MetaLocation::new(
                 arch.table_id,
                 TableRow(self.tables.get(arch.table_id).len() - 1),

@@ -48,12 +48,13 @@ impl Column {
         self.storage.push(val)
     }
 }
+
 #[derive(Debug, PartialEq, Eq)]
-pub struct MutableSparseSet<I: SparseHash, V> {
+pub struct MutableSparseSet<I: Hash + PartialEq + Eq, V> {
     set: FxHashMap<I, V>,
 }
 
-impl<I: SparseHash, V> MutableSparseSet<I, V> {
+impl<I: Hash + PartialEq + Eq, V> MutableSparseSet<I, V> {
     pub fn new() -> Self {
         Self {
             set: FxHashMap::default(),
@@ -83,14 +84,18 @@ impl<I: SparseHash, V> MutableSparseSet<I, V> {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut V> {
         self.set.values_mut().into_iter()
     }
+
+    pub fn contains_key(&self, k: &I) -> bool {
+        self.set.contains_key(k)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct ImmutableSparseSet<I: SparseHash, V> {
+pub struct ImmutableSparseSet<I: Hash + PartialEq + Eq, V> {
     set: FxHashMap<I, V>,
 }
 
-impl<I: SparseHash, V> ImmutableSparseSet<I, V> {
+impl<I: Hash + PartialEq + Eq, V> ImmutableSparseSet<I, V> {
     pub unsafe fn get_value(&self, index: &I) -> &V {
         self.set
             .get(index)
@@ -113,6 +118,14 @@ impl<I: SparseHash, V> ImmutableSparseSet<I, V> {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut V> {
         self.set.values_mut().into_iter()
+    }
+
+    pub fn into_iter_pair(self) -> impl Iterator<Item = (I, V)> {
+        self.set.into_iter()
+    }
+
+    pub fn keys(&self) -> Vec<&I> {
+        self.set.keys().into_iter().collect()
     }
 }
 
@@ -190,6 +203,10 @@ impl Tables {
         self.tables.get_value(&id).expect("valid table id")
     }
 
+    pub fn get_mut(&mut self, id: TableId) -> &mut Table {
+        self.tables.get_value_mut(&id).expect("valid table id")
+    }
+
     pub fn get_from_descriptions(descriptions: Box<[ComponentDescription]>) -> Option<Table> {
         None
     }
@@ -238,7 +255,7 @@ impl Table {
 
     pub fn remove_entity(&mut self, row: TableRow) -> Result<(), ()> {
         for column in self.storage.iter_mut() {
-            column.swap_remove(row);
+            column.swap_remove(row)?;
         }
 
         Ok(())
@@ -262,8 +279,11 @@ impl Table {
 
     // Caller needs to ensure that all elements of entity are present and successfully pushed
     // so that there are not miss-shapen columns
-    pub fn push_column<T: TypeGetter>(&mut self, val: T) -> Result<(), ()> {
-        self.storage.get_value_mut(&T::type_id()).push(val)
+    pub fn push_column<T: TypeGetter>(&mut self, val: T) -> Result<(), IntoStorageError> {
+        self.storage
+            .get_value_mut(&T::type_id())
+            .push(val)
+            .map_err(|_| IntoStorageError::ColumnMisMatch)
     }
 }
 

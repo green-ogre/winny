@@ -8,7 +8,9 @@ use std::{
 use fxhash::FxHashMap;
 use logger::error;
 
-use crate::{any::*, unsafe_world::UnsafeWorldCell, World};
+use crate::{
+    any::*, new_dumb_drop, unsafe_world::UnsafeWorldCell, world, DumbVec, MutableSparseSet, World,
+};
 
 pub trait Resource: Debug + Send {}
 
@@ -92,65 +94,51 @@ impl<'a, T: Resource + TypeGetter> AsMut<T> for ResMut<'a, T> {
 // everything with pointers :P
 #[derive(Debug)]
 pub struct Resources {
-    resources: FxHashMap<TypeId, Box<dyn ResourceData>>,
+    resources: MutableSparseSet<TypeId, DumbVec>,
 }
 
 unsafe impl Sync for Resources {}
 unsafe impl Send for Resources {}
 
-pub trait ResourceData: Debug {
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-}
-
-impl<T: Resource + TypeGetter + Debug> ResourceData for T {
-    fn as_any(&self) -> &dyn Any {
-        self as &dyn Any
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self as &mut dyn Any
-    }
-}
-
 impl Resources {
     pub fn new() -> Self {
         Self {
-            resources: FxHashMap::default(),
+            resources: MutableSparseSet::new(),
         }
     }
 
     pub fn insert<T: Resource + TypeGetter>(&mut self, res: T) {
-        self.resources.insert(T::type_id(), Box::new(res));
+        let mut storage = DumbVec::new(std::alloc::Layout::new::<T>(), 1, new_dumb_drop::<T>());
+        storage.push(res).unwrap();
+
+        self.resources.insert(T::type_id(), storage);
+    }
+
+    pub fn insert_storage(&mut self, storage: DumbVec, type_id: TypeId) {
+        self.resources.insert(type_id, storage);
     }
 
     pub unsafe fn get_resource_by_id<T: Resource + TypeGetter>(&self, id: TypeId) -> &T {
-        if T::type_id() != id {
-            error!("Resource {} does not exist: Remeber to 'app.insert_resource::<...>()' your resource!", T::type_name().as_string());
+        if let Some(res) = self.resources.get_value(&id) {
+            return res.get_unchecked(0).cast::<T>().as_ref();
+        } else {
+            error!(
+            "Resource [{}] does not exist: Remeber to 'app.insert_resource::<...>()' your resource!",
+            T::type_name().as_string()
+        );
             panic!();
         }
-
-        self.resources
-            .get(&id)
-            .unwrap()
-            .as_ref()
-            .as_any()
-            .downcast_ref::<T>()
-            .unwrap()
     }
 
     pub fn get_resource_mut_by_id<T: Resource + TypeGetter>(&mut self, id: TypeId) -> &mut T {
-        if T::type_id() != id {
-            error!("Resource {} does not exist: Remeber to 'app.insert_resource::<...>()' your resource!", T::type_name().as_string());
+        if let Some(res) = self.resources.get_value_mut(&id) {
+            return unsafe { res.get_unchecked(0).cast::<T>().as_mut() };
+        } else {
+            error!(
+            "Resource [{}] does not exist: Remeber to 'app.insert_resource::<...>()' your resource!",
+            T::type_name().as_string()
+        );
             panic!();
         }
-
-        self.resources
-            .get_mut(&id)
-            .unwrap()
-            .as_mut()
-            .as_any_mut()
-            .downcast_mut::<T>()
-            .unwrap()
     }
 }

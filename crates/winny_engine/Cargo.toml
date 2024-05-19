@@ -9,6 +9,7 @@ ecs = { path = "../ecs" }
 logger = { path = "../logger" }
 plugins = { path = "../plugins" }
 gfx = { path = "../gfx" }
+winny_math = { path = "../winny_math" }
 
 pollster = "0.3.0"
 gilrs = "0.10.3"
