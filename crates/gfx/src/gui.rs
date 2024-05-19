@@ -1,6 +1,22 @@
+use ecs::{ResMut, TypeGetter, WinnyResource};
+use egui_winit::EventResponse;
+use logger::info;
+use winit::{event::WindowEvent, window::Window};
+
+use crate::Renderer;
+
+#[derive(WinnyResource, TypeGetter)]
 pub struct EguiRenderer {
-    state: egui_winit::State,
+    pub state: egui_winit::State,
     renderer: egui_wgpu::Renderer,
+}
+
+unsafe impl Send for EguiRenderer {}
+
+impl std::fmt::Debug for EguiRenderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EguiRenderer")
+    }
 }
 
 impl EguiRenderer {
@@ -38,16 +54,7 @@ impl EguiRenderer {
         }
     }
 
-    pub fn draw(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        window: &Window,
-        window_surface_view: &wgpu::TextureView,
-        screen_descriptor: egui_wgpu::ScreenDescriptor,
-        run_ui: impl FnOnce(&egui::Context),
-    ) {
+    pub fn begin_frame(&mut self, window: &Window) {
         // Call before take_egui_input
         egui_winit::update_viewport_info(
             &mut egui::ViewportInfo::default(),
@@ -55,9 +62,19 @@ impl EguiRenderer {
             window,
         );
         let raw_input = self.state.take_egui_input(&window);
-        let full_output = self.state.egui_ctx().run(raw_input, |_| {
-            run_ui(&self.state.egui_ctx());
-        });
+        self.state.egui_ctx().begin_frame(raw_input);
+    }
+
+    pub fn end_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        window: &Window,
+        window_surface_view: &wgpu::TextureView,
+        screen_descriptor: egui_wgpu::ScreenDescriptor,
+    ) {
+        let full_output = self.state.egui_ctx().end_frame();
 
         self.state
             .handle_platform_output(&window, full_output.platform_output);
@@ -94,4 +111,8 @@ impl EguiRenderer {
             self.renderer.free_texture(id);
         }
     }
+}
+
+pub fn begin_frame(mut egui_renderer: ResMut<EguiRenderer>, renderer: ecs::Res<Renderer>) {
+    egui_renderer.begin_frame(&renderer.window);
 }

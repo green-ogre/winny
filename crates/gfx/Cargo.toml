@@ -5,7 +5,11 @@ edition = "2021"
 
 [dependencies]
 logger = { path = "../logger" }
+ecs = { path = "../ecs" }
+winny_math = { path = "../winny_math" }
+plugins = { path = "../plugins" }
 
+pollster = "0.3.0"
 tobj = { version = "3.2.1", features = [
     "async",
 ]}
@@ -15,6 +19,8 @@ egui = "0.27.2"
 winit = "0.29.15"
 egui-wgpu = "0.27.2"
 egui-winit = "0.27.2"
+anyhow = "1.0.83"
+cgmath = "0.18.0"
 
 [dependencies.image]
 version = "0.24"

@@ -1,6 +1,6 @@
 use std::{cell::UnsafeCell, marker::PhantomData};
 
-use crate::{Res, ResMut, Resource, TypeGetter, TypeName, World};
+use crate::{DumbVec, Res, ResMut, Resource, TypeGetter, TypeId, TypeName, World};
 
 #[derive(Debug, Clone, Copy)]
 pub struct UnsafeWorldCell<'w>(*mut World, PhantomData<&'w World>);
@@ -35,6 +35,10 @@ impl<'w> UnsafeWorldCell<'w> {
         }
     }
 
+    pub unsafe fn insert_stored_resource(&self, storage: DumbVec, type_id: TypeId) {
+        self.mut_world().resources.insert_storage(storage, type_id);
+    }
+
     pub unsafe fn resource<R: Resource + TypeGetter>(&self) -> *const R {
         let id = R::type_id();
 
@@ -42,9 +46,7 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub unsafe fn resource_ref<R: Resource + TypeGetter>(&self) -> Res<'_, R> {
-        let id = R::type_id();
-
-        unsafe { Res::new(*self) }
+        Res::new(*self)
     }
 
     pub unsafe fn resource_mut<R: Resource + TypeGetter>(&self) -> *mut R {
@@ -52,6 +54,4 @@ impl<'w> UnsafeWorldCell<'w> {
 
         unsafe { self.mut_world().resources.get_resource_mut_by_id(id) }
     }
-
-    pub unsafe fn apply_entity_commands(&mut self) {}
 }

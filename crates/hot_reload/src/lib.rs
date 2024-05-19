@@ -8,7 +8,7 @@ use std::{
 
 use ecs::{
     all_tuples, unsafe_world::UnsafeWorldCell, ResMut, Resource, Schedule, Scheduler, System,
-    SystemAccess, SystemParam, SystemParamFunc, TypeGetter, World,
+    SystemAccess, SystemParam, SystemParamFunc, TypeGetter, WinnyResource, World,
 };
 use libloading::Symbol;
 use logger::{error, info, trace};
@@ -78,7 +78,7 @@ impl Lib {
     // }
 }
 
-#[derive(Debug, Resource, TypeGetter)]
+#[derive(Debug, WinnyResource, TypeGetter)]
 pub struct LinkedLib {
     pub linked_lib: Lib,
     last_refresh: Duration,
@@ -157,11 +157,11 @@ impl Plugin for HotReloadPlugin {
             .iter()
             .collect();
 
-            // info!(
-            //     "Path to lib: {}, Path to write: {}",
-            //     lib_path.to_str().unwrap(),
-            //     write_path.to_str().unwrap()
-            // );
+            info!(
+                "Path to lib: {}, Path to write: {}",
+                lib_path.to_str().unwrap(),
+                write_path.to_str().unwrap()
+            );
 
             let linked_lib =
                 LinkedLib::new(lib_path.into(), write_path.into()).expect("Could not find library");

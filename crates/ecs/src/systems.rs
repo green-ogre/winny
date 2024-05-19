@@ -27,6 +27,7 @@ pub struct Scheduler {
     pre_update: Vec<SystemSet>,
     update: Vec<SystemSet>,
     post_update: Vec<SystemSet>,
+    render: Vec<SystemSet>,
     exit: Vec<SystemSet>,
 }
 
@@ -37,6 +38,7 @@ impl Scheduler {
             pre_update: vec![vec![], vec![]],
             update: vec![vec![], vec![]],
             post_update: vec![vec![], vec![]],
+            render: vec![vec![], vec![]],
             exit: vec![vec![], vec![]],
         }
     }
@@ -47,6 +49,7 @@ impl Scheduler {
             Schedule::PreUpdate => &mut self.pre_update,
             Schedule::Update => &mut self.update,
             Schedule::PostUpdate => &mut self.post_update,
+            Schedule::Render => &mut self.render,
             Schedule::Exit => &mut self.exit,
         };
 
@@ -94,6 +97,7 @@ impl Scheduler {
             Schedule::PreUpdate => &mut self.pre_update,
             Schedule::Update => &mut self.update,
             Schedule::PostUpdate => &mut self.post_update,
+            Schedule::Render => &mut self.render,
             Schedule::Exit => &mut self.exit,
         };
 
@@ -119,6 +123,7 @@ impl Scheduler {
             Schedule::PreUpdate => &mut self.pre_update,
             Schedule::Update => &mut self.update,
             Schedule::PostUpdate => &mut self.post_update,
+            Schedule::Render => &mut self.render,
             Schedule::Exit => &mut self.exit,
         };
 
@@ -142,6 +147,7 @@ impl Scheduler {
         self.run_schedule(Schedule::PreUpdate, world);
         self.run_schedule(Schedule::Update, world);
         self.run_schedule(Schedule::PostUpdate, world);
+        self.run_schedule(Schedule::Render, world);
     }
 
     pub fn exit(&mut self, world: &World) {
@@ -156,6 +162,7 @@ impl Scheduler {
         self.run_schedule_single_thread(Schedule::PreUpdate, world);
         self.run_schedule_single_thread(Schedule::Update, world);
         self.run_schedule_single_thread(Schedule::PostUpdate, world);
+        self.run_schedule_single_thread(Schedule::Render, world);
     }
 
     pub fn exit_single_thread(&mut self, world: &World) {
@@ -169,6 +176,7 @@ pub enum Schedule {
     PreUpdate,
     Update,
     PostUpdate,
+    Render,
     Exit,
 }
 
@@ -276,7 +284,7 @@ impl<'a, T: 'static + Resource + TypeGetter> SystemParam for Res<'a, T> {
     }
 }
 
-impl<'a, T: 'static + Resource + TypeGetter> SystemParam for ResMut<'a, T> {
+impl<T: 'static + Resource + TypeGetter> SystemParam for ResMut<'_, T> {
     type State = TypeId;
     type Item<'world, 'state> = ResMut<'state, T>;
 

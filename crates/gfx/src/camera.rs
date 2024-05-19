@@ -7,10 +7,11 @@ use cgmath::Point3;
 use cgmath::Rad;
 use cgmath::SquareMatrix;
 use cgmath::Vector3;
+use ecs::WinnyResource;
 use ecs::{Resource, TypeGetter};
+use plugins::Plugin;
 
-// use crate::prelude::DeltaT;
-use crate::prelude::DeltaT;
+use crate::DeltaT;
 
 pub const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
@@ -22,7 +23,7 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     0.0, 0.0, 0.0, 1.0,
 );
 
-#[derive(Debug, TypeGetter, Resource)]
+#[derive(Debug, TypeGetter, WinnyResource)]
 pub struct Camera {
     pub position: Point3<f32>,
     yaw: Rad<f32>,
@@ -84,7 +85,7 @@ impl Projection {
     }
 }
 
-#[derive(Debug, TypeGetter, Resource)]
+#[derive(Debug, TypeGetter, WinnyResource)]
 pub struct CameraController {
     pub amount_left: f32,
     pub amount_right: f32,
@@ -97,6 +98,27 @@ pub struct CameraController {
     scroll: f32,
     speed: f32,
     sensitivity: f32,
+}
+
+pub struct Camera2D;
+
+impl Plugin for Camera2D {
+    fn build(&self, world: &mut ecs::World, scheduler: &mut ecs::Scheduler) {
+        // let projection = Projection::new(
+        //     renderer.config.width,
+        //     renderer.config.height,
+        //     cgmath::Deg(45.0),
+        //     0.1,
+        //     100.0,
+        // );
+
+        // world.insert_resource(Camera::new(
+        //     (0.0, 0.0, 0.0),
+        //     cgmath::Deg(-90.0),
+        //     cgmath::Deg(-20.0),
+        //     projection,
+        // ));
+    }
 }
 
 impl CameraController {

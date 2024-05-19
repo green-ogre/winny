@@ -1,11 +1,7 @@
 pub mod prelude;
 
-mod camera;
-mod gfx;
 mod gl;
-mod math;
 mod platform2;
-mod plugins;
 
 use ::plugins::{Plugin, PluginSet};
 use ecs::{any::TypeGetter, IntoSystemStorage, Resource, Schedule, Scheduler, World};

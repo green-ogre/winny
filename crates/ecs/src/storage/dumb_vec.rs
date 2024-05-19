@@ -111,6 +111,17 @@ impl DumbVec {
         Ok(())
     }
 
+    pub fn push_unchecked<T>(&mut self, val: T) -> Result<(), ()> {
+        if self.len >= self.capacity || self.capacity == 0 {
+            self.reserve(1);
+        }
+
+        unsafe { ptr::write(self.get_unchecked(self.len).cast::<T>().as_mut(), val) };
+        self.len += 1;
+
+        Ok(())
+    }
+
     pub fn pop<T>(&mut self) -> Option<T> {
         if self.len == 0 {
             None
@@ -157,8 +168,8 @@ impl DumbVec {
         }
     }
 
-    pub fn as_slice_unchecked<T>(&self) -> &[UnsafeCell<T>] {
-        unsafe { std::slice::from_raw_parts(self.get_ptr() as *const UnsafeCell<T>, self.len) }
+    pub fn as_slice<T>(&self) -> &[T] {
+        unsafe { std::slice::from_raw_parts(self.get_ptr() as *const T, self.len) }
     }
 
     pub fn into_vec<T>(&mut self) -> Vec<T> {

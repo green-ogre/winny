@@ -76,6 +76,7 @@ impl NormalTexture {
     }
 }
 
+#[derive(Debug)]
 pub struct DiffuseTexture {
     pub tex: wgpu::Texture,
     pub view: wgpu::TextureView,

@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Debug)]
 pub enum IntoStorageError {
-    MismatchedShape,
+    ColumnMisMatch,
 }
 
 pub trait Bundle: Debug {
@@ -15,55 +15,66 @@ pub trait Bundle: Debug {
     fn storage_locations(&self) -> Vec<StorageType>;
 }
 
+impl<T: Debug + Storage + Component + TypeGetter + 'static> Bundle for T {
+    fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError> {
+        table.push_column(self)?;
+
+        Ok(())
+    }
+
+    fn descriptions(&self) -> Vec<ComponentDescription> {
+        vec![ComponentDescription {
+            type_id: self.type_id(),
+            layout: std::alloc::Layout::new::<T>(),
+            drop: new_dumb_drop::<T>(),
+        }]
+    }
+
+    fn ids(&self) -> Vec<TypeId> {
+        vec![self.type_id()]
+    }
+
+    fn storage_locations(&self) -> Vec<StorageType> {
+        vec![self.storage_type()]
+    }
+}
+
 macro_rules! bundle {
     ($($t:ident)*) => {
         #[allow(non_snake_case)]
-        impl<$($t: Send + Debug + Storage + Component + TypeGetter + Clone + 'static),*> Bundle for ($($t,)*) {
-            // fn into_storage(self) -> Vec<Box<dyn ComponentVec>>  {
-            //    let ($($t,)*) = self;
-            //     vec![
-            //         $(Box::new(UnsafeCell::new(vec![$t])),)*
-            //     ]
-            // }
-
-            // fn into_storage_box(self: Box<Self>) -> Vec<Box<dyn ComponentVec>> {
-            //     self.into_storage()
-            // }
-
+        impl<$($t: Bundle),*> Bundle for ($($t,)*) {
             fn descriptions(&self) -> Vec<ComponentDescription> {
+               let ($($t,)*) = self;
+
                 vec![
-                    $(ComponentDescription {
-                        type_id: TypeId::of::<$t>(),
-                        layout: std::alloc::Layout::new::<$t>(),
-                        drop: new_dumb_drop::<$t>()
-                    },)*
-                ]
+                    $($t.descriptions(),)*
+                ].into_iter().flatten().collect::<Vec<_>>()
             }
 
             fn push_storage(self, table: &mut Table) -> Result<(), IntoStorageError> {
                let ($($t,)*) = self;
 
                 $(
-                    assert!(table.push_column($t).is_ok());
+                    assert!($t.push_storage(table).is_ok());
                 )*
 
                 Ok(())
             }
 
-            // fn push_storage_box(self: Box<Self>, table: &mut Table) -> Result<(), IntoStorageError> {
-            //     self.push_storage(table)
-            // }
-
             fn ids(&self) -> Vec<TypeId>  {
+               let ($($t,)*) = self;
+
                 vec![
-                    $(TypeId::of::<$t>(),)*
-                ]
+                    $($t.ids(),)*
+                ].into_iter().flatten().collect::<Vec<_>>()
             }
 
             fn storage_locations(&self) -> Vec<StorageType> {
+               let ($($t,)*) = self;
+
                 vec![
-                    $(StorageType::of::<$t>(),)*
-                ]
+                    $($t.storage_locations(),)*
+                ].into_iter().flatten().collect::<Vec<_>>()
             }
         }
     };
