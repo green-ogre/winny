@@ -43,6 +43,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     //         clamp((in.mask.y * in.mask.r) + (tex.y * (1.0 - in.mask.r)), 0.0, 1.0),
     //         clamp((in.mask.z * in.mask.r) + (tex.z * (1.0 - in.mask.r)), 0.0, 1.0)
     //     );
-    return vec4<f32>(in.mask.xyz, tex.r);
+    // return vec4<f32>(in.mask.xyz, tex.r);
+    return tex;
 }
 

@@ -21,7 +21,7 @@ use crate::{
 #[derive(Debug, WinnyResource, TypeGetter)]
 pub struct Renderer {
     pub window: Window,
-    sprite_bindings: MutableSparseSet<PathBuf, SpriteBindingRaw>,
+    pub sprite_bindings: MutableSparseSet<PathBuf, SpriteBindingRaw>,
     render_pipeline: wgpu::RenderPipeline,
     surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,

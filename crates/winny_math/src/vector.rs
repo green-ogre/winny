@@ -13,10 +13,10 @@ impl Vec2 {
         Vec2 { x: 0, y: 0 }
     }
 
-    pub fn distance(&self, other: &Vec2) -> u32 {
+    pub fn distance(&self, other: &Vec2) -> f32 {
         let x = (self.x - other.x) as f32;
         let y = (self.y - other.y) as f32;
-        (x * x + y * y).sqrt() as u32
+        (x * x + y * y).sqrt()
     }
 }
 

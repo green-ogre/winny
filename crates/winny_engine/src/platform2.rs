@@ -12,12 +12,16 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ecs::{Event, EventWriter, Res, ResMut, Resource, Scheduler, TypeGetter, WinnyResource, World};
+use ecs::{
+    Event, EventWriter, InternalResource, Res, ResMut, Resource, Scheduler, TypeGetter,
+    WinnyResource, World,
+};
 use gfx::{
     gui::{begin_frame, EguiRenderer},
     render, update_sprite_data, DeltaT, Renderer,
 };
 use gilrs::{EventType, Gilrs};
+use plugins::Plugin;
 use wgpu::{
     rwh::HasDisplayHandle,
     util::{DeviceExt, RenderEncoder},
@@ -744,16 +748,54 @@ fn stall_untill_next_frame(mut perf: ResMut<PerfCounter>) {
     while !perf.should_advance() {}
 }
 
+// TODO: pull out and amke necessary
+#[derive(Debug, WinnyResource, TypeGetter, Clone, Copy)]
+pub struct WindowPlugin {
+    pub inner_size: (u32, u32),
+    pub virtual_size: (u32, u32),
+    pub position: (u32, u32),
+}
+
+impl Default for WindowPlugin {
+    fn default() -> Self {
+        Self {
+            inner_size: (1920, 1080),
+            virtual_size: (1920, 1080),
+            position: (10, 10),
+        }
+    }
+}
+
+impl Plugin for WindowPlugin {
+    fn build(&self, world: &mut World, scheduler: &mut Scheduler) {
+        world.insert_resource(self.clone());
+    }
+}
+
 pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
     let event_loop = EventLoop::new().unwrap();
+
+    let window_plugin = world.resource::<WindowPlugin>();
+    info!("{:?}", window_plugin);
     let window = WindowBuilder::new()
-        .with_inner_size(PhysicalSize::new(1300, 1300))
-        .with_position(PhysicalPosition::new(10, 10))
+        .with_inner_size(PhysicalSize::new(
+            window_plugin.inner_size.0,
+            window_plugin.inner_size.1,
+        ))
+        .with_position(PhysicalPosition::new(
+            window_plugin.position.0,
+            window_plugin.position.1,
+        ))
         .build(&event_loop)
         .unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let renderer = Renderer::new(window, [1300, 1300], [1300, 1300]).await;
+    let renderer = Renderer::new(
+        window,
+        [window_plugin.inner_size.0, window_plugin.inner_size.1],
+        [window_plugin.virtual_size.0, window_plugin.virtual_size.1],
+    )
+    .await;
     let egui_renderer = EguiRenderer::new(
         &renderer.device,
         renderer.config.format,
@@ -790,6 +832,10 @@ pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
     // is sent to the event_loop when the game_loop has finished exiting
     let (winit_exit_tx, winit_exit_rx) = channel();
 
+    // TODO: fix this shit
+    let mut last_mouse_position: (f64, f64) = (0.0, 0.0);
+    let mut last_held_key: Option<MouseButton> = None;
+
     // This is the main game loop
     std::thread::spawn(move || loop {
         perf.start();
@@ -817,6 +863,39 @@ pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
             }
 
             match event {
+                WindowEvent::CursorMoved { position, .. } => {
+                    let mut user_input = unsafe { EventWriter::new(world.as_unsafe_world()) };
+
+                    user_input.send(MouseInput::new(
+                        0.0,
+                        0.0,
+                        position.x,
+                        position.y,
+                        last_held_key,
+                    ));
+                    last_mouse_position = (position.x, position.y);
+                }
+                WindowEvent::MouseInput { state, button, .. } => {
+                    let mut user_input = unsafe { EventWriter::new(world.as_unsafe_world()) };
+
+                    last_held_key = if state == ElementState::Pressed {
+                        match button {
+                            winit::event::MouseButton::Left => Some(MouseButton::Left),
+                            winit::event::MouseButton::Right => Some(MouseButton::Right),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    user_input.send(MouseInput::new(
+                        0.0,
+                        0.0,
+                        last_mouse_position.0,
+                        last_mouse_position.1,
+                        last_held_key,
+                    ));
+                }
                 WindowEvent::Resized(new_size) => {
                     let mut renderer = world.resource_mut::<Renderer>();
                     renderer.resize(new_size.into());
@@ -848,7 +927,14 @@ pub async fn game_loop(mut world: World, mut scheduler: Scheduler) {
             match event {
                 DeviceEvent::MouseMotion { delta } => {
                     let mut user_input = unsafe { EventWriter::new(world.as_unsafe_world()) };
-                    user_input.send(MouseInput::new(delta.0, delta.1));
+
+                    user_input.send(MouseInput::new(
+                        delta.0,
+                        delta.1,
+                        last_mouse_position.0,
+                        last_mouse_position.1,
+                        last_held_key,
+                    ));
 
                     egui_renderer.handle_input(&renderer.window, None, Some(delta));
                 }
@@ -1101,11 +1187,26 @@ impl KeyInput {
 pub struct MouseInput {
     pub dx: f64,
     pub dy: f64,
+    pub x: f64,
+    pub y: f64,
+    pub button_pressed: Option<MouseButton>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Right,
 }
 
 impl MouseInput {
-    pub fn new(dx: f64, dy: f64) -> Self {
-        Self { dx, dy }
+    pub fn new(dx: f64, dy: f64, x: f64, y: f64, button: Option<MouseButton>) -> Self {
+        Self {
+            dx,
+            dy,
+            x,
+            y,
+            button_pressed: button,
+        }
     }
 }
 

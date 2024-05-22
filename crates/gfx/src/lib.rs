@@ -158,12 +158,12 @@ impl Sprite {
 
 #[derive(Debug, InternalComponent, TypeGetter)]
 pub struct SpriteBinding {
-    path: PathBuf,
+    pub path: PathBuf,
 }
 
 #[derive(Debug)]
 pub struct SpriteBindingRaw {
-    texture: DiffuseTexture,
+    pub texture: DiffuseTexture,
     bind_group: wgpu::BindGroup,
 }
 
@@ -220,6 +220,75 @@ impl SpriteBindingRaw {
             texture,
             bind_group,
         })
+    }
+
+    pub fn from_texture(texture: DiffuseTexture, renderer: &Renderer) -> Self {
+        let layout = renderer
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("bind group layout for sprite"),
+            });
+
+        let bind_group = renderer
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                    },
+                ],
+                label: Some("bind group for sprite"),
+            });
+
+        Self {
+            texture,
+            bind_group,
+        }
+    }
+
+    // TODO: error handlihng
+    pub fn write_to_texture(&self, dimensions: (u32, u32), data: &[u8], renderer: &Renderer) {
+        let size = wgpu::Extent3d {
+            width: dimensions.0,
+            height: dimensions.1,
+            depth_or_array_layers: 1,
+        };
+
+        renderer.queue.write_texture(
+            self.texture.tex.as_image_copy(),
+            &data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * dimensions.0),
+                rows_per_image: Some(dimensions.1),
+            },
+            size,
+        );
+        renderer.queue.submit([]);
     }
 }
 
@@ -640,18 +709,18 @@ pub async fn load_texture(
 ) -> Result<DiffuseTexture> {
     info!("Loading texture: {:?}", file_name);
     let data = load_binary(file_name).await?;
-    DiffuseTexture::from_bytes(&data, device, queue)
+    DiffuseTexture::from_image(&data, device, queue)
 }
 
-pub async fn load_normal(
-    file_name: PathBuf,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<NormalTexture> {
-    info!("Loading texture: {:?}", file_name);
-    let data = load_binary(file_name).await?;
-    NormalTexture::from_bytes(&data, device, queue)
-}
+// pub async fn load_normal(
+//     file_name: PathBuf,
+//     device: &wgpu::Device,
+//     queue: &wgpu::Queue,
+// ) -> Result<NormalTexture> {
+//     info!("Loading texture: {:?}", file_name);
+//     let data = load_binary(file_name).await?;
+//     NormalTexture::from_bytes(&data, device, queue)
+// }
 
 // pub async fn load_model(
 //     path: &str,

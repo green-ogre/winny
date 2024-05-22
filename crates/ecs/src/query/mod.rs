@@ -255,6 +255,14 @@ impl<'w, 's, T: QueryData, F: Filter> Query<'w, 's, T, F> {
     pub fn iter_mut(&self) -> QueryIterMut<'s, T, F> {
         self.state.new_iter_mut(&self.world)
     }
+
+    pub fn get_single(&self) -> anyhow::Result<T::ReadOnly<'_>> {
+        self.state.get_single(&self.world)
+    }
+
+    pub fn get_single_mut(&self) -> anyhow::Result<T::Item<'_>> {
+        self.state.get_single_mut(&self.world)
+    }
 }
 
 // pub trait WorldQuery {

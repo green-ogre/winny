@@ -8,7 +8,7 @@ pub struct NormalTexture {
 }
 
 impl NormalTexture {
-    pub fn from_bytes(
+    pub fn from_image_bytes(
         img_bytes: &[u8],
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -76,6 +76,7 @@ impl NormalTexture {
     }
 }
 
+// TODO: name this texture
 #[derive(Debug)]
 pub struct DiffuseTexture {
     pub tex: wgpu::Texture,
@@ -84,23 +85,24 @@ pub struct DiffuseTexture {
 }
 
 impl DiffuseTexture {
-    pub fn from_bytes(
+    pub fn from_image(
         img_bytes: &[u8],
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<Self> {
         let img = image::load_from_memory(img_bytes)?;
-        Ok(Self::from_image(&img, device, queue))
-    }
-
-    pub fn from_image(
-        img: &image::DynamicImage,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> Self {
         let rgba = img.to_rgba8();
         let dimensions = img.dimensions();
 
+        Ok(Self::from_bytes(&rgba, dimensions, device, queue))
+    }
+
+    pub fn from_bytes(
+        bytes: &[u8],
+        dimensions: (u32, u32),
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Self {
         let size = wgpu::Extent3d {
             width: dimensions.0,
             height: dimensions.1,
@@ -126,7 +128,7 @@ impl DiffuseTexture {
                 aspect: wgpu::TextureAspect::All,
             },
             // The actual pixel data
-            &rgba,
+            bytes,
             // The layout of the texture
             wgpu::ImageDataLayout {
                 offset: 0,
@@ -141,7 +143,7 @@ impl DiffuseTexture {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
@@ -187,8 +189,8 @@ impl DepthTexture {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             compare: Some(wgpu::CompareFunction::LessEqual), // 5.
             lod_min_clamp: 0.0,
