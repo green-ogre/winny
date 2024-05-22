@@ -7,6 +7,7 @@ use std::{
 use ecs::{all_tuples, Scheduler, World};
 use logger::{info, trace};
 
+// TODO: make this commands not world
 pub trait Plugin {
     fn build(&self, world: &mut World, scheduler: &mut Scheduler);
 }

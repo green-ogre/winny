@@ -99,4 +99,34 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
 
         QueryIterMut::new(storage)
     }
+
+    // TODO: error handling
+    pub fn get_single<'w>(&self, world: &'w UnsafeWorldCell) -> anyhow::Result<T::ReadOnly<'_>> {
+        Ok(T::read_only(
+            unsafe { world.read_only() }
+                .tables
+                .get(self.storages.first().unwrap().table_id),
+            unsafe { world.read_only() }
+                .archetypes
+                .get(self.storages.first().unwrap().archetype_id)
+                .entities
+                .first()
+                .unwrap(),
+        ))
+    }
+
+    // TODO: error handling
+    pub fn get_single_mut<'w>(&self, world: &'w UnsafeWorldCell) -> anyhow::Result<T::Item<'_>> {
+        Ok(T::fetch(
+            unsafe { world.read_only() }
+                .tables
+                .get(self.storages.first().unwrap().table_id),
+            unsafe { world.read_only() }
+                .archetypes
+                .get(self.storages.first().unwrap().archetype_id)
+                .entities
+                .first()
+                .unwrap(),
+        ))
+    }
 }
