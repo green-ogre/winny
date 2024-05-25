@@ -1,57 +1,68 @@
+use logger::error;
+
 use super::*;
 
 #[derive(Debug)]
 pub struct Archetypes {
-    archetypes: MutableSparseSet<ArchId, Archetype>,
-    comp_set_index: MutableSparseSet<Box<[TypeId]>, ArchId>,
+    archetypes: SparseSet<ArchId, Archetype>,
 }
 
 impl Archetypes {
     pub fn new() -> Self {
         Self {
-            archetypes: MutableSparseSet::new(),
-            comp_set_index: MutableSparseSet::new(),
+            archetypes: SparseSet::new(),
         }
     }
 
-    pub fn get(&self, id: ArchId) -> &Archetype {
-        self.archetypes.get_value(&id).expect("valid arch id")
+    pub fn get(&self, id: ArchId) -> Option<&Archetype> {
+        self.archetypes.get(&id)
     }
 
-    pub fn get_from_comps(&self, comp_set: &Box<[TypeId]>) -> Option<&Archetype> {
-        let index = self.comp_set_index.get_value(comp_set)?;
-
-        Some(self.archetypes.get_value(index)?)
+    pub fn get_from_type_ids(&self, ids: &mut [TypeId]) -> Option<&Archetype> {
+        self.archetypes
+            .iter()
+            .find(|(_, arch)| arch.component_ids.clone().sort() == ids.sort())
+            .map(|(_, arch)| arch)
     }
 
     pub fn get_mut(&mut self, id: ArchId) -> &mut Archetype {
-        self.archetypes.get_value_mut(&id).expect("valid arch id")
+        self.archetypes.get_mut(&id).unwrap_or_else(|| {
+            error!("Could not index Archetypes at {:?}", id);
+            panic!()
+        })
     }
 
     pub fn new_archetype(&mut self, id: ArchId, arch: Archetype) {
-        self.comp_set_index
-            .insert(arch.component_ids.clone().into_boxed_slice(), id);
         self.archetypes.insert(id, arch);
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Archetype> {
-        self.archetypes.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Archetype> {
-        self.archetypes.iter_mut()
-    }
-
     pub fn new_id(&self) -> ArchId {
-        ArchId(self.archetypes.len())
+        ArchId::new(self.archetypes.len())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Archetype> {
+        self.archetypes.values().iter()
     }
 }
 
-impl SparseHash for Box<[TypeId]> {}
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct ArchId(usize);
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
-pub struct ArchId(pub usize);
-impl SparseHash for ArchId {}
+impl ArchId {
+    pub fn new(id: usize) -> Self {
+        Self(id)
+    }
+
+    pub fn id(&self) -> usize {
+        self.0
+    }
+}
+
+impl SparseArrayIndex for ArchId {
+    fn to_index(&self) -> usize {
+        self.id()
+    }
+}
 
 #[derive(Debug)]
 pub struct Archetype {
@@ -59,7 +70,7 @@ pub struct Archetype {
     pub table_id: TableId,
 
     pub component_ids: Vec<TypeId>,
-    pub component_desc: FxHashMap<TypeId, StorageType>,
+    pub component_desc: SparseSet<ComponentId, StorageType>,
 
     pub entities: Vec<ArchEntity>,
 }
@@ -81,7 +92,7 @@ impl Archetype {
         id: ArchId,
         table_id: TableId,
         component_ids: Vec<TypeId>,
-        component_desc: FxHashMap<TypeId, StorageType>,
+        component_desc: SparseSet<ComponentId, StorageType>,
         entities: Vec<ArchEntity>,
     ) -> Self {
         Self {
@@ -93,7 +104,7 @@ impl Archetype {
         }
     }
 
-    pub fn contains<T: TypeGetter>(&self) -> bool {
+    pub fn contains_type_id<T: Component>(&self) -> bool {
         self.component_ids.contains(&TypeId::of::<T>())
     }
 

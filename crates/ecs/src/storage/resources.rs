@@ -1,100 +1,93 @@
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    fmt::Debug,
-    marker::PhantomData,
-    ops::{Deref, DerefMut},
-};
-
-use fxhash::FxHashMap;
 use logger::error;
 
-use crate::{
-    any::*, new_dumb_drop, unsafe_world::UnsafeWorldCell, world, DumbVec, MutableSparseSet, World,
-};
+use crate::unsafe_world::UnsafeWorldCell;
 
-pub trait Resource: Debug + Send {}
+use super::*;
 
-pub struct Res<'a, T> {
-    value: &'a T,
+pub trait Resource: TypeGetter + Debug + Send {}
+
+#[derive(Debug)]
+pub struct Res<'a, R> {
+    value: &'a R,
 }
 
-impl<'a, T> Deref for Res<'a, T> {
-    type Target = T;
+impl<R> Deref for Res<'_, R> {
+    type Target = R;
 
     fn deref(&self) -> &Self::Target {
         self.value
     }
 }
 
-impl<'a, T: Debug> Debug for Res<'a, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Res").field("value", &self.value).finish()
-    }
-}
-
-impl<'a, T: TypeGetter + Resource> Res<'a, T> {
-    pub fn new(world: UnsafeWorldCell<'a>) -> Self {
+impl<R: Resource> Res<'_, R> {
+    pub fn new<'w>(world: UnsafeWorldCell<'w>) -> Self {
         Self {
-            value: unsafe { &*world.resource::<T>() },
-        }
-    }
-
-    pub fn from_ref(res: *const T) -> Self {
-        Self {
-            value: unsafe { &*res },
+            value: unsafe { &*world.resource_ptr() },
         }
     }
 }
 
-pub struct ResMut<'a, T> {
-    value: &'a mut T,
+#[derive(Debug)]
+pub struct ResMut<'a, R> {
+    value: &'a mut R,
 }
 
-impl<'a, T> Deref for ResMut<'a, T> {
-    type Target = T;
+impl<R> Deref for ResMut<'_, R> {
+    type Target = R;
 
     fn deref(&self) -> &Self::Target {
         self.value
     }
 }
 
-impl<'a, T> DerefMut for ResMut<'a, T> {
+impl<R> DerefMut for ResMut<'_, R> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.value
     }
 }
 
-impl<'a, T: TypeGetter + Resource> ResMut<'a, T> {
-    pub fn new(world: UnsafeWorldCell<'a>) -> Self {
+impl<R: Resource> ResMut<'_, R> {
+    pub fn new<'w>(world: UnsafeWorldCell<'w>) -> Self {
         Self {
-            value: unsafe { &mut *world.resource_mut::<T>() },
-        }
-    }
-
-    pub fn from_ref_mut(res: *mut T) -> Self {
-        Self {
-            value: unsafe { &mut *res },
+            value: unsafe { &mut *world.resource_ptr_mut() },
         }
     }
 }
 
-impl<'a, T: Resource + TypeGetter> AsRef<T> for Res<'a, T> {
-    fn as_ref(&self) -> &T {
+impl<R: Resource + TypeGetter> AsRef<R> for Res<'_, R> {
+    fn as_ref(&self) -> &R {
         &self.value
     }
 }
 
-impl<'a, T: Resource + TypeGetter> AsMut<T> for ResMut<'a, T> {
-    fn as_mut(&mut self) -> &mut T {
+impl<R: Resource + TypeGetter> AsMut<R> for ResMut<'_, R> {
+    fn as_mut(&mut self) -> &mut R {
         &mut self.value
     }
 }
 
-// TODO: the goal here would be to completely type erase this and store
-// everything with pointers :P
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceId(usize);
+
+impl ResourceId {
+    pub fn new(id: usize) -> Self {
+        Self(id)
+    }
+
+    pub fn id(&self) -> usize {
+        self.0
+    }
+}
+
+impl SparseArrayIndex for ResourceId {
+    fn to_index(&self) -> usize {
+        self.id()
+    }
+}
+
 #[derive(Debug)]
 pub struct Resources {
-    resources: MutableSparseSet<TypeId, DumbVec>,
+    resources: SparseSet<ResourceId, DumbVec>,
 }
 
 unsafe impl Sync for Resources {}
@@ -103,42 +96,46 @@ unsafe impl Send for Resources {}
 impl Resources {
     pub fn new() -> Self {
         Self {
-            resources: MutableSparseSet::new(),
+            resources: SparseSet::new(),
         }
     }
 
-    pub fn insert<T: Resource + TypeGetter>(&mut self, res: T) {
-        let mut storage = DumbVec::new(std::alloc::Layout::new::<T>(), 1, new_dumb_drop::<T>());
+    pub fn insert<R: Resource>(&mut self, res: R, id: ResourceId) {
+        let mut storage = DumbVec::new(std::alloc::Layout::new::<R>(), 1, new_dumb_drop::<R>());
         storage.push(res).unwrap();
 
-        self.resources.insert(T::type_id(), storage);
+        self.resources.insert(id, storage);
     }
 
-    pub fn insert_storage(&mut self, storage: DumbVec, type_id: TypeId) {
-        self.resources.insert(type_id, storage);
+    pub fn insert_storage(&mut self, storage: DumbVec, id: ResourceId) {
+        self.resources.insert(id, storage);
     }
 
-    pub unsafe fn get_resource_by_id<T: Resource + TypeGetter>(&self, id: TypeId) -> &T {
-        if let Some(res) = self.resources.get_value(&id) {
-            return res.get_unchecked(0).cast::<T>().as_ref();
+    pub unsafe fn get_resource_by_id<R: Resource>(&self, id: ResourceId) -> &R {
+        if let Some(res) = self.resources.get(&id) {
+            return res.get_unchecked(0).cast::<R>().as_ref();
         } else {
             error!(
             "Resource [{}] does not exist: Remeber to 'app.insert_resource::<...>()' your resource!",
-            T::type_name().as_string()
+            R::type_name().as_string()
         );
             panic!();
         }
     }
 
-    pub fn get_resource_mut_by_id<T: Resource + TypeGetter>(&mut self, id: TypeId) -> &mut T {
-        if let Some(res) = self.resources.get_value_mut(&id) {
-            return unsafe { res.get_unchecked(0).cast::<T>().as_mut() };
+    pub fn get_resource_mut_by_id<R: Resource>(&mut self, id: ResourceId) -> &mut R {
+        if let Some(res) = self.resources.get_mut(&id) {
+            return unsafe { res.get_unchecked(0).cast::<R>().as_mut() };
         } else {
             error!(
             "Resource [{}] does not exist: Remeber to 'app.insert_resource::<...>()' your resource!",
-            T::type_name().as_string()
+            R::type_name().as_string()
         );
             panic!();
         }
+    }
+
+    pub fn new_id(&self) -> ResourceId {
+        ResourceId::new(self.resources.len())
     }
 }

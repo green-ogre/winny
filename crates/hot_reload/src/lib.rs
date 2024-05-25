@@ -1,16 +1,11 @@
 use std::{
     env::current_dir,
     ffi::OsString,
-    marker::PhantomData,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ecs::{
-    all_tuples, unsafe_world::UnsafeWorldCell, ResMut, Resource, Schedule, Scheduler, System,
-    SystemAccess, SystemParam, SystemParamFunc, TypeGetter, WinnyResource, World,
-};
-use libloading::Symbol;
+use ecs::{ResMut, Scheduler, WinnyResource, World};
 use logger::{error, info, trace};
 use plugins::Plugin;
 
@@ -65,20 +60,9 @@ impl Lib {
 
         Ok(())
     }
-
-    // pub fn run<Input, F>(&self, f: &mut SystemFunc<Input, F>, params: Input) {
-    //     unsafe {
-    //         let func: Symbol<fn(Input)> = self.lib.get(f.name.as_bytes()).unwrap();
-    //         func(params);
-    //     }
-    // }
-
-    // pub fn get<Input>(&self, name: &'static str) -> Result<Symbol<fn('_, Input)>, Error> {
-    //     unsafe { Ok(self.lib.get::<'_, fn(Input)>(name.as_bytes())?) }
-    // }
 }
 
-#[derive(Debug, WinnyResource, TypeGetter)]
+#[derive(Debug, WinnyResource)]
 pub struct LinkedLib {
     pub linked_lib: Lib,
     last_refresh: Duration,
@@ -95,10 +79,6 @@ impl LinkedLib {
             path_to_lib,
         })
     }
-
-    // pub fn run_system<Input, F>(&self, f: &mut SystemFunc<Input, F>, params: Input) {
-    //     self.linked_lib.run(f, params);
-    // }
 
     pub fn refresh_if_modified(&mut self) {
         let Ok(last_mod) = std::fs::metadata(&self.path_to_lib) else {

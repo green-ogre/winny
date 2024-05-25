@@ -1,4 +1,4 @@
-use crate::{any::*, ArchId, Component, Storage, TableId, TableRow};
+use crate::{any::*, ArchId, TableId, TableRow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Entity(usize);

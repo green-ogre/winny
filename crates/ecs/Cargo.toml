@@ -7,7 +7,4 @@ edition = "2021"
 logger = { path = "../logger" }
 ecs_derive = { path = "../ecs_derive" }
 
-libloading = "0.8.3"
-itertools = "0.12.1"
-fxhash = "0.2.1"
-anyhow = "1.0.86"
+# fxhash = "0.2.1"

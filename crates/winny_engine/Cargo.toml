@@ -14,6 +14,4 @@ winny_math = { path = "../winny_math" }
 pollster = "0.3.0"
 gilrs = "0.10.3"
 wgpu = "0.19.3"
-anyhow = "1.0.82"
-cgmath = "0.18"
 winit = "0.29.15"

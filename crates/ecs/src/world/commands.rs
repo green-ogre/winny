@@ -6,9 +6,9 @@ pub struct NewEntityCommands {
 }
 
 impl NewEntityCommands {
-    pub fn new<T: Bundle + 'static>(bundle: T) -> Self {
+    pub fn new<T: Bundle + 'static>(bundle: T, world: UnsafeWorldCell<'_>) -> Self {
         Self {
-            data: Table::from_bundle(bundle),
+            data: Table::from_bundle(bundle, world),
         }
     }
 }
@@ -75,7 +75,7 @@ impl EntityCommands {
         self.despawn = true;
     }
 
-    pub fn commit<'w>(self, world: &mut UnsafeWorldCell<'w>) {}
+    pub fn commit<'w>(self, _world: &mut UnsafeWorldCell<'w>) {}
 }
 
 #[derive(Debug)]

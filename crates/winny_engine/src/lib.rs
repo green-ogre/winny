@@ -1,7 +1,8 @@
 pub mod prelude;
+pub mod window;
 
-mod gl;
-mod platform2;
+// mod gl;
+mod platform;
 
 use ::plugins::{Plugin, PluginSet};
 use ecs::{any::TypeGetter, IntoSystemStorage, Resource, Schedule, Scheduler, World};
@@ -64,6 +65,6 @@ impl App {
             plugin.build(&mut self.world, &mut self.scheduler);
         }
 
-        pollster::block_on(platform2::game_loop(self.world, self.scheduler));
+        pollster::block_on(platform::game_loop(self.world, self.scheduler));
     }
 }

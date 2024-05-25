@@ -1,10 +1,9 @@
 use std::{
     alloc::Layout,
-    cell::UnsafeCell,
     ptr::{self, NonNull},
 };
 
-use crate::ComponentDescription;
+use crate::IntoStorageError;
 
 pub type DumbDrop = unsafe fn(ptr: *mut u8);
 
@@ -42,10 +41,6 @@ impl DumbVec {
             data,
             drop,
         }
-    }
-
-    pub fn from_description(desc: ComponentDescription) -> Self {
-        DumbVec::new(desc.layout, 0, desc.drop)
     }
 
     pub fn len(&self) -> usize {
@@ -96,9 +91,9 @@ impl DumbVec {
         self.data = unsafe { NonNull::new_unchecked(data) };
     }
 
-    pub fn push<T>(&mut self, val: T) -> Result<(), ()> {
+    pub fn push<T>(&mut self, val: T) -> Result<(), IntoStorageError> {
         if std::alloc::Layout::new::<T>() != self.item_layout {
-            return Err(());
+            return Err(IntoStorageError::LayoutMisMatch);
         }
 
         if self.len >= self.capacity || self.capacity == 0 {
