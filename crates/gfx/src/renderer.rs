@@ -1,27 +1,18 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
-use ecs::{
-    unsafe_world::UnsafeWorldCell, Commands, Entity, InternalResource, Mut, MutableSparseSet,
-    Query, Res, ResMut, Resource, SparseHash, TypeGetter, TypeId, WinnyResource,
-};
-use logger::*;
+use ecs::{Mut, Query, Res, ResMut, WinnyResource};
 
-use wgpu::{
-    rwh::{HasDisplayHandle, HasWindowHandle},
-    util::DeviceExt,
-    BindGroupLayout, SurfaceTargetUnsafe,
-};
+use wgpu::{util::DeviceExt, BindGroupLayout, SurfaceTargetUnsafe};
 use winit::window::Window;
 
-use crate::{
-    camera::CameraUniform, gui::EguiRenderer, Sprite, SpriteBinding, SpriteBindingRaw,
-    SpriteInstance, SpriteVertex, Vertex,
-};
+use crate::{camera::CameraUniform, gui::EguiRenderer, sprite::*, Vertex};
 
-#[derive(Debug, WinnyResource, TypeGetter)]
+const VERTICES: u32 = 3;
+
+#[derive(Debug, WinnyResource)]
 pub struct Renderer {
     pub window: Window,
-    pub sprite_bindings: MutableSparseSet<PathBuf, SpriteBindingRaw>,
+    pub sprite_bindings: HashMap<PathBuf, SpriteBindingRaw>,
     render_pipeline: wgpu::RenderPipeline,
     surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
@@ -88,7 +79,6 @@ impl Renderer {
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
         };
-        info!("Surface Config: {:#?}", config);
         surface.configure(&device, &config);
 
         let camera_uniform = CameraUniform::new();
@@ -167,7 +157,7 @@ impl Renderer {
         Renderer {
             window,
             num_sprites: 0,
-            sprite_bindings: MutableSparseSet::new(),
+            sprite_bindings: HashMap::new(),
             sprite_buffer,
             surface,
             device,
@@ -227,8 +217,6 @@ pub fn render(
         timestamp_writes: None,
     });
 
-    // info!("{:?}", self.sprite_bindings);
-
     let mut offset = 0;
     for sprite in sprites.iter() {
         render_pass.set_pipeline(&renderer.render_pipeline);
@@ -237,14 +225,17 @@ pub fn render(
             1,
             &renderer
                 .sprite_bindings
-                .get_value(&sprite.path)
-                .unwrap()
+                .get(&sprite.path)
+                .expect("sprite binding added before render pass")
                 .bind_group,
             &[],
         );
         render_pass.set_vertex_buffer(0, renderer.vertex_buffer.slice(..));
         render_pass.set_vertex_buffer(1, renderer.sprite_buffer.slice(..));
-        render_pass.draw(offset * 6..offset * 6 + 6, offset..offset + 1);
+        render_pass.draw(
+            offset * VERTICES..offset * VERTICES + VERTICES,
+            offset..offset + 1,
+        );
         offset += 1;
     }
     drop(render_pass);
@@ -300,7 +291,7 @@ pub fn update_sprite_data(
         .flatten()
         .collect();
 
-    renderer.num_sprites = vertex_data.len() as u32 / 6;
+    renderer.num_sprites = vertex_data.len() as u32 / VERTICES;
 
     renderer.vertex_buffer =
         renderer

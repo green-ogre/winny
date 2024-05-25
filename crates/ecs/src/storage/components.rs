@@ -1,6 +1,8 @@
 use super::*;
 
-pub trait Component: 'static {}
+pub trait Component: 'static + TypeGetter + Debug {
+    // fn component_id() -> ComponentId;
+}
 
 pub trait ComponentStorageType {
     fn storage_type(&self) -> StorageType;
@@ -37,5 +39,24 @@ impl ComponentSet {
 
     pub fn equivalent(&self, components: &[TypeId]) -> bool {
         self.ids.eq(components)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct ComponentId(usize);
+
+impl ComponentId {
+    pub fn new(id: usize) -> Self {
+        Self(id)
+    }
+
+    pub fn id(&self) -> usize {
+        self.0
+    }
+}
+
+impl SparseArrayIndex for ComponentId {
+    fn to_index(&self) -> usize {
+        self.id()
     }
 }

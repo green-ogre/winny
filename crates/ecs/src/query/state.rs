@@ -1,9 +1,12 @@
+use logger::error;
+
 use super::*;
 
-// TODO: this can easily be cached in the world with an id
+// TODO: cache state inbetween queries
 pub struct QueryState<T, F> {
     storages: Vec<StorageId>,
     component_access: Vec<ComponentAccess>,
+    component_ids: Vec<ComponentId>,
     query: PhantomData<T>,
     filter: PhantomData<F>,
 }
@@ -20,24 +23,24 @@ impl<T, F> Debug for QueryState<T, F> {
 }
 
 impl<T: QueryData, F: Filter> QueryState<T, F> {
-    pub fn from_world(world: &World) -> Self {
-        let storages = unsafe {
-            world
-                .as_unsafe_world()
-                .read_only()
-                .archetypes
-                .iter()
-                .filter(|arch| arch.contains_query::<T>())
-                .filter(|arch| F::condition(arch))
-                .map(|arch| StorageId {
-                    table_id: arch.table_id,
-                    archetype_id: arch.id,
-                })
-                .collect()
-        };
+    // pub fn from_world(world: &World) -> Self {
+    //     let storages = unsafe {
+    //         world
+    //             .as_unsafe_world()
+    //             .read_only()
+    //             .archetypes
+    //             .iter()
+    //             .filter(|arch| arch.contains_query::<T>())
+    //             .filter(|arch| F::condition(arch))
+    //             .map(|arch| StorageId {
+    //                 table_id: arch.table_id,
+    //                 archetype_id: arch.id,
+    //             })
+    //             .collect()
+    //     };
 
-        Self::new(storages)
-    }
+    //     Self::new(storages, )
+    // }
 
     pub fn from_world_unsafe<'w>(world: UnsafeWorldCell<'w>) -> Self {
         let storages = unsafe {
@@ -54,12 +57,17 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
                 .collect()
         };
 
-        Self::new(storages)
+        let component_ids = unsafe { world.read_only() }
+            .get_component_ids(&T::set_ids())
+            .unwrap();
+
+        Self::new(storages, component_ids)
     }
 
-    pub fn new(storages: Vec<StorageId>) -> Self {
+    pub fn new(storages: Vec<StorageId>, component_ids: Vec<ComponentId>) -> Self {
         Self {
             storages,
+            component_ids,
             component_access: T::set_access(),
             query: PhantomData,
             filter: PhantomData,
@@ -70,19 +78,31 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
         self.component_access.clone()
     }
 
-    pub fn new_iter<'w>(&self, world: &'w UnsafeWorldCell<'w>) -> QueryIter<'_, T, F> {
+    pub fn iter_component_ids(&self) -> impl Iterator<Item = ComponentId> {
+        self.component_ids.clone().into_iter()
+    }
+
+    pub fn new_iter(&self, world: &UnsafeWorldCell<'_>) -> QueryIter<'_, T, F> {
         let storage: Vec<_> = self
             .storages
             .iter()
             .map(|id| unsafe {
                 (
-                    world.read_only().archetypes.get(id.archetype_id),
-                    world.read_only().tables.get(id.table_id),
+                    world
+                        .read_only()
+                        .archetypes
+                        .get(id.archetype_id)
+                        .expect("correct index"),
+                    world
+                        .read_only()
+                        .tables
+                        .get(id.table_id)
+                        .expect("correct index"),
                 )
             })
             .collect();
 
-        QueryIter::new(storage)
+        QueryIter::new(self, storage)
     }
 
     pub fn new_iter_mut<'w>(&self, world: &'w UnsafeWorldCell<'w>) -> QueryIterMut<'_, T, F> {
@@ -91,42 +111,89 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
             .iter()
             .map(|id| unsafe {
                 (
-                    world.read_only().archetypes.get(id.archetype_id),
-                    world.read_only().tables.get(id.table_id),
+                    world
+                        .read_only()
+                        .archetypes
+                        .get(id.archetype_id)
+                        .expect("correct index"),
+                    world
+                        .read_only()
+                        .tables
+                        .get(id.table_id)
+                        .expect("correct index"),
                 )
             })
             .collect();
 
-        QueryIterMut::new(storage)
+        QueryIterMut::new(self, storage)
     }
 
-    // TODO: error handling
-    pub fn get_single<'w>(&self, world: &'w UnsafeWorldCell) -> anyhow::Result<T::ReadOnly<'_>> {
+    pub fn get_single<'w>(&self, world: &'w UnsafeWorldCell) -> Result<T::ReadOnly<'_>, ()> {
         Ok(T::read_only(
             unsafe { world.read_only() }
                 .tables
-                .get(self.storages.first().unwrap().table_id),
+                .get(
+                    self.storages
+                        .first()
+                        .ok_or_else(|| {
+                            error!("Query could not find a table for single");
+                        })?
+                        .table_id,
+                )
+                .expect("correct table id"),
             unsafe { world.read_only() }
                 .archetypes
-                .get(self.storages.first().unwrap().archetype_id)
+                .get(
+                    self.storages
+                        .first()
+                        .ok_or_else(|| {
+                            error!("Query could not find an archetype for single");
+                        })?
+                        .archetype_id,
+                )
+                .expect("correct archetype id")
                 .entities
                 .first()
-                .unwrap(),
+                .ok_or_else(|| {
+                    error!("Query could not produce any entities for single");
+                    ()
+                })?,
+            self.iter_component_ids(),
         ))
     }
 
     // TODO: error handling
-    pub fn get_single_mut<'w>(&self, world: &'w UnsafeWorldCell) -> anyhow::Result<T::Item<'_>> {
+    pub fn get_single_mut<'w>(&self, world: &'w UnsafeWorldCell) -> Result<T::Item<'_>, ()> {
         Ok(T::fetch(
             unsafe { world.read_only() }
                 .tables
-                .get(self.storages.first().unwrap().table_id),
+                .get(
+                    self.storages
+                        .first()
+                        .ok_or_else(|| {
+                            error!("Query could not find a table for single mut");
+                        })?
+                        .table_id,
+                )
+                .expect("correct table id"),
             unsafe { world.read_only() }
                 .archetypes
-                .get(self.storages.first().unwrap().archetype_id)
+                .get(
+                    self.storages
+                        .first()
+                        .ok_or_else(|| {
+                            error!("Query could not find an archetype for single mut");
+                        })?
+                        .archetype_id,
+                )
+                .expect("correct index")
                 .entities
                 .first()
-                .unwrap(),
+                .ok_or_else(|| {
+                    error!("Query could not produce any entities for single mut");
+                    ()
+                })?,
+            self.iter_component_ids(),
         ))
     }
 }

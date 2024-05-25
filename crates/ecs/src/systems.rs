@@ -1,14 +1,10 @@
 use std::{
-    cell::UnsafeCell,
-    ffi::OsString,
     fmt::Debug,
     marker::PhantomData,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 
 use ecs_derive::all_tuples;
-use libloading::{Error, Symbol};
-use logger::{error, trace};
 
 use crate::{
     unsafe_world::UnsafeWorldCell, AccessType, Commands, ComponentAccess, ComponentAccessFilter,
@@ -82,16 +78,9 @@ impl Scheduler {
         }
 
         system_sets.retain(|set| !set.is_empty());
-
-        // for (i, set) in system_sets.iter().enumerate() {
-        //     println!("SCHEDULE: {:?} -- SET {}", schedule, i + 1);
-        //     println!();
-        //     set.iter().for_each(|s| s.debug_print());
-        //     println!();
-        // }
     }
 
-    fn run_schedule(&mut self, schedule: Schedule, world: &World) {
+    pub fn run_schedule(&mut self, schedule: Schedule, world: &World) {
         let schedule = match schedule {
             Schedule::StartUp => &mut self.startup,
             Schedule::PreUpdate => &mut self.pre_update,
@@ -112,9 +101,35 @@ impl Scheduler {
                     });
                 }
             })
-
-            // TODO: apply deffered
         }
+    }
+
+    pub fn run_schedule_timed(&mut self, schedule: Schedule, world: &World) -> Duration {
+        let start = SystemTime::now();
+
+        let schedule = match schedule {
+            Schedule::StartUp => &mut self.startup,
+            Schedule::PreUpdate => &mut self.pre_update,
+            Schedule::Update => &mut self.update,
+            Schedule::PostUpdate => &mut self.post_update,
+            Schedule::Render => &mut self.render,
+            Schedule::Exit => &mut self.exit,
+        };
+
+        for set in schedule.iter_mut() {
+            std::thread::scope(|s| {
+                for system in set.iter_mut() {
+                    let world = unsafe { world.as_unsafe_world() };
+                    let f = system.as_mut();
+
+                    s.spawn(move || {
+                        f.run_unsafe(world);
+                    });
+                }
+            })
+        }
+
+        SystemTime::now().duration_since(start).unwrap()
     }
 
     fn run_schedule_single_thread(&mut self, schedule: Schedule, world: &World) {
@@ -134,8 +149,6 @@ impl Scheduler {
 
                 f.run_unsafe(world);
             }
-
-            // TODO: apply deffered
         }
     }
 
@@ -203,7 +216,7 @@ impl SystemParam for Commands<'_> {
     }
 
     // TODO: pass a reference to storage for this command to be cached
-    fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
+    fn init_state<'w>(_world: UnsafeWorldCell<'w>) -> Self::State {
         TypeId::new(0)
     }
 
@@ -226,12 +239,12 @@ impl<E: Event + TypeGetter> SystemParam for EventReader<'_, E> {
         )]
     }
 
-    fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
+    fn init_state<'w>(_world: UnsafeWorldCell<'w>) -> Self::State {
         E::type_id()
     }
 
     fn to_param<'w, 's>(
-        state: &'s mut Self::State,
+        _state: &'s mut Self::State,
         world: UnsafeWorldCell<'w>,
     ) -> Self::Item<'w, 's> {
         EventReader::new(world)
@@ -249,12 +262,12 @@ impl<E: Event + TypeGetter> SystemParam for EventWriter<'_, E> {
         )]
     }
 
-    fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
+    fn init_state<'w>(_world: UnsafeWorldCell<'w>) -> Self::State {
         E::type_id()
     }
 
     fn to_param<'w, 's>(
-        state: &'s mut Self::State,
+        _state: &'s mut Self::State,
         world: UnsafeWorldCell<'w>,
     ) -> Self::Item<'w, 's> {
         EventWriter::new(world)
@@ -272,15 +285,15 @@ impl<'a, T: 'static + Resource + TypeGetter> SystemParam for Res<'a, T> {
         )]
     }
 
-    fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
+    fn init_state<'w>(_world: UnsafeWorldCell<'w>) -> Self::State {
         T::type_id()
     }
 
     fn to_param<'w, 's>(
-        state: &'s mut Self::State,
+        _state: &'s mut Self::State,
         world: UnsafeWorldCell<'w>,
     ) -> Self::Item<'w, 's> {
-        unsafe { Res::from_ref(world.resource::<T>()) }
+        Res::new(world)
     }
 }
 
@@ -295,15 +308,15 @@ impl<T: 'static + Resource + TypeGetter> SystemParam for ResMut<'_, T> {
         )]
     }
 
-    fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
+    fn init_state<'w>(_world: UnsafeWorldCell<'w>) -> Self::State {
         T::type_id()
     }
 
     fn to_param<'w, 's>(
-        state: &'s mut Self::State,
+        _state: &'s mut Self::State,
         world: UnsafeWorldCell<'w>,
     ) -> Self::Item<'w, 's> {
-        unsafe { ResMut::from_ref_mut(world.resource_mut::<T>()) }
+        ResMut::new(world)
     }
 }
 

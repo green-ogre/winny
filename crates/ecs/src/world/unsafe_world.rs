@@ -1,6 +1,6 @@
-use std::{cell::UnsafeCell, marker::PhantomData};
+use std::marker::PhantomData;
 
-use crate::{DumbVec, Res, ResMut, Resource, TypeGetter, TypeId, TypeName, World};
+use super::*;
 
 #[derive(Debug, Clone, Copy)]
 pub struct UnsafeWorldCell<'w>(*mut World, PhantomData<&'w World>);
@@ -25,33 +25,47 @@ impl<'w> UnsafeWorldCell<'w> {
         &*self.0 as &World
     }
 
-    unsafe fn mut_world(&self) -> &mut World {
+    unsafe fn world_mut(&self) -> &mut World {
         &mut *self.0
     }
 
-    pub unsafe fn insert_resource<R: Resource + TypeGetter>(&self, res: R) {
+    pub unsafe fn insert_resource<R: Resource>(&self, res: R) {
+        let resource_id = self.world().get_resource_id(R::type_id());
         unsafe {
-            self.mut_world().resources.insert(res);
+            self.world_mut().resources.insert(res, resource_id);
         }
     }
 
     pub unsafe fn insert_stored_resource(&self, storage: DumbVec, type_id: TypeId) {
-        self.mut_world().resources.insert_storage(storage, type_id);
+        let resource_id = self.read_only().get_resource_id(type_id);
+        self.world_mut()
+            .resources
+            .insert_storage(storage, resource_id);
     }
 
-    pub unsafe fn resource<R: Resource + TypeGetter>(&self) -> *const R {
-        let id = R::type_id();
-
-        unsafe { self.world().resources.get_resource_by_id(id) }
+    pub unsafe fn resource_ptr<R: Resource>(&self) -> *const R {
+        let resource_id = self.read_only().get_resource_id(R::type_id());
+        unsafe { self.world().resources.get_resource_by_id(resource_id) }
     }
 
-    pub unsafe fn resource_ref<R: Resource + TypeGetter>(&self) -> Res<'_, R> {
-        Res::new(*self)
+    pub unsafe fn resource_ptr_mut<R: Resource>(&self) -> *mut R {
+        let resource_id = self.read_only().get_resource_id(R::type_id());
+        unsafe {
+            self.world_mut()
+                .resources
+                .get_resource_mut_by_id(resource_id)
+        }
     }
 
-    pub unsafe fn resource_mut<R: Resource + TypeGetter>(&self) -> *mut R {
-        let id = R::type_id();
+    // pub unsafe fn resource_ref<R: Resource + TypeGetter>(&self) -> Res<'_, R> {
+    //     Res::new(*self)
+    // }
 
-        unsafe { self.mut_world().resources.get_resource_mut_by_id(id) }
-    }
+    // pub unsafe fn resource_mut<R: Resource + TypeGetter>(&self) -> *mut R {
+    //     unsafe {
+    //         self.mut_world()
+    //             .resources
+    //             .get_resource_mut_by_id(R::type_id())
+    //     }
+    // }
 }

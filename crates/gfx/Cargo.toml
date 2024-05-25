@@ -10,18 +10,14 @@ winny_math = { path = "../winny_math" }
 plugins = { path = "../plugins" }
 
 pollster = "0.3.0"
-tobj = { version = "3.2.1", features = [
-    "async",
-]}
 bytemuck = { version = "1.12", features = [ "derive" ] }
 wgpu = "0.19.3"
 egui = "0.27.2"
 winit = "0.29.15"
 egui-wgpu = "0.27.2"
 egui-winit = "0.27.2"
-anyhow = "1.0.83"
-cgmath = "0.18.0"
+libflate = "2.1.0"
 
 [dependencies.image]
 version = "0.24"
-features = ["png", "jpeg"]
+features = ["png"]

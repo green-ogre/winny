@@ -1,5 +1,5 @@
 // pub use crate::platform::*;
-pub use crate::platform2::*;
+pub use crate::platform::*;
 pub use crate::App;
 pub use crate::Schedule::*;
 
@@ -15,4 +15,5 @@ pub use gfx::*;
 pub extern crate winny_math;
 pub use winny_math::*;
 
+pub use crate::window::WindowPlugin;
 pub use logger::*;

@@ -1,5 +1,3 @@
-#![allow(non_camel_case_types)]
-
 use std::ffi::c_void;
 
 // pub const GL_COLOR_BUFFER_BIT: c_uint = 0x00004000;

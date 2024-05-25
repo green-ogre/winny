@@ -1,4 +1,8 @@
-use std::{alloc::Layout, hash::Hash, ptr::NonNull};
+use std::{hash::Hash, ptr::NonNull};
+
+use logger::{error, info};
+
+use crate::unsafe_world::UnsafeWorldCell;
 
 use self::dumb_vec::DumbVec;
 
@@ -9,25 +13,16 @@ pub struct Column {
     storage: DumbVec,
 }
 
-// impl Debug for Column {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         f.debug_struct("Column")
-//             .field("storage", &self.storage.as_slice_unchecked())
-//             .finish()
-//     }
-// }
-
 impl Column {
-    pub fn new(desc: ComponentDescription) -> Self {
-        Self {
-            storage: DumbVec::from_description(desc),
-        }
+    pub fn new(storage: DumbVec) -> Self {
+        Self { storage }
     }
 
     pub fn len(&self) -> usize {
         self.storage.len()
     }
 
+    // TODO: error
     pub fn swap_remove(&mut self, row: TableRow) -> Result<(), ()> {
         if self.len() <= row.0 {
             return Err(());
@@ -44,246 +39,159 @@ impl Column {
         self.storage.get_unchecked(row.0)
     }
 
-    pub fn push<T>(&mut self, val: T) -> Result<(), ()> {
+    pub fn push<T>(&mut self, val: T) -> Result<(), IntoStorageError> {
         self.storage.push(val)
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct MutableSparseSet<I: Hash + PartialEq + Eq, V> {
-    set: FxHashMap<I, V>,
+pub trait SparseArrayIndex {
+    fn to_index(&self) -> usize;
 }
 
-impl<I: Hash + PartialEq + Eq, V> MutableSparseSet<I, V> {
-    pub fn new() -> Self {
-        Self {
-            set: FxHashMap::default(),
-        }
-    }
-
-    pub fn get_value(&self, index: &I) -> Option<&V> {
-        self.set.get(index)
-    }
-
-    pub fn get_value_mut(&mut self, index: &I) -> Option<&mut V> {
-        self.set.get_mut(index)
-    }
-
-    pub fn insert(&mut self, index: I, val: V) {
-        self.set.insert(index, val);
-    }
-
-    pub fn len(&self) -> usize {
-        self.set.len()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &V> {
-        self.set.values().into_iter()
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut V> {
-        self.set.values_mut().into_iter()
-    }
-
-    pub fn contains_key(&self, k: &I) -> bool {
-        self.set.contains_key(k)
+impl SparseArrayIndex for usize {
+    fn to_index(&self) -> usize {
+        *self
     }
 }
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct ImmutableSparseSet<I: Hash + PartialEq + Eq, V> {
-    set: FxHashMap<I, V>,
-}
-
-impl<I: Hash + PartialEq + Eq, V> ImmutableSparseSet<I, V> {
-    pub unsafe fn get_value(&self, index: &I) -> &V {
-        self.set
-            .get(index)
-            .expect("Invalid index into ImmutableSparseSet")
-    }
-
-    pub fn get_value_mut(&mut self, index: &I) -> &mut V {
-        self.set
-            .get_mut(index)
-            .expect("Invalid index into ImmutableSparseSet")
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.set.is_empty()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &V> {
-        self.set.values().into_iter()
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut V> {
-        self.set.values_mut().into_iter()
-    }
-
-    pub fn into_iter_pair(self) -> impl Iterator<Item = (I, V)> {
-        self.set.into_iter()
-    }
-
-    pub fn keys(&self) -> Vec<&I> {
-        self.set.keys().into_iter().collect()
-    }
-}
-
-#[derive(Debug)]
-pub struct SparseSetBuilder<I, V> {
-    set: FxHashMap<I, V>,
-}
-
-impl<I: SparseHash, V> From<SparseSetBuilder<I, V>> for ImmutableSparseSet<I, V> {
-    fn from(value: SparseSetBuilder<I, V>) -> Self {
-        Self { set: value.set }
-    }
-}
-
-impl<I: SparseHash, V> SparseSetBuilder<I, V> {
-    pub fn new() -> Self {
-        Self {
-            set: FxHashMap::default(),
-        }
-    }
-
-    pub fn insert(&mut self, index: I, value: V) {
-        self.set.insert(index, value);
-    }
-
-    pub fn build(self) -> ImmutableSparseSet<I, V> {
-        ImmutableSparseSet::from(self)
-    }
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct ComponentDescription {
-    pub layout: Layout,
-    pub type_id: TypeId,
-    pub drop: Option<DumbDrop>,
-}
-
-pub trait SparseHash: Hash + PartialEq + Eq {}
-
-impl SparseHash for Box<[ComponentDescription]> {}
 
 #[derive(Debug)]
 pub struct Tables {
-    tables: MutableSparseSet<TableId, Table>,
-    descriptor_index: MutableSparseSet<Box<[ComponentDescription]>, TableId>,
+    tables: SparseSet<TableId, Table>,
 }
 
 unsafe impl Sync for Tables {}
 unsafe impl Send for Tables {}
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct TableId(pub usize);
-impl SparseHash for TableId {}
+pub struct TableId(usize);
+
+impl SparseArrayIndex for TableId {
+    fn to_index(&self) -> usize {
+        self.id()
+    }
+}
+
+impl TableId {
+    pub fn new(id: usize) -> Self {
+        Self(id)
+    }
+
+    pub fn id(&self) -> usize {
+        self.0
+    }
+}
 
 impl Tables {
     pub fn new() -> Self {
         Self {
-            tables: MutableSparseSet::new(),
-            descriptor_index: MutableSparseSet::new(),
+            tables: SparseSet::new(),
         }
     }
 
-    pub fn new_table(
-        &mut self,
-        id: TableId,
-        table: Table,
-        descriptions: Vec<ComponentDescription>,
-    ) {
-        self.descriptor_index
-            .insert(descriptions.into_boxed_slice(), id);
+    pub fn new_table(&mut self, id: TableId, table: Table) {
         self.tables.insert(id, table);
     }
 
-    pub fn get(&self, id: TableId) -> &Table {
-        self.tables.get_value(&id).expect("valid table id")
+    pub fn get(&self, id: TableId) -> Option<&Table> {
+        self.tables.get(&id)
     }
 
-    pub fn get_mut(&mut self, id: TableId) -> &mut Table {
-        self.tables.get_value_mut(&id).expect("valid table id")
-    }
-
-    pub fn get_from_descriptions(descriptions: Box<[ComponentDescription]>) -> Option<Table> {
-        None
+    pub fn get_mut(&mut self, id: TableId) -> Option<&mut Table> {
+        self.tables.get_mut(&id)
     }
 
     pub fn new_id(&self) -> TableId {
-        TableId(self.tables.len())
+        TableId::new(self.tables.len())
     }
 }
 
 #[derive(Debug)]
 pub struct Table {
-    pub storage: ImmutableSparseSet<TypeId, Column>,
+    pub storage: SparseSet<ComponentId, Column>,
 }
 
 impl Table {
-    pub fn from_bundle<T: Bundle>(bundle: T) -> Self {
-        let mut table = Self::new(&bundle.descriptions());
-        table.new_entity(bundle);
+    fn new(storages: Vec<(ComponentId, DumbVec)>) -> Self {
+        let mut storage = SparseSet::new();
+
+        for (component_id, dumb_vec) in storages.into_iter() {
+            storage.insert(component_id, Column::new(dumb_vec));
+        }
+
+        Self { storage }
+    }
+
+    pub fn from_bundle<'w, T: Bundle>(bundle: T, world: UnsafeWorldCell<'w>) -> Self {
+        let mut table = Self::new(bundle.new_storages(world));
+        table.new_entity(bundle, world);
 
         table
     }
 
-    fn new(descriptions: &[ComponentDescription]) -> Self {
-        let mut storage = SparseSetBuilder::new();
-
-        for desc in descriptions.iter() {
-            storage.insert(desc.type_id, Column::new(desc.clone()));
-        }
-
-        Self {
-            storage: storage.into(),
-        }
-    }
-
     pub fn len(&self) -> usize {
-        if self.storage.is_empty() {
-            return 0;
-        }
-
-        self.storage.iter().nth(0).expect("cannot be empty").len()
+        self.storage.len()
     }
 
-    pub fn new_entity<T: Bundle>(&mut self, bundle: T) {
-        assert!(bundle.push_storage(self).is_ok());
+    pub fn depth(&self) -> usize {
+        if self.storage.len() == 0 {
+            0
+        } else {
+            let index = self.storage.indexes().first().expect("cannot be empty");
+            self.storage.get(index).expect("must be occupied").len()
+        }
+    }
+
+    pub fn new_entity<'w, T: Bundle>(&mut self, bundle: T, world: UnsafeWorldCell<'w>) {
+        let _ = bundle.push_storage(world, self).map_err(|err| {
+            error!("Could not push bundle into table storage: {:?}", err);
+            // TODO: REMOVE
+            info!("{:#?}", unsafe { world.read_only() });
+            panic!();
+        });
     }
 
     pub fn remove_entity(&mut self, row: TableRow) -> Result<(), ()> {
-        for column in self.storage.iter_mut() {
+        for column in self.storage.values_mut() {
             column.swap_remove(row)?;
         }
 
         Ok(())
     }
 
-    pub unsafe fn get_entity<T: TypeGetter>(&self, row: TableRow) -> &T {
-        self.storage
-            .get_value(&T::type_id())
-            .get_row(row)
-            .cast::<T>()
-            .as_ref()
+    pub unsafe fn get_entity<T: Component>(&self, row: TableRow, component_id: ComponentId) -> &T {
+        if let Some(column) = self.storage.get(&component_id) {
+            column.get_row(row).cast::<T>().as_ref()
+        } else {
+            error!("Could not get entity from table: {:?}", row);
+            panic!();
+        }
     }
 
-    pub unsafe fn get_entity_mut<T: TypeGetter>(&self, row: TableRow) -> &mut T {
-        self.storage
-            .get_value(&T::type_id())
-            .get_row(row)
-            .cast::<T>()
-            .as_mut()
+    pub unsafe fn get_entity_mut<T: Component>(
+        &self,
+        row: TableRow,
+        component_id: ComponentId,
+    ) -> &mut T {
+        if let Some(column) = self.storage.get(&component_id) {
+            column.get_row(row).cast::<T>().as_mut()
+        } else {
+            error!("Could not get entity from table: {:?}", row);
+            panic!();
+        }
     }
 
     // Caller needs to ensure that all elements of entity are present and successfully pushed
     // so that there are not miss-shapen columns
-    pub fn push_column<T: TypeGetter>(&mut self, val: T) -> Result<(), IntoStorageError> {
-        self.storage
-            .get_value_mut(&T::type_id())
-            .push(val)
-            .map_err(|_| IntoStorageError::ColumnMisMatch)
+    pub fn push_column<T: Component>(
+        &mut self,
+        val: T,
+        component_id: ComponentId,
+    ) -> Result<(), IntoStorageError> {
+        Ok(self
+            .storage
+            .get_mut(&component_id)
+            .ok_or_else(|| IntoStorageError::IncorrectSparseIndex)?
+            .push(val)?)
     }
 }
 

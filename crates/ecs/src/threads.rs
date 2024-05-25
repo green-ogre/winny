@@ -3,9 +3,9 @@ use std::{
     sync::mpsc::{SendError, Sender},
 };
 
-use ecs_derive::{InternalResource, InternalTypeGetter};
+use ecs_derive::InternalResource;
 
-#[derive(Debug, InternalTypeGetter, InternalResource)]
+#[derive(Debug, InternalResource)]
 pub struct ThreadMessageSender<T>
 where
     T: 'static + Send + Sync + Debug,

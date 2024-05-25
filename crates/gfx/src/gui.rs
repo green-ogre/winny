@@ -1,11 +1,10 @@
-use ecs::{ResMut, TypeGetter, WinnyResource};
+use ecs::{ResMut, WinnyResource};
 use egui_winit::EventResponse;
-use logger::info;
 use winit::{event::WindowEvent, window::Window};
 
 use crate::Renderer;
 
-#[derive(WinnyResource, TypeGetter)]
+#[derive(WinnyResource)]
 pub struct EguiRenderer {
     pub state: egui_winit::State,
     renderer: egui_wgpu::Renderer,

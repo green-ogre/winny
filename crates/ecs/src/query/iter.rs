@@ -21,20 +21,25 @@ impl<'s> QueryIterStorage<'s> {
 pub struct QueryIter<'s, T, F> {
     cursor: std::slice::Iter<'s, ArchEntity>,
     storage: Option<QueryIterStorage<'s>>,
+    query_state: &'s QueryState<T, F>,
     next_storage: usize,
     query: PhantomData<T>,
     filter: PhantomData<F>,
 }
 
 impl<'s, T, F> QueryIter<'s, T, F> {
-    pub fn new(storage: Vec<(&'s Archetype, &'s Table)>) -> Self {
+    pub fn new(
+        query_state: &'s QueryState<T, F>,
+        storage: Vec<(&'s Archetype, &'s Table)>,
+    ) -> Self {
         if storage.first().is_none() {
-            return Self::empty();
+            return Self::empty(query_state);
         }
 
         let storage = QueryIterStorage::new(storage);
 
         Self {
+            query_state,
             cursor: storage.archetype.entities.iter(),
             next_storage: 1,
             storage: Some(storage),
@@ -43,8 +48,9 @@ impl<'s, T, F> QueryIter<'s, T, F> {
         }
     }
 
-    fn empty() -> Self {
+    fn empty(query_state: &'s QueryState<T, F>) -> Self {
         Self {
+            query_state,
             cursor: [].iter(),
             next_storage: 0,
             storage: None,
@@ -54,7 +60,7 @@ impl<'s, T, F> QueryIter<'s, T, F> {
     }
 }
 
-impl<'s, T: QueryData, F> Iterator for QueryIter<'s, T, F> {
+impl<'s, T: QueryData, F: Filter> Iterator for QueryIter<'s, T, F> {
     type Item = T::ReadOnly<'s>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -86,6 +92,7 @@ impl<'s, T: QueryData, F> Iterator for QueryIter<'s, T, F> {
         Some(T::read_only(
             self.storage.as_ref().unwrap().table,
             arch_entity,
+            self.query_state.iter_component_ids(),
         ))
     }
 }
@@ -93,20 +100,25 @@ impl<'s, T: QueryData, F> Iterator for QueryIter<'s, T, F> {
 pub struct QueryIterMut<'s, T, F> {
     cursor: std::slice::Iter<'s, ArchEntity>,
     storage: Option<QueryIterStorage<'s>>,
+    query_state: &'s QueryState<T, F>,
     next_storage: usize,
     query: PhantomData<T>,
     filter: PhantomData<F>,
 }
 
 impl<'s, T, F> QueryIterMut<'s, T, F> {
-    pub fn new(storage: Vec<(&'s Archetype, &'s Table)>) -> Self {
+    pub fn new(
+        query_state: &'s QueryState<T, F>,
+        storage: Vec<(&'s Archetype, &'s Table)>,
+    ) -> Self {
         if storage.first().is_none() {
-            return Self::empty();
+            return Self::empty(query_state);
         }
 
         let storage = QueryIterStorage::new(storage);
 
         Self {
+            query_state,
             cursor: storage.archetype.entities.iter(),
             next_storage: 1,
             storage: Some(storage),
@@ -115,8 +127,9 @@ impl<'s, T, F> QueryIterMut<'s, T, F> {
         }
     }
 
-    fn empty() -> Self {
+    fn empty(query_state: &'s QueryState<T, F>) -> Self {
         Self {
+            query_state,
             cursor: [].iter(),
             next_storage: 0,
             storage: None,
@@ -126,7 +139,7 @@ impl<'s, T, F> QueryIterMut<'s, T, F> {
     }
 }
 
-impl<'s, T: QueryData, F> Iterator for QueryIterMut<'s, T, F> {
+impl<'s, T: QueryData, F: Filter> Iterator for QueryIterMut<'s, T, F> {
     type Item = T::Item<'s>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -155,6 +168,10 @@ impl<'s, T: QueryData, F> Iterator for QueryIterMut<'s, T, F> {
             return None;
         };
 
-        Some(T::fetch(self.storage.as_ref().unwrap().table, arch_entity))
+        Some(T::fetch(
+            self.storage.as_ref().unwrap().table,
+            arch_entity,
+            self.query_state.iter_component_ids(),
+        ))
     }
 }

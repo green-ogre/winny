@@ -1,10 +1,5 @@
-use std::{cell::RefCell, collections::VecDeque};
-
-use crate::{ComponentStorageType, SparseHash};
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct TypeId(u64);
-impl SparseHash for TypeId {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct TypeName(&'static str);
@@ -59,28 +54,18 @@ impl<T: TypeGetter + 'static> Any for T {
     }
 }
 
-impl<T: TypeGetter + 'static> TypeGetter for RefCell<VecDeque<T>> {
-    fn type_id() -> TypeId {
-        TypeId::new(28)
-    }
-
-    fn type_name() -> TypeName {
-        TypeName::new("sf")
-    }
-}
-
-impl dyn Any {
-    pub fn downcast_ref<T: TypeGetter>(&self) -> Option<&T> {
-        if self.type_id() != T::type_id() {
-            return None;
-        }
-        unsafe { Some(&*(self as *const dyn Any as *const T)) }
-    }
-
-    pub fn downcast_mut<T: TypeGetter>(&mut self) -> Option<&mut T> {
-        if self.type_id() != T::type_id() {
-            return None;
-        }
-        unsafe { Some(&mut *(self as *mut dyn Any as *mut T)) }
-    }
-}
+// impl dyn Any {
+//     pub fn downcast_ref<T: TypeGetter>(&self) -> Option<&T> {
+//         if self.type_id() != T::type_id() {
+//             return None;
+//         }
+//         unsafe { Some(&*(self as *const dyn Any as *const T)) }
+//     }
+//
+//     pub fn downcast_mut<T: TypeGetter>(&mut self) -> Option<&mut T> {
+//         if self.type_id() != T::type_id() {
+//             return None;
+//         }
+//         unsafe { Some(&mut *(self as *mut dyn Any as *mut T)) }
+//     }
+// }

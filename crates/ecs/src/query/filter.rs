@@ -9,9 +9,9 @@ pub struct With<T>(PhantomData<T>);
 pub struct Without<T>(PhantomData<T>);
 pub struct Or<T>(PhantomData<T>);
 
-impl<T: TypeGetter> Filter for With<T> {
+impl<T: Component> Filter for With<T> {
     fn condition(arch: &Archetype) -> bool {
-        arch.contains::<T>()
+        arch.contains_type_id::<T>()
     }
 
     fn set_access() -> Vec<ComponentAccessFilter> {
@@ -19,9 +19,9 @@ impl<T: TypeGetter> Filter for With<T> {
     }
 }
 
-impl<T: TypeGetter> Filter for Without<T> {
+impl<T: Component> Filter for Without<T> {
     fn condition(arch: &Archetype) -> bool {
-        !arch.contains::<T>()
+        !arch.contains_type_id::<T>()
     }
 
     fn set_access() -> Vec<ComponentAccessFilter> {
@@ -29,9 +29,9 @@ impl<T: TypeGetter> Filter for Without<T> {
     }
 }
 
-impl<T: TypeGetter> Filter for Or<T> {
+impl<T: Component> Filter for Or<T> {
     fn condition(arch: &Archetype) -> bool {
-        arch.contains::<T>()
+        arch.contains_type_id::<T>()
     }
 
     fn set_access() -> Vec<ComponentAccessFilter> {

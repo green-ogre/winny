@@ -4,25 +4,19 @@ pub mod unsafe_world;
 
 pub use commands::*;
 pub use entity::*;
+use logger::error;
 
-use std::{
-    borrow::{Borrow, BorrowMut},
-    cell::{Ref, RefCell, RefMut},
-    collections::VecDeque,
-    fmt::Debug,
-};
-
-use fxhash::FxHashMap;
+use std::collections::HashMap;
+use std::{collections::VecDeque, fmt::Debug};
 
 use crate::{
-    Any, Archetype, Component, ComponentSet, Event, Events, Res, ResMut, Resource, Resources,
-    Table, TypeGetter, TypeId, TypeName,
+    Any, Archetype, Component, Event, EventId, Events, Res, ResMut, Resource, Resources, Table,
+    TypeGetter, TypeId,
 };
 
-use crate::entity::*;
 use crate::storage::*;
 
-use self::unsafe_world::UnsafeWorldCell;
+pub use self::unsafe_world::UnsafeWorldCell;
 
 #[derive(Debug)]
 pub struct World {
@@ -31,8 +25,16 @@ pub struct World {
     pub events: Events,
     pub resources: Resources,
 
-    pub entities: Vec<EntityMeta>,
-    pub free_entities: Vec<u32>,
+    //component_ids: fxhash::FxHashMap<TypeId, ComponentId>,
+    //resource_ids: fxhash::FxHashMap<TypeId, ResourceId>,
+    //event_ids: fxhash::FxHashMap<TypeId, EventId>,
+    component_ids: HashMap<TypeId, ComponentId>,
+    resource_ids: HashMap<TypeId, ResourceId>,
+    event_ids: HashMap<TypeId, EventId>,
+    next_comp_id: usize,
+
+    entities: Vec<EntityMeta>,
+    free_entities: Vec<u32>,
 }
 
 impl Default for World {
@@ -40,12 +42,19 @@ impl Default for World {
         World {
             archetypes: Archetypes::new(),
             entities: Vec::new(),
-            free_entities: Vec::new(),
             tables: Tables::new(),
             events: Events::new(),
 
+            // component_ids: fxhash::FxHashMap::default(),
+            // resource_ids: fxhash::FxHashMap::default(),
+            // event_ids: fxhash::FxHashMap::default(),
+            component_ids: HashMap::default(),
+            resource_ids: HashMap::default(),
+            event_ids: HashMap::default(),
+            next_comp_id: 0,
+
             resources: Resources::new(),
-            // events: Vec::new(),
+            free_entities: Vec::new(),
         }
     }
 }
@@ -56,6 +65,7 @@ impl World {
     }
 
     pub fn spawn<T: Bundle>(&mut self, bundle: T) -> Entity {
+        self.register_component_ids(&bundle.type_ids());
         let meta_location = self.find_or_create_storage(bundle);
 
         let entity = self.new_entity(meta_location);
@@ -67,98 +77,59 @@ impl World {
         entity
     }
 
-    // pub fn spawn_table(&mut self, table: Table, ids: Box<[TypeId]>) -> Entity {
-    //     let meta_location = self.append_or_create_storage(table, ids);
-
-    //     let entity = self.new_entity(meta_location);
-    //     self.archetypes
-    //         .get_mut(meta_location.archetype_id)
-    //         .entities
-    //         .push(ArchEntity::new(entity, meta_location.table_row));
-
-    //     let table = self.tables.get_mut(meta_location.table_id);
-    //     for (key, value) in table.storage.into_iter_pair() {
-    //         table.storage.get_value_mut(&key).append(value);
-    //     }
-
-    //     entity
-    // }
-
-    // // TODO: this is shit
-    // fn append_or_create_storage(&mut self, table: Table, ids: Box<[TypeId]>) -> MetaLocation {
-    //     if let Some(arch) = self.archetypes.get_from_comps(&ids) {
-    //         MetaLocation::new(
-    //             arch.table_id,
-    //             TableRow(self.tables.get(arch.table_id).len() - 1),
-    //             arch.id,
-    //             arch.entities.len().saturating_sub(1),
-    //         )
-    //     } else {
-    //         let table_id = self.tables.new_id();
-    //         let arch_id = self.archetypes.new_id();
-    //         let component_ids = table.storage.keys();
-    //         let mut component_desc = FxHashMap::default();
-
-    //         let component_storage_locations = bundle.storage_locations();
-    //         for (id, location) in component_ids.iter().zip(component_storage_locations.iter()) {
-    //             component_desc.insert(*id, *location);
-    //         }
-
-    //         let desc = bundle.descriptions();
-    //         self.tables
-    //             .new_table(table_id, Table::from_bundle(bundle), desc);
-    //         self.archetypes.new_archetype(
-    //             arch_id,
-    //             Archetype::new(arch_id, table_id, component_ids, component_desc, vec![]),
-    //         );
-
-    //         let arch = self.archetypes.get(arch_id);
-
-    //         MetaLocation::new(
-    //             arch.table_id,
-    //             TableRow(self.tables.get(arch.table_id).len() - 1),
-    //             arch.id,
-    //             arch.entities.len().saturating_sub(1),
-    //         )
-    //     }
-    // }
+    fn register_component_ids(&mut self, type_ids: &[TypeId]) {
+        for id in type_ids.iter() {
+            if !self.component_ids.contains_key(id) {
+                self.component_ids
+                    .insert(*id, ComponentId::new(self.next_comp_id));
+                self.next_comp_id += 1;
+            }
+        }
+    }
 
     fn find_or_create_storage<T: Bundle>(&mut self, bundle: T) -> MetaLocation {
-        let comp_ids = bundle.ids().into_boxed_slice();
-
-        if let Some(arch) = self.archetypes.get_from_comps(&comp_ids) {
-            self.tables.get_mut(arch.table_id).new_entity(bundle);
+        if let Some(arch) = self.archetypes.get_from_type_ids(&mut bundle.type_ids()) {
+            let world = unsafe { self.as_unsafe_world() };
+            self.tables
+                .get_mut(arch.table_id)
+                .expect("must exist")
+                .new_entity(bundle, world);
 
             MetaLocation::new(
                 arch.table_id,
-                TableRow(self.tables.get(arch.table_id).len() - 1),
+                TableRow(self.tables.get(arch.table_id).expect("must exist").depth() - 1),
                 arch.id,
                 arch.entities.len().saturating_sub(1),
             )
         } else {
             let table_id = self.tables.new_id();
             let arch_id = self.archetypes.new_id();
-            let component_ids = bundle.ids();
-            let mut component_desc = FxHashMap::default();
+            let component_ids = bundle.type_ids();
+            let mut component_desc = SparseSet::new();
 
             let component_storage_locations = bundle.storage_locations();
-            for (id, location) in component_ids.iter().zip(component_storage_locations.iter()) {
-                component_desc.insert(*id, *location);
+            for (id, location) in bundle
+                .component_ids(unsafe { self.as_unsafe_world() })
+                .into_iter()
+                .zip(component_storage_locations.iter())
+            {
+                component_desc.insert(id, *location);
             }
 
-            let desc = bundle.descriptions();
-            self.tables
-                .new_table(table_id, Table::from_bundle(bundle), desc);
+            self.tables.new_table(
+                table_id,
+                Table::from_bundle(bundle, unsafe { self.as_unsafe_world() }),
+            );
             self.archetypes.new_archetype(
                 arch_id,
                 Archetype::new(arch_id, table_id, component_ids, component_desc, vec![]),
             );
 
-            let arch = self.archetypes.get(arch_id);
+            let arch = self.archetypes.get(arch_id).expect("just constructed");
 
             MetaLocation::new(
                 arch.table_id,
-                TableRow(self.tables.get(arch.table_id).len() - 1),
+                TableRow(self.tables.get(arch.table_id).expect("must exist").depth() - 1),
                 arch.id,
                 arch.entities.len().saturating_sub(1),
             )
@@ -219,7 +190,7 @@ impl World {
         Err(())
     }
 
-    fn remove_entity(&mut self, entity: Entity) -> Result<(), ()> {
+    fn remove_entity(&mut self, _entity: Entity) -> Result<(), ()> {
         // let meta = self.get_entity(entity).ok_or(())?;
 
         // self.tables[meta.location.table_id].len -= 1;
@@ -273,67 +244,25 @@ impl World {
         Ok(())
     }
 
-    pub fn apply_entity_commands(&mut self, commands: EntityCommands) -> Result<(), ()> {
-        // if commands.despawn {
-        //     self.despawn(commands.entity)?;
-        //     return Ok(());
-        // }
-
-        // if commands.insert.is_empty() && commands.remove.is_empty() {
-        //     return Ok(());
-        // }
-
-        // let meta = self.get_entity(commands.entity).ok_or(())?;
-        // let mut bundle: Vec<_> = self.tables[meta.location.table_id]
-        //     .storage
-        //     .iter()
-        //     .filter(|vec| !commands.remove.contains(&vec.stored_type_id()))
-        //     .filter(|vec| {
-        //         !commands
-        //             .insert
-        //             .iter()
-        //             .any(|c| c.type_id == vec.stored_type_id())
-        //     })
-        //     .map(|vec| {
-        //         vec.duplicate(meta.location.table_row.0)
-        //             .expect("valid index")
-        //     })
-        //     .collect();
-        // for insert_component in commands.insert.into_iter() {
-        //     bundle.push(insert_component.component);
-        // }
-
-        // self.remove_entity(commands.entity).unwrap();
-        // let new_location = self.find_or_create_archetype(bundle);
-
-        // {
-        //     let meta = self.get_entity_mut(commands.entity).ok_or(())?;
-        //     meta.location = new_location;
-        // }
-
-        // let meta = self.get_entity(commands.entity).ok_or(())?;
-        // self.archetypes[meta.location.archetype_id]
-        //     .entities
-        //     .push(ArchEntity::new(commands.entity, meta.location.table_row));
-
-        // info!("{:#?}", self);
-
-        Ok(())
-    }
-
-    pub fn insert_resource<R: Debug + Resource + TypeGetter>(&mut self, resource: R) {
+    pub fn insert_resource<R: Resource>(&mut self, resource: R) {
+        let type_id = R::type_id();
+        if !self.resource_ids.contains_key(&type_id) {
+            self.resource_ids.insert(type_id, self.resources.new_id());
+        }
         unsafe { self.as_unsafe_world().insert_resource(resource) }
     }
 
-    pub fn register_event<E: Debug + Event + TypeGetter>(&mut self) {
-        self.events.insert::<E>()
+    pub fn register_event<E: Event>(&mut self) {
+        let id = self.events.new_id();
+        self.event_ids.insert(E::type_id(), id);
+        self.events.insert::<E>(id);
     }
 
-    pub fn resource<R: Resource + TypeGetter>(&self) -> Res<'_, R> {
+    pub fn resource<R: Resource>(&self) -> Res<'_, R> {
         Res::new(unsafe { self.as_unsafe_world() })
     }
 
-    pub fn resource_mut<R: Resource + TypeGetter>(&self) -> ResMut<'_, R> {
+    pub fn resource_mut<R: Resource>(&self) -> ResMut<'_, R> {
         ResMut::new(unsafe { self.as_unsafe_world() })
     }
 
@@ -341,5 +270,28 @@ impl World {
         for event_queue in self.events.iter_mut() {
             event_queue.flush();
         }
+    }
+
+    pub fn get_component_ids(&self, type_ids: &[TypeId]) -> Result<Vec<ComponentId>, ()> {
+        let mut component_ids = Vec::with_capacity(type_ids.len());
+        for t in type_ids.iter() {
+            component_ids.push(*self.component_ids.get(t).ok_or(()).map_err(|_| {
+                error!("Component Id is not stored in world for type [{:?}]", t,);
+                ()
+            })?)
+        }
+
+        Ok(component_ids)
+    }
+
+    pub fn get_event_id(&self, type_id: TypeId) -> EventId {
+        *self.event_ids.get(&type_id).expect("event is registered")
+    }
+
+    pub fn get_resource_id(&self, type_id: TypeId) -> ResourceId {
+        *self
+            .resource_ids
+            .get(&type_id)
+            .expect("resource is registered")
     }
 }
