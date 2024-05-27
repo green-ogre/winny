@@ -54,20 +54,14 @@ pub trait Vertex {
     fn desc() -> wgpu::VertexBufferLayout<'static>;
 }
 
-pub async fn load_binary(path: PathBuf) -> Result<Vec<u8>, io::Error> {
-    let data = std::fs::read(path.as_os_str())?;
-
-    Ok(data)
-}
-
-pub async fn load_string(path: &str) -> Result<String, io::Error> {
-    let mut new_path = PathBuf::new();
-    new_path.push("res/");
-    new_path.push(path);
-    let txt = std::fs::read_to_string(new_path.as_os_str())?;
-
-    Ok(txt)
-}
+// pub async fn load_string(path: &str) -> Result<String, io::Error> {
+//     let mut new_path = PathBuf::new();
+//     new_path.push("res/");
+//     new_path.push(path);
+//     let txt = std::fs::read_to_string(new_path.as_os_str())?;
+//
+//     Ok(txt)
+// }
 
 pub async fn load_texture(
     file_name: PathBuf,
@@ -75,6 +69,7 @@ pub async fn load_texture(
     queue: &wgpu::Queue,
 ) -> Result<Texture, ()> {
     info!("Loading texture: {:?}", file_name);
-    let data = load_binary(file_name).await.map_err(|_| ())?;
-    Texture::from_image(&data, device, queue)
+    let (bytes, dimensions) =
+        image_decoder::to_bytes(file_name).map_err(|err| logger::error!("{err}"))?;
+    Ok(Texture::from_bytes(&bytes, dimensions, device, queue))
 }
