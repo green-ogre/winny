@@ -1,4 +1,5 @@
 use image::GenericImageView;
+use logger::info;
 
 // TODO: name this texture
 #[derive(Debug)]
@@ -9,20 +10,20 @@ pub struct Texture {
 }
 
 impl Texture {
-    pub fn from_image(
-        img_bytes: &[u8],
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> Result<Self, ()> {
-        let img = image::load_from_memory(img_bytes).map_err(|err| {
-            logger::error!("Could not read image from bytes: {}", err);
-            ()
-        })?;
-        let rgba = img.to_rgba8();
-        let dimensions = img.dimensions();
+    // pub fn from_image(
+    //     img_bytes: &[u8],
+    //     device: &wgpu::Device,
+    //     queue: &wgpu::Queue,
+    // ) -> Result<Self, ()> {
+    //     let img = image::load_from_memory(img_bytes).map_err(|err| {
+    //         logger::error!("Could not read image from bytes: {}", err);
+    //         ()
+    //     })?;
+    //     let rgba = img.to_rgba8();
+    //     let dimensions = img.dimensions();
 
-        Ok(Self::from_bytes(&rgba, dimensions, device, queue))
-    }
+    //     Ok(Self::from_bytes(&rgba, dimensions, device, queue))
+    // }
 
     pub fn from_bytes(
         bytes: &[u8],

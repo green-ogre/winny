@@ -81,15 +81,15 @@ impl Sprite {
         [
             SpriteVertex::new(
                 Matrix2x2f::rotation_2d(Vec2f::new(-x, -y), self.rotation),
-                Vec2f::zero(),
+                Vec2f::new(0.0, 1.0),
             ),
             SpriteVertex::new(
                 Matrix2x2f::rotation_2d(Vec2f::new(-x, 2.0 * self.scale - y), self.rotation),
-                Vec2f::new(0.0, 2.0),
+                Vec2f::new(0.0, -1.0),
             ),
             SpriteVertex::new(
                 Matrix2x2f::rotation_2d(Vec2f::new(2.0 * self.scale - x, -y), self.rotation),
-                Vec2f::new(2.0, 0.0),
+                Vec2f::new(2.0, 1.0),
             ),
         ]
     }
@@ -273,8 +273,8 @@ impl SpriteBindingRaw {
 }
 
 impl SpriteBinding {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
+    pub fn new<P: Into<PathBuf>>(path: P) -> Self {
+        Self { path: path.into() }
     }
 }
 
