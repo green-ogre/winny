@@ -1,7 +1,5 @@
-use ecs::{all_tuples, Scheduler, World};
-
 pub trait Plugin {
-    fn build(&self, world: &mut World, scheduler: &mut Scheduler);
+    fn build(&mut self, app: &mut crate::app::App);
 }
 
 pub trait PluginSet {
@@ -47,4 +45,4 @@ macro_rules! impl_plugin_set {
     }
 }
 
-all_tuples!(impl_plugin_set, 2, 10, F);
+ecs::ecs_derive::all_tuples!(impl_plugin_set, 2, 10, F);

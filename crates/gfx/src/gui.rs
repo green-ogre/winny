@@ -1,8 +1,13 @@
-use ecs::{ResMut, WinnyResource};
+#![allow(unused)]
+
+// TODO: does not display
+
+use app::{app::App, plugins::Plugin};
+use ecs::{Commands, Res, ResMut, WinnyResource};
 use egui_winit::EventResponse;
 use winit::{event::WindowEvent, window::Window};
 
-use crate::Renderer;
+use crate::renderer::{Renderer, RendererContext};
 
 #[derive(WinnyResource)]
 pub struct EguiRenderer {
@@ -66,32 +71,35 @@ impl EguiRenderer {
 
     pub fn end_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        window: &Window,
-        window_surface_view: &wgpu::TextureView,
+        renderer: &Renderer,
+        renderer_context: &mut RendererContext,
         screen_descriptor: egui_wgpu::ScreenDescriptor,
     ) {
         let full_output = self.state.egui_ctx().end_frame();
 
         self.state
-            .handle_platform_output(&window, full_output.platform_output);
+            .handle_platform_output(&renderer.window, full_output.platform_output);
 
         let tris = self
             .state
             .egui_ctx()
-            .tessellate(full_output.shapes, window.scale_factor() as f32);
+            .tessellate(full_output.shapes, renderer.window.scale_factor() as f32);
         for (id, image_delta) in &full_output.textures_delta.set {
             self.renderer
-                .update_texture(&device, &queue, *id, &image_delta);
+                .update_texture(&renderer.device, &renderer.queue, *id, &image_delta);
         }
-        self.renderer
-            .update_buffers(&device, &queue, encoder, &tris, &screen_descriptor);
+        self.renderer.update_buffers(
+            &renderer.device,
+            &renderer.queue,
+            &mut renderer_context.encoder.as_mut().unwrap(),
+            &tris,
+            &screen_descriptor,
+        );
 
+        let encoder = renderer_context.encoder.as_mut().unwrap();
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &window_surface_view,
+                view: &renderer_context.view.as_ref().unwrap(),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
@@ -112,6 +120,48 @@ impl EguiRenderer {
     }
 }
 
-pub fn begin_frame(mut egui_renderer: ResMut<EguiRenderer>, renderer: ecs::Res<Renderer>) {
+fn begin_frame(mut egui_renderer: ResMut<EguiRenderer>, renderer: ecs::Res<Renderer>) {
     egui_renderer.begin_frame(&renderer.window);
+}
+
+fn egui_render(
+    renderer: ResMut<Renderer>,
+    mut renderer_context: ResMut<RendererContext>,
+    mut egui_renderer: ResMut<EguiRenderer>,
+) {
+    let pixels_per_point = renderer.window.scale_factor() as f32;
+    let size_in_pixels = [
+        renderer.window.inner_size().width,
+        renderer.window.inner_size().height,
+    ];
+
+    egui_renderer.end_frame(
+        &renderer,
+        &mut renderer_context,
+        egui_wgpu::ScreenDescriptor {
+            size_in_pixels,
+            pixels_per_point,
+        },
+    );
+}
+
+fn build_egui(mut commands: Commands, renderer: Res<Renderer>) {
+    let egui_renderer = EguiRenderer::new(
+        &renderer.device,
+        renderer.config.format,
+        1,
+        &renderer.window,
+    );
+
+    commands.insert_resource(egui_renderer);
+}
+
+pub struct EguiPlugin;
+
+impl Plugin for EguiPlugin {
+    fn build(&mut self, app: &mut App) {
+        app.add_systems(ecs::Schedule::StartUp, (build_egui,));
+        app.add_systems(ecs::Schedule::PreUpdate, (begin_frame,));
+        app.add_systems(ecs::Schedule::PostUpdate, (egui_render,));
+    }
 }

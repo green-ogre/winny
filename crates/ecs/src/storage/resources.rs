@@ -25,6 +25,16 @@ impl<R: Resource> Res<'_, R> {
             value: unsafe { &*world.resource_ptr() },
         }
     }
+
+    pub fn try_new<'w>(world: UnsafeWorldCell<'w>) -> Option<Self> {
+        unsafe {
+            if let Some(ptr) = world.try_resource() {
+                Some(Self { value: &*ptr })
+            } else {
+                None
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -50,6 +60,16 @@ impl<R: Resource> ResMut<'_, R> {
     pub fn new<'w>(world: UnsafeWorldCell<'w>) -> Self {
         Self {
             value: unsafe { &mut *world.resource_ptr_mut() },
+        }
+    }
+
+    pub fn try_new<'w>(world: UnsafeWorldCell<'w>) -> Option<Self> {
+        unsafe {
+            if let Some(ptr) = world.try_resource_mut() {
+                Some(Self { value: &mut *ptr })
+            } else {
+                None
+            }
         }
     }
 }
@@ -137,5 +157,9 @@ impl Resources {
 
     pub fn new_id(&self) -> ResourceId {
         ResourceId::new(self.resources.len())
+    }
+
+    pub fn contains(&self, id: ResourceId) -> bool {
+        self.resources.get(&id).is_some()
     }
 }

@@ -1,41 +1,58 @@
 use std::{
     fmt::Debug,
-    sync::mpsc::{SendError, Sender},
+    sync::mpsc::{Receiver, SendError, Sender, TryIter},
 };
 
 use ecs_derive::InternalResource;
 
 #[derive(Debug, InternalResource)]
-pub struct ThreadMessageSender<T>
+pub struct ChannelSender<T>
 where
     T: 'static + Send + Sync + Debug,
 {
     sender: Sender<T>,
-    pub previous_message: Option<T>,
 }
 
-unsafe impl<T> Send for ThreadMessageSender<T> where T: 'static + Send + Sync + Debug {}
-unsafe impl<T> Sync for ThreadMessageSender<T> where T: 'static + Send + Sync + Debug {}
+unsafe impl<T> Send for ChannelSender<T> where T: 'static + Send + Sync + Debug {}
+unsafe impl<T> Sync for ChannelSender<T> where T: 'static + Send + Sync + Debug {}
 
-impl<T> ThreadMessageSender<T>
+impl<T> ChannelSender<T>
 where
     T: 'static + Send + Sync + Debug + Clone,
 {
     pub fn new(sender: Sender<T>) -> Self {
-        Self {
-            sender,
-            previous_message: None,
-        }
+        Self { sender }
     }
 
     pub fn send(&self, msg: T) -> Result<(), SendError<T>> {
         self.sender.send(msg)
     }
+}
 
-    pub fn track_and_send(&mut self, msg: T) -> Result<(), SendError<T>> {
-        self.sender.send(msg.clone())?;
-        self.previous_message = Some(msg);
+#[derive(Debug, InternalResource)]
+pub struct ChannelReciever<T>
+where
+    T: 'static + Send + Sync + Debug,
+{
+    reciever: Receiver<T>,
+}
 
-        Ok(())
+unsafe impl<T> Send for ChannelReciever<T> where T: 'static + Send + Sync + Debug {}
+unsafe impl<T> Sync for ChannelReciever<T> where T: 'static + Send + Sync + Debug {}
+
+impl<T> ChannelReciever<T>
+where
+    T: 'static + Send + Sync + Debug,
+{
+    pub fn new(reciever: Receiver<T>) -> Self {
+        Self { reciever }
+    }
+
+    pub fn try_recv(&self) -> Result<T, ()> {
+        self.reciever.try_recv().map_err(|_| ())
+    }
+
+    pub fn try_iter(&self) -> TryIter<'_, T> {
+        self.reciever.try_iter()
     }
 }

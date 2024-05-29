@@ -114,7 +114,7 @@ impl<'w, E: Event> EventWriter<'w, E> {
     pub fn new(world: UnsafeWorldCell<'w>) -> Self {
         return Self {
             world,
-            event_id: unsafe { world.read_only() }.get_event_id(E::type_id()),
+            event_id: unsafe { world.read_only() }.get_event_id::<E>(),
             event_type: PhantomData,
         };
     }
@@ -153,7 +153,7 @@ impl<'w, E: Event + TypeGetter> EventReader<'w, E> {
     pub fn new(world: UnsafeWorldCell<'w>) -> Self {
         return Self {
             world,
-            event_id: unsafe { world.read_only() }.get_event_id(E::type_id()),
+            event_id: unsafe { world.read_only() }.get_event_id::<E>(),
             event_type: PhantomData,
         };
     }

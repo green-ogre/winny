@@ -1,5 +1,7 @@
-pub mod vector;
-pub mod matrix;
+pub mod prelude;
 
-pub use vector::*;
-pub use matrix::*;
+pub mod matrix;
+pub mod vector;
+
+// pub(crate) use matrix::*;
+pub(crate) use vector::*;

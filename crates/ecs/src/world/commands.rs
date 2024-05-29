@@ -130,7 +130,7 @@ impl<'w> Commands<'w> {
         self.entity_commands.back_mut().unwrap()
     }
 
-    pub fn insert_resource<R: Resource + TypeGetter>(&mut self, res: R) {
+    pub fn insert_resource<R: Resource>(&mut self, res: R) {
         self.new_resource_commands
             .push_back(NewResourceCommands::new(res));
     }

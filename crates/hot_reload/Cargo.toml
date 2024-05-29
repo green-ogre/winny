@@ -9,6 +9,6 @@ hot_reload_macro = { path = "../hot_reload_macro" }
 logger = { path = "../logger" }
 ecs = { path = "../ecs" }
 ecs_derive = { path = "../ecs_derive" }
-plugins = { path = "../plugins" }
+app = { path = "../app" }
 
 libloading = "0.8.3"

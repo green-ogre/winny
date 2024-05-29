@@ -11,8 +11,11 @@ use std::{fmt::Debug, marker::PhantomData};
 
 use crate::{
     entity::Entity, unsafe_world::UnsafeWorldCell, ArchEntity, ArchId, Archetype, Component,
-    ComponentId, Mut, Table, TableId, TypeGetter, TypeId, TypeName,
+    ComponentId, Mut, Table, TableId, TypeGetter, TypeId,
 };
+
+#[cfg(debug_assertions)]
+use crate::TypeName;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AccessType {
@@ -160,7 +163,7 @@ macro_rules! impl_query_data {
 
 all_tuples!(impl_query_data, 1, 10, D);
 
-impl<T: Component + TypeGetter> QueryData for Mut<T> {
+impl<T: Component> QueryData for Mut<T> {
     type ReadOnly<'d> = &'d T;
     type Item<'d> = &'d mut T;
 
@@ -189,7 +192,7 @@ impl<T: Component + TypeGetter> QueryData for Mut<T> {
     }
 }
 
-impl<T: Component + TypeGetter> QueryData for T {
+impl<T: Component> QueryData for T {
     type ReadOnly<'d> = &'d T;
     type Item<'d> = &'d T;
 
