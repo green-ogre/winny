@@ -6,6 +6,7 @@ pub use commands::*;
 pub use entity::*;
 use logger::error;
 
+use core::panic;
 use std::collections::HashMap;
 use std::{collections::VecDeque, fmt::Debug};
 
@@ -29,9 +30,11 @@ pub struct World {
     //resource_ids: fxhash::FxHashMap<TypeId, ResourceId>,
     //event_ids: fxhash::FxHashMap<TypeId, EventId>,
     component_ids: HashMap<TypeId, ComponentId>,
-    resource_ids: HashMap<TypeId, ResourceId>,
+    pub resource_ids: HashMap<TypeId, ResourceId>,
     event_ids: HashMap<TypeId, EventId>,
     next_comp_id: usize,
+    next_resource_id: usize,
+    next_event_id: usize,
 
     entities: Vec<EntityMeta>,
     free_entities: Vec<u32>,
@@ -52,6 +55,8 @@ impl Default for World {
             resource_ids: HashMap::default(),
             event_ids: HashMap::default(),
             next_comp_id: 0,
+            next_resource_id: 0,
+            next_event_id: 0,
 
             resources: Resources::new(),
             free_entities: Vec::new(),
@@ -275,23 +280,42 @@ impl World {
     pub fn get_component_ids(&self, type_ids: &[TypeId]) -> Result<Vec<ComponentId>, ()> {
         let mut component_ids = Vec::with_capacity(type_ids.len());
         for t in type_ids.iter() {
-            component_ids.push(*self.component_ids.get(t).ok_or(()).map_err(|_| {
-                error!("Component Id is not stored in world for type [{:?}]", t,);
-                ()
-            })?)
+            component_ids.push(*self.component_ids.get(t).expect("component is registered"))
         }
 
         Ok(component_ids)
     }
 
-    pub fn get_event_id(&self, type_id: TypeId) -> EventId {
-        *self.event_ids.get(&type_id).expect("event is registered")
+    pub fn get_event_id<E: Event>(&self) -> EventId {
+        let type_id = E::type_id();
+        let type_name = E::type_name();
+
+        *self.event_ids.get(&type_id).unwrap_or_else(|| {
+            error!("Queried event is not registered: {}", type_name.as_string());
+            panic!();
+        })
     }
 
-    pub fn get_resource_id(&self, type_id: TypeId) -> ResourceId {
-        *self
-            .resource_ids
-            .get(&type_id)
-            .expect("resource is registered")
+    pub fn get_resource_id<R: Resource>(&self) -> ResourceId {
+        let type_id = R::type_id();
+        let type_name = R::type_name();
+
+        *self.resource_ids.get(&type_id).unwrap_or_else(|| {
+            error!(
+                "Queried resource is not registered: {}",
+                type_name.as_string()
+            );
+            panic!();
+        })
+    }
+
+    pub fn get_or_make_resource_id(&mut self, type_id: TypeId) -> ResourceId {
+        if let Some(id) = self.resource_ids.get(&type_id) {
+            *id
+        } else {
+            let new_resource_id = self.resources.new_id();
+            self.resource_ids.insert(type_id, new_resource_id);
+            new_resource_id
+        }
     }
 }

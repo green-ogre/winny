@@ -1,17 +1,17 @@
 [package]
-name = "winny_engine"
+name = "window"
 version = "0.1.0"
 edition = "2021"
-
 
 [dependencies]
 ecs = { path = "../ecs" }
 logger = { path = "../logger" }
-plugins = { path = "../plugins" }
 gfx = { path = "../gfx" }
-winny_math = { path = "../winny_math" }
+app = { path = "../app" }
 
-pollster = "0.3.0"
-gilrs = "0.10.3"
-wgpu = "0.19.3"
 winit = "0.29.15"
+gilrs = { version = "0.10.3", optional = true }
+
+[features]
+egui = []
+controller = ["gilrs"]

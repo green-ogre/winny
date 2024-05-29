@@ -1,9 +1,9 @@
 [package]
-name = "plugins"
+name = "app"
 version = "0.1.0"
 edition = "2021"
 
 
 [dependencies]
-logger = { path = "../logger" }
 ecs = { path = "../ecs" }
+logger = { path = "../logger" }

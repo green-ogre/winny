@@ -1,3 +1,5 @@
+use self::renderer::Renderer;
+
 use super::*;
 
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +47,7 @@ pub struct Sprite {
     pub position: Vec2f,
     pub mask: RGBA,
     pub offset: Vec2f,
+    pub v_flip: bool,
     pub z: f32,
 }
 
@@ -56,6 +59,7 @@ impl Default for Sprite {
             position: Vec2f::new(0.0, 0.0),
             mask: RGBA::clear(),
             offset: Vec2f::zero(),
+            v_flip: false,
             z: 0.0,
         }
     }
@@ -78,20 +82,37 @@ impl Sprite {
         let x = self.offset.x * self.scale;
         let y = self.offset.y * self.scale;
 
-        [
-            SpriteVertex::new(
-                Matrix2x2f::rotation_2d(Vec2f::new(-x, -y), self.rotation),
-                Vec2f::new(0.0, 1.0),
-            ),
-            SpriteVertex::new(
-                Matrix2x2f::rotation_2d(Vec2f::new(-x, 2.0 * self.scale - y), self.rotation),
-                Vec2f::new(0.0, -1.0),
-            ),
-            SpriteVertex::new(
-                Matrix2x2f::rotation_2d(Vec2f::new(2.0 * self.scale - x, -y), self.rotation),
-                Vec2f::new(2.0, 1.0),
-            ),
-        ]
+        if self.v_flip {
+            [
+                SpriteVertex::new(
+                    Matrix2x2f::rotation_2d(Vec2f::new(-x, -y), self.rotation),
+                    Vec2f::zero(),
+                ),
+                SpriteVertex::new(
+                    Matrix2x2f::rotation_2d(Vec2f::new(-x, 2.0 * self.scale - y), self.rotation),
+                    Vec2f::new(0.0, 2.0),
+                ),
+                SpriteVertex::new(
+                    Matrix2x2f::rotation_2d(Vec2f::new(2.0 * self.scale - x, -y), self.rotation),
+                    Vec2f::new(2.0, 0.0),
+                ),
+            ]
+        } else {
+            [
+                SpriteVertex::new(
+                    Matrix2x2f::rotation_2d(Vec2f::new(-x, -y), self.rotation),
+                    Vec2f::new(0.0, 1.0),
+                ),
+                SpriteVertex::new(
+                    Matrix2x2f::rotation_2d(Vec2f::new(-x, 2.0 * self.scale - y), self.rotation),
+                    Vec2f::new(0.0, -1.0),
+                ),
+                SpriteVertex::new(
+                    Matrix2x2f::rotation_2d(Vec2f::new(2.0 * self.scale - x, -y), self.rotation),
+                    Vec2f::new(2.0, 1.0),
+                ),
+            ]
+        }
     }
 }
 
@@ -172,12 +193,8 @@ impl SpriteBindingRaw {
                 label: Some("bind group layout for sprite"),
             });
 
-        let texture = pollster::block_on(load_texture(
-            path.clone(),
-            &renderer.device,
-            &renderer.queue,
-        ))
-        .map_err(|_| ())?;
+        let texture = texture::load_texture(path.clone(), &renderer.device, &renderer.queue)
+            .map_err(|_| ())?;
 
         let bind_group = renderer
             .device
@@ -250,7 +267,6 @@ impl SpriteBindingRaw {
         }
     }
 
-    // TODO: error handlihng
     pub fn write_to_texture(&self, dimensions: (u32, u32), data: &[u8], renderer: &Renderer) {
         let size = wgpu::Extent3d {
             width: dimensions.0,

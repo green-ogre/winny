@@ -9,11 +9,28 @@ path = "src/lib.rs"
 
 [workspace]
 members = ["crates/*"]
+exclude = ["crates/deprecated"]
 
 [dependencies]
-winny_engine = { path = "crates/winny_engine" }
-hot_reload = { path = "crates/hot_reload" }
-hot_reload_macro = { path = "crates/hot_reload_macro" }
+ecs = { path = "crates/ecs" }
+ecs_derive = { path = "crates/ecs_derive" }
+logger = { path = "crates/logger" }
+app = { path = "crates/app" }
+winny_math = { path = "crates/winny_math" }
+
+window = { path = "crates/window", optional = true }
+gfx = { path = "crates/gfx", optional = true }
+hot_reload = { path = "crates/hot_reload", optional = true }
+hot_reload_macro = { path = "crates/hot_reload_macro", optional = true }
+audio = { path = "crates/audio", optional = true }
 
 [features]
-hot_reload = []
+window = ["dep:window", "dep:gfx"]
+egui = ["window/egui", "gfx/egui"]
+gilrs = ["window/controller"]
+
+hot_reload = ["dep:hot_reload", "dep:hot_reload_macro"]
+
+audio = ["dep:audio"]
+
+png = ["gfx/png"]

@@ -17,7 +17,7 @@ const SPARSE_SET: &str = "SparceSet";
 
 #[proc_macro_derive(Component, attributes(component))]
 pub fn component_impl(input: TokenStream) -> TokenStream {
-    parse_component(input, quote! { winny::prelude::ecs }.into())
+    parse_component(input, quote! { winny::ecs }.into())
 }
 
 #[proc_macro_derive(WinnyComponent, attributes(component))]
@@ -60,14 +60,17 @@ fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) ->
             Ident::new("SparseSet", Span::call_site()),
     };
 
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
     let derive = quote! {
-        impl #path_to_ecs::storage::Storage for #name {
+        impl #impl_generics #path_to_ecs::storage::Storage for #name #ty_generics #where_clause {
             fn storage_type() -> #path_to_ecs::storage::StorageType {
                 #path_to_ecs::storage::StorageType::#storage   
             }
         }
 
-        impl #path_to_ecs::storage::Component for #name {}
+        impl #impl_generics #path_to_ecs::storage::Component for #name #ty_generics #where_clause {}
     }.into();
 
     append_type_getter(input, derive, path_to_ecs)
@@ -75,7 +78,7 @@ fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) ->
 
 #[proc_macro_derive(Resource)]
 pub fn resource_impl(input: TokenStream) -> TokenStream {
-    parse_resource(input, quote! { winny::prelude::ecs })
+    parse_resource(input, quote! { winny::ecs })
 }
 
 #[proc_macro_derive(WinnyResource)]
@@ -103,7 +106,7 @@ fn parse_resource(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> 
 
 #[proc_macro_derive(Event)]
 pub fn event_impl(input: TokenStream) -> TokenStream {
-    parse_event(input, quote! { winny::prelude::ecs })
+    parse_event(input, quote! { winny::ecs })
 }
 
 #[proc_macro_derive(WinnyEvent)]
@@ -188,7 +191,7 @@ fn append_type_getter(input: DeriveInput, derive: proc_macro2::TokenStream, path
 
 #[proc_macro_derive(Bundle)]
 pub fn bundle_impl(input: TokenStream) -> TokenStream {
-    parse_bundle(input, quote! { winny::prelude::ecs }.into())
+    parse_bundle(input, quote! { winny::ecs }.into())
 }
 
 #[proc_macro_derive(WinnyBundle)]

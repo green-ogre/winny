@@ -1,9 +1,9 @@
 // TODO: remove
 #![allow(dead_code)]
-use std::{fmt::write, io::Read, path::Path};
+use std::{collections::VecDeque, io::Read, path::Path};
 
 use libflate::zlib::Decoder;
-use logger::{debug, error, info, warn};
+use logger::{error, warn};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -38,6 +38,83 @@ enum PixelType {
     IndexedColor,
     GrayScale,
     TrueColor,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HuffmanEntry {
+    symbol: u16,
+    bits_used: u16,
+}
+
+impl HuffmanEntry {
+    pub fn new(symbol: u16, bits_used: u16) -> Self {
+        Self { symbol, bits_used }
+    }
+}
+
+struct HuffmanTable {
+    entries: Vec<HuffmanEntry>,
+    // in bits
+    max_code_len: u16,
+}
+
+impl HuffmanTable {
+    // pub fn new(
+    //     max_code_len: u16,
+    //     symbol_count: usize,
+    //     symbol_code_len: Vec<u16>,
+    //     symbol_addend: u16,
+    // ) -> Self {
+    //     let mut entries = Vec::new();
+    //     let mut symbol_table = Vec::new();
+
+    //     let mut code_len_hist = vec![16; 0];
+    //     for i in 0..symbol_count {
+    //         code_len_hist[symbol_code_len[i] as usize] += 1;
+    //     }
+
+    //     let mut next_unused_code = vec![16; 0];
+    //     let mut code = 0;
+    //     code_len_hist[0] = 0;
+    //     for i in 1..next_unused_code.len() {
+    //         code = (code + code_len_hist[i - 1]) << 1;
+    //         next_unused_code[i] = code;
+    //     }
+
+    //     for i in 0..symbol_count {
+    //         let code_len_in_bits = symbol_code_len[i];
+    //         if code_len_in_bits == 0 {
+    //             continue;
+    //         }
+    //         debug_assert!((code_len_in_bits as usize) < next_unused_code.len());
+    //         let code = next_unused_code[code_len_in_bits as usize];
+    //         next_unused_code[code_len_in_bits as usize] += 1;
+
+    //         let entry = HuffmanEntry::new(i as u16 + symbol_addend, code_len_in_bits);
+
+    //         let trash_bits = max_code_len - code_len_in_bits;
+    //         for i in 0..(1 << trash_bits) {
+    //             let index = (i << code_len_in_bits) | code;
+    //             entries[index] = entry;
+    //         }
+    //     }
+
+    //     Self {
+    //         entries,
+    //         max_code_len,
+    //     }
+    // }
+
+    pub fn decode_next_symbol(&self, bit_reader: &mut BitReader) -> Result<u16, Error> {
+        let entry_index = bit_reader.peek_bits_be(self.max_code_len as usize)?;
+        let table_len = self.entries.len() as u32;
+        debug_assert!(entry_index < table_len);
+
+        let entry = &self.entries[entry_index as usize];
+        bit_reader.discard_bits(entry.bits_used as usize);
+
+        Ok(entry.symbol)
+    }
 }
 
 #[derive(Debug)]
@@ -141,113 +218,115 @@ impl PNGParser {
                 ChunkType::IDAT => {
                     // 1. Inflate the data using zlib decoder
 
-                    // let compressed_data = chunk.reader.read_bytes(chunk.length as usize)?;
-                    // let mut decoder = Decoder::new(compressed_data.as_slice()).map_err(|err| {
-                    //     error!("{err}");
-                    //     Error::Decoding
-                    // })?;
-                    // let mut decoded_data = Vec::new();
-                    // decoder.read_to_end(&mut decoded_data).map_err(|err| {
-                    //     error!("{err}");
-                    //     Error::Decoding
-                    // })?;
+                    let compressed_data = chunk.reader.read_bytes(chunk.length as usize)?;
+                    let mut decoder = Decoder::new(compressed_data.as_slice()).map_err(|err| {
+                        error!("{err}");
+                        Error::Decoding
+                    })?;
+                    let mut decoded_data = Vec::new();
+                    decoder.read_to_end(&mut decoded_data).map_err(|err| {
+                        error!("{err}");
+                        Error::Decoding
+                    })?;
 
-                    // let cm = chunk.reader.read_u8()?;
+                    // let decoded_data = Vec::new();
+                    // let mut bit_reader = BitReader::new(chunk.reader);
 
-                    let decoded_data = Vec::new();
-                    let mut bit_reader = BitReader::new(chunk.reader);
+                    // // ZLib Header
 
-                    // ZLib Header
+                    // let cm = bit_reader.read_bits_to_u8_be(4)?;
+                    // if cm != 8 {
+                    //     return Err(Error::UnsupportedEncoding);
+                    // }
+                    // let cinfo = bit_reader.read_bits_to_u8_be(4)?;
+                    // let fcheck = bit_reader.read_bits_to_u8_be(5)?;
+                    // let fdict = bit_reader.read_bits_to_u8_be(1)?;
+                    // if fdict != 0 {
+                    //     return Err(Error::UnsupportedEncoding);
+                    // }
+                    // let flevel = bit_reader.read_bits_to_u8_be(2)?;
 
-                    let cm = bit_reader.read_bits_to_u8_be(4)?;
-                    if cm != 8 {
-                        return Err(Error::UnsupportedEncoding);
-                    }
-                    let cinfo = bit_reader.read_bits_to_u8_be(4)?;
-                    let fcheck = bit_reader.read_bits_to_u8_be(5)?;
-                    let fdict = bit_reader.read_bits_to_u8_be(1)?;
-                    if fdict != 0 {
-                        return Err(Error::UnsupportedEncoding);
-                    }
-                    let flevel = bit_reader.read_bits_to_u8_be(2)?;
+                    // // Inflate Data
 
-                    // Inflate Data
+                    // // let window = Vec::with_capacity(32768);
 
-                    // let window = Vec::with_capacity(32768);
+                    // loop {
+                    //     let b_final = bit_reader.read_bit_be()?;
+                    //     let block_type = bit_reader.read_bits_to_u8_be(2)?;
 
-                    loop {
-                        let b_final = bit_reader.read_bit_be()?;
-                        let block_type = bit_reader.read_bits_to_u8_be(2)?;
+                    //     println!("BFinal: {b_final}, Block Type: {block_type:#b}");
 
-                        match block_type {
-                            // No compression
-                            0b00 => {
-                                let _ = bit_reader.flush_byte();
-                                let len = bit_reader.read_u16_be()?;
-                                let nlen = bit_reader.read_u16_be()?;
-                                // let block_data = bit_reader.read_bytes(len as usize)?;
-                                // println!("Block data: {block_data:?}");
-                                println!("{len}");
-                                unimplemented!()
-                            }
-                            // Compressed with fixed Huffman codes
-                            0b01 => {
-                                unimplemented!();
-                            }
-                            // Compressed with dynamic Huffman codes
-                            0b10 => {
-                                // Construct Huffman Encodings
+                    //     match block_type {
+                    //         // No compression
+                    //         0b00 => {
+                    //             let _ = bit_reader.flush_byte();
+                    //             let len = bit_reader.read_u16_be()?;
+                    //             let nlen = bit_reader.read_u16_be()?;
+                    //             // let block_data = bit_reader.read_bytes(len as usize)?;
+                    //             // println!("Block data: {block_data:?}");
+                    //             println!("{len}");
+                    //             unimplemented!()
+                    //         }
+                    //         // Compressed with fixed Huffman codes
+                    //         0b01 => {
+                    //             unimplemented!();
+                    //         }
+                    //         // Compressed with dynamic Huffman codes
+                    //         0b10 => {
+                    //             // Construct Huffman Encodings
 
-                                let mut hlit_len = bit_reader.read_bits_to_u8_be(5)? as usize;
-                                let mut hdist_len = bit_reader.read_bits_to_u8_be(5)? as usize;
-                                let mut hclen_len = bit_reader.read_bits_to_u8_be(4)? as usize;
+                    //             let mut hlit_len = bit_reader.read_bits_to_u8_be(5)? as usize;
+                    //             let mut hdist_len = bit_reader.read_bits_to_u8_be(5)? as usize;
+                    //             let mut hclen_len = bit_reader.read_bits_to_u8_be(4)? as usize;
 
-                                hlit_len += 257;
-                                hdist_len += 1;
-                                hclen_len += 4;
+                    //             hlit_len += 257;
+                    //             hdist_len += 1;
+                    //             hclen_len += 4;
 
-                                let mut hclen = Vec::with_capacity(20);
+                    //             let mut hclen = Vec::with_capacity(20);
 
-                                let hclen_lookup = [
-                                    16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1,
-                                    15,
-                                ];
+                    //             let hclen_lookup = [
+                    //                 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1,
+                    //                 15,
+                    //             ];
 
-                                for _ in 0..hclen_len {
-                                    hclen.push(
-                                        hclen_lookup[bit_reader.read_bits_to_u8_be(3)? as usize],
-                                    );
-                                }
+                    //             for _ in 0..hclen_len {
+                    //                 hclen.push(
+                    //                     hclen_lookup[bit_reader.read_bits_to_u8_be(3)? as usize],
+                    //                 );
+                    //             }
 
-                                println!("{hlit_len}, {hdist_len}, {hclen_len} => {hclen:?}");
+                    //             let huff_dict = HuffmanTable::new(hclen_lookup.len(), hclen);
 
-                                loop {
-                                    let mut end_block_code = true;
+                    //             println!("{hlit_len}, {hdist_len}, {hclen_len} => {hclen:?}");
 
-                                    // if value < 256 {
-                                    // } else {
-                                    //     if value == 256 {
-                                    //         end_block_code = true;
-                                    //     } else {
+                    //             loop {
+                    //                 let mut end_block_code = true;
 
-                                    //         let distance = ;
+                    //                 // if value < 256 {
+                    //                 // } else {
+                    //                 //     if value == 256 {
+                    //                 //         end_block_code = true;
+                    //                 //     } else {
 
-                                    //     }
-                                    // }
+                    //                 //         let distance = ;
 
-                                    if end_block_code {
-                                        break;
-                                    }
-                                }
-                            }
-                            0b11 => return Err(Error::ReservedBlockEncoding),
-                            _ => unreachable!(),
-                        }
+                    //                 //     }
+                    //                 // }
 
-                        if b_final {
-                            break;
-                        }
-                    }
+                    //                 if end_block_code {
+                    //                     break;
+                    //                 }
+                    //             }
+                    //         }
+                    //         0b11 => return Err(Error::ReservedBlockEncoding),
+                    //         _ => unreachable!(),
+                    //     }
+
+                    //     if b_final {
+                    //         break;
+                    //     }
+                    // }
 
                     // 2. Reverse the filtering applied to scanlines
 
@@ -518,7 +597,7 @@ struct Inflater {
     flevel: u8,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Endian {
     BE,
     LE,
@@ -526,7 +605,7 @@ enum Endian {
 
 struct BitReader {
     byte_reader: ChunkByteReader,
-    last_byte: Option<(u8, Endian)>,
+    byte_buf: VecDeque<(u8, Endian)>,
     offset: usize,
 }
 
@@ -534,56 +613,62 @@ impl BitReader {
     pub fn new(byte_reader: ChunkByteReader) -> Self {
         Self {
             byte_reader,
-            last_byte: None,
+            byte_buf: VecDeque::new(),
             offset: 0,
         }
     }
 
     pub fn flush_byte(&mut self) {
-        self.last_byte = None;
+        self.byte_buf.pop_front();
     }
 
-    pub fn read_bit_le(&mut self) -> Result<bool, Error> {
-        let last_byte = if let Some((last_byte, endian)) = self.last_byte {
-            match endian {
-                Endian::LE => last_byte,
-                Endian::BE => {
-                    return Err(Error::Decoding);
-                }
-            }
-        } else {
-            self.last_byte = Some((self.byte_reader.read_u8()?, Endian::LE));
-            self.offset = 7;
-            self.last_byte.unwrap().0
-        };
-
-        let next_bit = match last_byte >> self.offset & 0b0001 {
-            0b001 => true,
-            0b000 => false,
-            _ => unreachable!(),
-        };
-
-        if self.offset == 0 {
-            self.last_byte = None;
-        } else {
-            self.offset -= 1;
-        }
-
-        Ok(next_bit)
+    pub fn discard_bits(&mut self, num_bits: usize) {
+        let _ = self.read_bits_be(num_bits);
     }
+
+    // pub fn read_bit_le(&mut self) -> Result<bool, Error> {
+    //     let last_byte = if let Some((last_byte, endian)) = self.byte_buf.front() {
+    //         match endian {
+    //             Endian::LE => *last_byte,
+    //             Endian::BE => {
+    //                 return Err(Error::Decoding);
+    //             }
+    //         }
+    //     } else {
+    //         self.byte_buf
+    //             .push_back((self.byte_reader.read_u8()?, Endian::LE));
+    //         self.offset = 7;
+    //         self.byte_buf.back().unwrap().0
+    //     };
+
+    //     let next_bit = match last_byte >> self.offset & 0b0001 {
+    //         0b001 => true,
+    //         0b000 => false,
+    //         _ => unreachable!(),
+    //     };
+
+    //     if self.offset == 0 {
+    //         self.byte_buf.pop_front();
+    //     } else {
+    //         self.offset -= 1;
+    //     }
+
+    //     Ok(next_bit)
+    // }
 
     pub fn read_bit_be(&mut self) -> Result<bool, Error> {
-        let last_byte = if let Some((last_byte, endian)) = self.last_byte {
+        let last_byte = if let Some((last_byte, endian)) = self.byte_buf.front() {
             match endian {
-                Endian::BE => last_byte,
+                Endian::BE => *last_byte,
                 Endian::LE => {
                     return Err(Error::Decoding);
                 }
             }
         } else {
-            self.last_byte = Some((self.byte_reader.read_u8()?, Endian::BE));
+            self.byte_buf
+                .push_back((self.byte_reader.read_u8()?, Endian::BE));
             self.offset = 0;
-            self.last_byte.unwrap().0
+            self.byte_buf.back().unwrap().0
         };
 
         let next_bit = match last_byte >> self.offset & 0b0001 {
@@ -593,7 +678,7 @@ impl BitReader {
         };
 
         if self.offset == 7 {
-            self.last_byte = None;
+            self.byte_buf.pop_front();
         } else {
             self.offset += 1;
         }
@@ -601,14 +686,35 @@ impl BitReader {
         Ok(next_bit)
     }
 
-    pub fn read_bits_le(&mut self, num_bits: usize) -> Result<Vec<bool>, Error> {
-        let mut bits = Vec::with_capacity(num_bits);
-        for _ in 0..num_bits {
-            bits.push(self.read_bit_le()?);
+    pub fn peek_bit_be(&mut self, bit_index: usize) -> Result<bool, Error> {
+        let byte_depth = bit_index / 8;
+
+        while self.byte_buf.get(byte_depth).is_none() {
+            self.byte_buf
+                .push_back((self.byte_reader.read_u8()?, Endian::BE));
         }
 
-        Ok(bits)
+        if self.byte_buf[byte_depth].1 == Endian::LE {
+            return Err(Error::Decoding);
+        }
+
+        let next_bit = match self.byte_buf[byte_depth].0 >> (bit_index as u8 % 8) & 0b0001 {
+            0b001 => true,
+            0b000 => false,
+            _ => unreachable!(),
+        };
+
+        Ok(next_bit)
     }
+
+    // pub fn read_bits_le(&mut self, num_bits: usize) -> Result<Vec<bool>, Error> {
+    //     let mut bits = Vec::with_capacity(num_bits);
+    //     for _ in 0..num_bits {
+    //         bits.push(self.read_bit_le()?);
+    //     }
+
+    //     Ok(bits)
+    // }
 
     pub fn read_bits_be(&mut self, num_bits: usize) -> Result<Vec<bool>, Error> {
         let mut bits = Vec::with_capacity(num_bits);
@@ -621,19 +727,37 @@ impl BitReader {
         Ok(bits)
     }
 
-    pub fn read_bits_to_u8_le(&mut self, num_bits: usize) -> Result<u8, Error> {
-        let mut bits = 0;
-        for bit in self.read_bits_le(num_bits)?.into_iter() {
-            bits <<= 1;
+    pub fn peek_bits_be(&mut self, num_bits: usize) -> Result<u32, Error> {
+        let mut bits = Vec::with_capacity(num_bits);
+        for i in 0..num_bits {
+            bits.push(self.peek_bit_be(i)?);
+        }
+
+        bits.reverse();
+
+        let mut final_uint = 0;
+        for bit in bits.into_iter() {
+            final_uint <<= 1;
             if bit {
-                bits |= 1;
+                final_uint |= 1;
             }
         }
 
-        Ok(bits)
+        Ok(final_uint)
     }
 
-    // TODO: only this one works right
+    // pub fn read_bits_to_u8_le(&mut self, num_bits: usize) -> Result<u8, Error> {
+    //     let mut bits = 0;
+    //     for bit in self.read_bits_le(num_bits)?.into_iter() {
+    //         bits <<= 1;
+    //         if bit {
+    //             bits |= 1;
+    //         }
+    //     }
+
+    //     Ok(bits)
+    // }
+
     pub fn read_bits_to_u8_be(&mut self, num_bits: usize) -> Result<u8, Error> {
         let mut bits = 0;
         for bit in self.read_bits_be(num_bits)?.into_iter() {
@@ -767,9 +891,9 @@ mod tests {
         let mut bit_reader = BitReader::new(ByteReader::new(std::io::BufReader::new(
             std::io::Cursor::new(vec![num]),
         )));
-        let res = bit_reader.read_bits_to_u8(1).unwrap();
+        let res = bit_reader.read_bits_to_u8_be(1).unwrap();
         println!("{0:#b}", res);
-        let res = bit_reader.read_bits_to_u8(5).unwrap();
+        let res = bit_reader.read_bits_to_u8_be(5).unwrap();
         println!("{0:#b}", res);
 
         panic!();

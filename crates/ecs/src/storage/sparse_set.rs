@@ -1,5 +1,3 @@
-use core::panic;
-
 use logger::warn;
 
 use super::*;
@@ -15,7 +13,7 @@ pub struct SparseArray<V> {
     values: Vec<Option<V>>,
 }
 
-impl<V> SparseArray<V> {
+impl<V: Debug> SparseArray<V> {
     pub fn new() -> Self {
         Self { values: Vec::new() }
     }
@@ -48,7 +46,7 @@ impl<V> SparseArray<V> {
         // TODO: remove this if it is never proc
         if self.values[index].is_some() {
             warn!("Overwriting data stored in sparse array");
-            panic!();
+            println!("{:?}", value);
         }
         self.values[index] = Some(value);
     }
@@ -67,7 +65,7 @@ pub struct SparseArrayIter<'a, V> {
     cursor: usize,
 }
 
-impl<'a, V> Iterator for SparseArrayIter<'a, V> {
+impl<'a, V: Debug> Iterator for SparseArrayIter<'a, V> {
     type Item = &'a V;
 
     fn next(&mut self) -> Option<Self::Item> {

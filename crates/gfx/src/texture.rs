@@ -1,7 +1,46 @@
-use image::GenericImageView;
+use std::path::PathBuf;
+
+#[cfg(feature = "png")]
 use logger::info;
 
-// TODO: name this texture
+#[cfg(feature = "png")]
+use crate::png;
+
+#[cfg(feature = "png")]
+pub fn load_texture_png(
+    file_name: PathBuf,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> Result<Texture, ()> {
+    info!("Loading texture: {:?}", file_name);
+    let (bytes, dimensions) = png::to_bytes(file_name).map_err(|err| logger::error!("{err}"))?;
+    Ok(Texture::from_bytes(&bytes, dimensions, device, queue))
+}
+
+#[allow(unused)]
+pub fn load_texture(
+    file_name: PathBuf,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> Result<Texture, ()> {
+    let Some(ext) = file_name.extension() else {
+        logger::error!(
+            "Could not determine image extension: {:?}",
+            file_name.as_path()
+        );
+        return Err(());
+    };
+
+    match ext.to_str().unwrap_or_default() {
+        #[cfg(feature = "png")]
+        "png" => load_texture_png(file_name, device, queue),
+        _ => {
+            logger::error!("Cannot parse file format: {:?}", ext);
+            return Err(());
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Texture {
     pub tex: wgpu::Texture,
@@ -10,21 +49,6 @@ pub struct Texture {
 }
 
 impl Texture {
-    // pub fn from_image(
-    //     img_bytes: &[u8],
-    //     device: &wgpu::Device,
-    //     queue: &wgpu::Queue,
-    // ) -> Result<Self, ()> {
-    //     let img = image::load_from_memory(img_bytes).map_err(|err| {
-    //         logger::error!("Could not read image from bytes: {}", err);
-    //         ()
-    //     })?;
-    //     let rgba = img.to_rgba8();
-    //     let dimensions = img.dimensions();
-
-    //     Ok(Self::from_bytes(&rgba, dimensions, device, queue))
-    // }
-
     pub fn from_bytes(
         bytes: &[u8],
         dimensions: (u32, u32),

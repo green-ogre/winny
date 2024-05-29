@@ -9,13 +9,13 @@ use crate::{
     QueryData,
 };
 
-pub mod archetype;
+pub(crate) mod archetype;
 pub mod bundle;
 pub mod components;
-pub mod dumb_vec;
-pub mod resources;
-pub mod sparse_set;
-pub mod table;
+pub(crate) mod dumb_vec;
+pub(crate) mod resources;
+pub(crate) mod sparse_set;
+pub(crate) mod table;
 
 pub use archetype::*;
 pub use bundle::*;

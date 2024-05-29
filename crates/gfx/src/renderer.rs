@@ -1,29 +1,70 @@
 use std::{collections::HashMap, path::PathBuf};
 
+use app::{app::App, plugins::Plugin};
 use ecs::{Mut, Query, Res, ResMut, WinnyResource};
 
 use wgpu::{util::DeviceExt, BindGroupLayout, SurfaceTargetUnsafe};
 use winit::window::Window;
 
-use crate::{camera::CameraUniform, gui::EguiRenderer, sprite::*, Vertex};
+use crate::{sprite::*, Vertex};
 
 const VERTICES: u32 = 3;
+
+pub struct RendererPlugin {
+    renderer: Option<Renderer>,
+}
+
+impl RendererPlugin {
+    pub fn new(window: Window, dimensions: (u32, u32), virutal_dimensions: (u32, u32)) -> Self {
+        RendererPlugin {
+            renderer: Some(pollster::block_on(Renderer::new(
+                window,
+                [dimensions.0, dimensions.1],
+                [virutal_dimensions.0, virutal_dimensions.1],
+            ))),
+        }
+    }
+}
+
+impl Plugin for RendererPlugin {
+    fn build(&mut self, app: &mut App) {
+        let renderer_context = RendererContext::default();
+        let renderer = self.renderer.take().unwrap();
+
+        app.insert_resource(renderer)
+            .insert_resource(renderer_context);
+    }
+}
+
+#[derive(Debug, Default, WinnyResource)]
+pub struct RendererContext {
+    pub view: Option<wgpu::TextureView>,
+    pub encoder: Option<wgpu::CommandEncoder>,
+    pub output: Option<wgpu::SurfaceTexture>,
+}
+
+impl RendererContext {
+    pub fn destroy(&mut self) {
+        self.view = None;
+        self.encoder = None;
+        self.output = None;
+    }
+}
 
 #[derive(Debug, WinnyResource)]
 pub struct Renderer {
     pub window: Window,
     pub sprite_bindings: HashMap<PathBuf, SpriteBindingRaw>,
-    render_pipeline: wgpu::RenderPipeline,
-    surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub size: [u32; 2],
     pub virtual_size: [u32; 2],
+    render_pipeline: wgpu::RenderPipeline,
+    surface: wgpu::Surface<'static>,
     vertex_buffer: wgpu::Buffer,
     sprite_buffer: wgpu::Buffer,
     num_sprites: u32,
-    camera_bind_group: wgpu::BindGroup,
 }
 
 impl Renderer {
@@ -81,38 +122,6 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        let camera_uniform = CameraUniform::new();
-
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: bytemuck::cast_slice(&[camera_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let camera_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-                label: Some("camera_bind_group_layout"),
-            });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
-            label: Some("camera_bind_group"),
-        });
-
         let sprite_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
@@ -136,11 +145,8 @@ impl Renderer {
                 label: Some("bind group layout for sprite"),
             });
 
-        let render_pipeline = create_sprite_render_pipeline(
-            &device,
-            &config,
-            &[&camera_bind_group_layout, &sprite_bind_group_layout],
-        );
+        let render_pipeline =
+            create_sprite_render_pipeline(&device, &config, &[&sprite_bind_group_layout]);
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("sprite vertex buffer"),
@@ -167,7 +173,6 @@ impl Renderer {
             virtual_size,
             render_pipeline,
             vertex_buffer,
-            camera_bind_group,
         }
     }
 
@@ -181,21 +186,31 @@ impl Renderer {
     }
 }
 
-pub fn render(
-    renderer: Res<Renderer>,
-    sprites: Query<SpriteBinding>,
-    mut egui_renderer: ResMut<EguiRenderer>,
-) {
+pub fn create_context(renderer: Res<Renderer>, mut renderer_context: ResMut<RendererContext>) {
     let output = renderer.surface.get_current_texture().unwrap();
-    let mut view = output
+    let view = output
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
-    let mut encoder = renderer
+    let encoder = renderer
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
+
+    renderer_context.encoder = Some(encoder);
+    renderer_context.view = Some(view);
+    renderer_context.output = Some(output);
+}
+
+pub fn render(
+    renderer: Res<Renderer>,
+    mut renderer_context: ResMut<RendererContext>,
+    sprites: Query<SpriteBinding>,
+) {
+    let mut encoder = renderer_context.encoder.take().unwrap();
+    let view = renderer_context.view.take().unwrap();
+    let output = renderer_context.output.take().unwrap();
 
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("Render Pass"),
@@ -220,9 +235,8 @@ pub fn render(
     let mut offset = 0;
     for sprite in sprites.iter() {
         render_pass.set_pipeline(&renderer.render_pipeline);
-        render_pass.set_bind_group(0, &renderer.camera_bind_group, &[]);
         render_pass.set_bind_group(
-            1,
+            0,
             &renderer
                 .sprite_bindings
                 .get(&sprite.path)
@@ -239,21 +253,6 @@ pub fn render(
         offset += 1;
     }
     drop(render_pass);
-
-    egui_renderer.end_frame(
-        &renderer.device,
-        &renderer.queue,
-        &mut encoder,
-        &renderer.window,
-        &mut view,
-        egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [
-                renderer.window.inner_size().width,
-                renderer.window.inner_size().height,
-            ],
-            pixels_per_point: renderer.window.scale_factor() as f32,
-        },
-    );
 
     renderer.queue.submit(std::iter::once(encoder.finish()));
     output.present();
@@ -316,7 +315,7 @@ fn create_sprite_render_pipeline(
 
     let shader = wgpu::ShaderModuleDescriptor {
         label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("sprite_shader.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sprite_shader.wgsl").into()),
     };
 
     create_render_pipeline(

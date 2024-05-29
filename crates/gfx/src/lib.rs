@@ -1,33 +1,19 @@
-use std::{io, path::PathBuf};
+use std::path::PathBuf;
 
-use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
+use ecs::{WinnyBundle, WinnyComponent};
 
-use logger::info;
-use winny_math::{Matrix2x2f, Vec2f};
+use winny_math::{matrix::Matrix2x2f, vector::Vec2f};
 
 use self::texture::Texture;
 
-pub mod bitmap;
-pub mod camera;
+#[cfg(feature = "egui")]
 pub mod gui;
-pub mod image_decoder;
+#[cfg(feature = "png")]
+pub mod png;
+pub mod prelude;
 pub mod renderer;
 pub mod sprite;
 pub mod texture;
-
-pub use renderer::*;
-
-pub extern crate egui;
-
-// pub const NUM_INSTANCES_PER_ROW: u32 = 10;
-// pub const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
-//     NUM_INSTANCES_PER_ROW as f32 * 0.5,
-//     0.0,
-//     NUM_INSTANCES_PER_ROW as f32 * 0.5,
-// );
-
-#[derive(Debug, WinnyResource)]
-pub struct DeltaT(pub f64);
 
 #[derive(Debug, WinnyComponent)]
 pub struct Transform2D {
@@ -52,24 +38,4 @@ impl Transform2D {
 
 pub trait Vertex {
     fn desc() -> wgpu::VertexBufferLayout<'static>;
-}
-
-// pub async fn load_string(path: &str) -> Result<String, io::Error> {
-//     let mut new_path = PathBuf::new();
-//     new_path.push("res/");
-//     new_path.push(path);
-//     let txt = std::fs::read_to_string(new_path.as_os_str())?;
-//
-//     Ok(txt)
-// }
-
-pub async fn load_texture(
-    file_name: PathBuf,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<Texture, ()> {
-    info!("Loading texture: {:?}", file_name);
-    let (bytes, dimensions) =
-        image_decoder::to_bytes(file_name).map_err(|err| logger::error!("{err}"))?;
-    Ok(Texture::from_bytes(&bytes, dimensions, device, queue))
 }

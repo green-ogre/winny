@@ -5,11 +5,12 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ecs::{ResMut, Scheduler, WinnyResource, World};
+use app::app::App;
+use app::plugins::Plugin;
+use ecs::{ResMut, WinnyResource};
 use logger::{error, info, trace};
-use plugins::Plugin;
 
-pub use hot_reload_macro::*;
+pub mod prelude;
 
 #[derive(Debug)]
 pub struct Lib {
@@ -109,7 +110,7 @@ pub struct HotReloadPlugin {
 }
 
 impl Plugin for HotReloadPlugin {
-    fn build(&self, world: &mut World, scheduler: &mut Scheduler) {
+    fn build(&mut self, app: &mut App) {
         if cfg!(windows) {
             let lib_path: PathBuf = [
                 format!("{}", current_dir().unwrap().to_str().unwrap()),
@@ -146,9 +147,8 @@ impl Plugin for HotReloadPlugin {
             let linked_lib =
                 LinkedLib::new(lib_path.into(), write_path.into()).expect("Could not find library");
 
-            world.insert_resource(linked_lib);
-
-            scheduler.add_systems(ecs::Schedule::PreUpdate, reload_if_changed);
+            app.insert_resource(linked_lib);
+            app.add_systems(ecs::Schedule::PreUpdate, (reload_if_changed,));
         }
     }
 }

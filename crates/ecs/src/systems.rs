@@ -1,25 +1,32 @@
-use std::{
-    fmt::Debug,
-    marker::PhantomData,
-    time::{Duration, SystemTime},
-};
+use std::{fmt::Debug, marker::PhantomData};
 
 use ecs_derive::all_tuples;
 
 use crate::{
     unsafe_world::UnsafeWorldCell, AccessType, Commands, ComponentAccess, ComponentAccessFilter,
     Event, EventReader, EventWriter, Filter, Query, QueryData, QueryState, Res, ResMut, Resource,
-    TypeGetter, TypeId, World,
+    TypeId, World,
 };
 
-pub type StoredSystem = Box<dyn System>;
-// A vec of systems that are run in parallel
-pub type SystemSet = Vec<StoredSystem>;
-// A vec of systems that are NOT run in parallel
-pub type ChainedSystemSet = Vec<StoredSystem>;
+#[derive(Debug)]
+pub struct SystemSet {
+    pub systems: Vec<Vec<StoredSystem>>,
+}
 
+pub type StoredSystem = Box<dyn System>;
+
+impl Debug for dyn System {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("System")
+            .field("access", &self.access())
+            .finish()
+    }
+}
+
+#[derive(Debug)]
 pub struct Scheduler {
     startup: Vec<SystemSet>,
+    platform: Vec<SystemSet>,
     pre_update: Vec<SystemSet>,
     update: Vec<SystemSet>,
     post_update: Vec<SystemSet>,
@@ -30,18 +37,20 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn new() -> Self {
         Self {
-            startup: vec![vec![], vec![]],
-            pre_update: vec![vec![], vec![]],
-            update: vec![vec![], vec![]],
-            post_update: vec![vec![], vec![]],
-            render: vec![vec![], vec![]],
-            exit: vec![vec![], vec![]],
+            startup: Vec::new(),
+            platform: Vec::new(),
+            pre_update: Vec::new(),
+            update: Vec::new(),
+            post_update: Vec::new(),
+            render: Vec::new(),
+            exit: Vec::new(),
         }
     }
 
     pub fn add_systems<M, S: IntoSystemStorage<M>>(&mut self, schedule: Schedule, systems: S) {
         let storage = match schedule {
             Schedule::StartUp => &mut self.startup,
+            Schedule::Platform => &mut self.platform,
             Schedule::PreUpdate => &mut self.pre_update,
             Schedule::Update => &mut self.update,
             Schedule::PostUpdate => &mut self.post_update,
@@ -49,40 +58,14 @@ impl Scheduler {
             Schedule::Exit => &mut self.exit,
         };
 
-        let systems = systems.get();
-        let system_sets = storage;
-        let systems_access: Vec<_> = systems.iter().map(|s| s.access()).collect();
-
-        for access in systems_access.iter() {
-            access.validate_or_panic();
-        }
-
-        for (access, system) in systems_access.iter().zip(systems.into_iter()) {
-            // The first set is reserved for read only queries
-            if access.is_read_only() {
-                system_sets[0].push(system);
-                continue;
-            }
-
-            if !system_sets.last().unwrap().is_empty() {
-                system_sets.push(vec![]);
-            }
-
-            for set in system_sets.iter_mut().skip(1) {
-                // println!("{:#?}", access);
-                if set.iter().all(|s| !s.access().conflicts_with(access)) {
-                    set.push(system);
-                    break;
-                }
-            }
-        }
-
-        system_sets.retain(|set| !set.is_empty());
+        let set = systems.into_set();
+        storage.push(set);
     }
 
     pub fn run_schedule(&mut self, schedule: Schedule, world: &World) {
         let schedule = match schedule {
             Schedule::StartUp => &mut self.startup,
+            Schedule::Platform => &mut self.platform,
             Schedule::PreUpdate => &mut self.pre_update,
             Schedule::Update => &mut self.update,
             Schedule::PostUpdate => &mut self.post_update,
@@ -92,71 +75,81 @@ impl Scheduler {
 
         for set in schedule.iter_mut() {
             std::thread::scope(|s| {
-                for system in set.iter_mut() {
+                for parallel_systems in set.systems.iter_mut() {
+                    let mut handles = Vec::with_capacity(parallel_systems.len());
                     let world = unsafe { world.as_unsafe_world() };
-                    let f = system.as_mut();
 
-                    s.spawn(move || {
-                        f.run_unsafe(world);
-                    });
+                    for system in parallel_systems.iter_mut() {
+                        let f = system.as_mut();
+
+                        let h = s.spawn(move || {
+                            f.run_unsafe(world);
+                        });
+                        handles.push(h);
+                    }
+
+                    handles.into_iter().for_each(|h| h.join().unwrap());
                 }
             })
         }
     }
 
-    pub fn run_schedule_timed(&mut self, schedule: Schedule, world: &World) -> Duration {
-        let start = SystemTime::now();
+    // pub fn run_schedule_timed(&mut self, schedule: Schedule, world: &World) -> Duration {
+    //     let start = SystemTime::now();
 
-        let schedule = match schedule {
-            Schedule::StartUp => &mut self.startup,
-            Schedule::PreUpdate => &mut self.pre_update,
-            Schedule::Update => &mut self.update,
-            Schedule::PostUpdate => &mut self.post_update,
-            Schedule::Render => &mut self.render,
-            Schedule::Exit => &mut self.exit,
-        };
+    //     let schedule = match schedule {
+    //         Schedule::StartUp => &mut self.startup,
+    //         Schedule::Platform => &mut self.platform,
+    //         Schedule::PreUpdate => &mut self.pre_update,
+    //         Schedule::Update => &mut self.update,
+    //         Schedule::PostUpdate => &mut self.post_update,
+    //         Schedule::Render => &mut self.render,
+    //         Schedule::Exit => &mut self.exit,
+    //     };
 
-        for set in schedule.iter_mut() {
-            std::thread::scope(|s| {
-                for system in set.iter_mut() {
-                    let world = unsafe { world.as_unsafe_world() };
-                    let f = system.as_mut();
+    //     for set in schedule.iter_mut() {
+    //         std::thread::scope(|s| {
+    //             for system in set.iter_mut() {
+    //                 let world = unsafe { world.as_unsafe_world() };
+    //                 let f = system.as_mut();
 
-                    s.spawn(move || {
-                        f.run_unsafe(world);
-                    });
-                }
-            })
-        }
+    //                 s.spawn(move || {
+    //                     f.run_unsafe(world);
+    //                 });
+    //             }
+    //         })
+    //     }
 
-        SystemTime::now().duration_since(start).unwrap()
-    }
+    //     SystemTime::now().duration_since(start).unwrap()
+    // }
 
-    fn run_schedule_single_thread(&mut self, schedule: Schedule, world: &World) {
-        let schedule = match schedule {
-            Schedule::StartUp => &mut self.startup,
-            Schedule::PreUpdate => &mut self.pre_update,
-            Schedule::Update => &mut self.update,
-            Schedule::PostUpdate => &mut self.post_update,
-            Schedule::Render => &mut self.render,
-            Schedule::Exit => &mut self.exit,
-        };
+    // fn run_schedule_single_thread(&mut self, schedule: Schedule, world: &World) {
+    //     let schedule = match schedule {
+    //         Schedule::StartUp => &mut self.startup,
+    //         Schedule::Platform => &mut self.platform,
+    //         Schedule::PreUpdate => &mut self.pre_update,
+    //         Schedule::Update => &mut self.update,
+    //         Schedule::PostUpdate => &mut self.post_update,
+    //         Schedule::Render => &mut self.render,
+    //         Schedule::Exit => &mut self.exit,
+    //     };
 
-        for set in schedule.iter_mut() {
-            for system in set.iter_mut() {
-                let world = unsafe { world.as_unsafe_world() };
-                let f = system.as_mut();
+    //     for set in schedule.iter_mut() {
+    //         for system in set.iter_mut() {
+    //             let world = unsafe { world.as_unsafe_world() };
+    //             let f = system.as_mut();
 
-                f.run_unsafe(world);
-            }
-        }
-    }
+    //             f.run_unsafe(world);
+    //         }
+    //     }
+    // }
 
     pub fn startup(&mut self, world: &World) {
         self.run_schedule(Schedule::StartUp, &world);
     }
 
     pub fn run(&mut self, world: &World) {
+        self.run_schedule(Schedule::Platform, world);
         self.run_schedule(Schedule::PreUpdate, world);
         self.run_schedule(Schedule::Update, world);
         self.run_schedule(Schedule::PostUpdate, world);
@@ -167,25 +160,26 @@ impl Scheduler {
         self.run_schedule(Schedule::Exit, world);
     }
 
-    pub fn startup_single_thread(&mut self, world: &World) {
-        self.run_schedule_single_thread(Schedule::StartUp, world);
-    }
+    // pub fn startup_single_thread(&mut self, world: &World) {
+    //     self.run_schedule_single_thread(Schedule::StartUp, world);
+    // }
 
-    pub fn run_single_thread(&mut self, world: &World) {
-        self.run_schedule_single_thread(Schedule::PreUpdate, world);
-        self.run_schedule_single_thread(Schedule::Update, world);
-        self.run_schedule_single_thread(Schedule::PostUpdate, world);
-        self.run_schedule_single_thread(Schedule::Render, world);
-    }
+    // pub fn run_single_thread(&mut self, world: &World) {
+    //     self.run_schedule_single_thread(Schedule::PreUpdate, world);
+    //     self.run_schedule_single_thread(Schedule::Update, world);
+    //     self.run_schedule_single_thread(Schedule::PostUpdate, world);
+    //     self.run_schedule_single_thread(Schedule::Render, world);
+    // }
 
-    pub fn exit_single_thread(&mut self, world: &World) {
-        self.run_schedule_single_thread(Schedule::Exit, world);
-    }
+    // pub fn exit_single_thread(&mut self, world: &World) {
+    //     self.run_schedule_single_thread(Schedule::Exit, world);
+    // }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Schedule {
     StartUp,
+    Platform,
     PreUpdate,
     Update,
     PostUpdate,
@@ -228,7 +222,7 @@ impl SystemParam for Commands<'_> {
     }
 }
 
-impl<E: Event + TypeGetter> SystemParam for EventReader<'_, E> {
+impl<E: Event> SystemParam for EventReader<'_, E> {
     type State = TypeId;
     type Item<'world, 'state> = EventReader<'world, E>;
 
@@ -251,7 +245,7 @@ impl<E: Event + TypeGetter> SystemParam for EventReader<'_, E> {
     }
 }
 
-impl<E: Event + TypeGetter> SystemParam for EventWriter<'_, E> {
+impl<E: Event> SystemParam for EventWriter<'_, E> {
     type State = TypeId;
     type Item<'world, 'state> = EventWriter<'world, E>;
 
@@ -274,7 +268,53 @@ impl<E: Event + TypeGetter> SystemParam for EventWriter<'_, E> {
     }
 }
 
-impl<'a, T: 'static + Resource + TypeGetter> SystemParam for Res<'a, T> {
+impl<'a, T: 'static + Resource> SystemParam for Option<Res<'a, T>> {
+    type State = TypeId;
+    type Item<'world, 'state> = Option<Res<'state, T>>;
+
+    fn access() -> Vec<Access> {
+        vec![Access::new(
+            vec![ComponentAccess::new::<T>(AccessType::Immutable)],
+            vec![],
+        )]
+    }
+
+    fn init_state<'w>(_world: UnsafeWorldCell<'w>) -> Self::State {
+        T::type_id()
+    }
+
+    fn to_param<'w, 's>(
+        _state: &'s mut Self::State,
+        world: UnsafeWorldCell<'w>,
+    ) -> Self::Item<'w, 's> {
+        Res::try_new(world)
+    }
+}
+
+impl<T: 'static + Resource> SystemParam for Option<ResMut<'_, T>> {
+    type State = TypeId;
+    type Item<'world, 'state> = Option<ResMut<'state, T>>;
+
+    fn access() -> Vec<Access> {
+        vec![Access::new(
+            vec![ComponentAccess::new::<T>(AccessType::Mutable)],
+            vec![],
+        )]
+    }
+
+    fn init_state<'w>(_world: UnsafeWorldCell<'w>) -> Self::State {
+        T::type_id()
+    }
+
+    fn to_param<'w, 's>(
+        _state: &'s mut Self::State,
+        world: UnsafeWorldCell<'w>,
+    ) -> Self::Item<'w, 's> {
+        ResMut::try_new(world)
+    }
+}
+
+impl<'a, T: 'static + Resource> SystemParam for Res<'a, T> {
     type State = TypeId;
     type Item<'world, 'state> = Res<'state, T>;
 
@@ -297,7 +337,7 @@ impl<'a, T: 'static + Resource + TypeGetter> SystemParam for Res<'a, T> {
     }
 }
 
-impl<T: 'static + Resource + TypeGetter> SystemParam for ResMut<'_, T> {
+impl<T: 'static + Resource> SystemParam for ResMut<'_, T> {
     type State = TypeId;
     type Item<'world, 'state> = ResMut<'state, T>;
 
@@ -343,7 +383,6 @@ impl<T: 'static + QueryData, F: 'static + Filter> SystemParam for Query<'_, '_, 
 pub trait System: Send + Sync {
     fn access(&self) -> SystemAccess;
     fn run_unsafe<'w>(&mut self, world: UnsafeWorldCell<'w>);
-    fn debug_print(&self);
 }
 
 pub trait SystemParamFunc<Marker>: 'static + Send + Sync {
@@ -495,11 +534,6 @@ where
         self.f
             .run(F::Param::to_param(&mut F::Param::init_state(world), world))
     }
-
-    fn debug_print(&self) {
-        println!("{:?}", self._phantom);
-        // println!("{:#?}", self.access());
-    }
 }
 
 pub trait IntoSystem<Input> {
@@ -593,15 +627,43 @@ impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8));
 impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8)(K, 9));
 
 pub trait IntoSystemStorage<M> {
-    fn get(self) -> Vec<Box<dyn System>>;
+    fn into_set(self) -> SystemSet;
+    fn chain(self) -> ChainedSystemSet<M>;
 }
+
+pub struct ChainedSystemSet<M> {
+    pub set: SystemSet,
+    pub _phantom: PhantomData<M>,
+}
+
+impl<P: 'static> IntoSystemStorage<P> for ChainedSystemSet<P> {
+    fn into_set(self) -> SystemSet {
+        self.set
+    }
+
+    fn chain(self) -> ChainedSystemSet<P> {
+        self
+    }
+}
+
+// TODO: cant implement IntoSystemStorage for a single function and chainedsystemset
+pub trait FuckSystems {}
 
 impl<F: 'static + Send + Sync, P: 'static> IntoSystemStorage<P> for F
 where
-    F: SystemParamFunc<P>,
+    F: SystemParamFunc<P> + FuckSystems,
 {
-    fn get(self) -> Vec<Box<dyn System>> {
-        vec![Box::new(self.into_system())]
+    fn into_set(self) -> SystemSet {
+        SystemSet {
+            systems: vec![vec![Box::new(self.into_system())]],
+        }
+    }
+
+    fn chain(self) -> ChainedSystemSet<P> {
+        ChainedSystemSet {
+            set: self.into_set(),
+            _phantom: PhantomData,
+        }
     }
 }
 
@@ -612,15 +674,62 @@ macro_rules! impl_into_system_tuple {
             where
                 $($t: SystemParamFunc<$p>,)*
                 {
-                    fn get(self) -> Vec<Box<dyn System>> {
+                    fn into_set(self) -> SystemSet {
+                        // TODO: why is this borken
+                        self.chain().set
+
+                        // let ($($t,)*) = self;
+
+                        // let mut system_sets = vec![vec![]];
+
+                        // let systems: Vec<StoredSystem> = vec![
+                        //     $(Box::new($t.into_system()),)*
+                        // ];
+
+                        // println!("{:#?}", systems);
+                        // let systems_access = systems.iter().map(|s| s.access()).collect::<Vec<_>>();
+
+                        // for access in systems_access.iter() {
+                        //     access.validate_or_panic();
+                        // }
+
+
+                        // for (access, system) in systems_access.iter().zip(systems.into_iter()) {
+                        //     if access.is_read_only() {
+                        //         system_sets[0].push(system);
+                        //         continue;
+                        //     }
+
+                        //     if !system_sets.last().unwrap().is_empty() {
+                        //         system_sets.push(vec![]);
+                        //     }
+
+                        //     for set in system_sets.iter_mut().skip(1) {
+                        //         if set.iter().all(|s| !s.access().conflicts_with(access)) {
+                        //             set.push(system);
+                        //             break;
+                        //         }
+                        //     }
+                        // };
+
+                        // println!("{:#?}", system_sets);
+
+                        // SystemSet { systems: system_sets }
+                    }
+
+                    fn chain(self) -> ChainedSystemSet<($($p,)*)> {
                         let ($($t,)*) = self;
 
-                        vec![
-                            $(Box::new($t.into_system()),)*
-                        ]
+                        ChainedSystemSet {
+                            set : SystemSet { systems: vec![
+                                $(vec![Box::new($t.into_system())],)*
+                            ]
+                            },
+                            _phantom: PhantomData
+                        }
                     }
                 }
     }
 }
 
-all_tuples!(impl_into_system_tuple, 2, 10, F, P);
+all_tuples!(impl_into_system_tuple, 1, 10, F, P);

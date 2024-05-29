@@ -7,17 +7,19 @@ edition = "2021"
 logger = { path = "../logger" }
 ecs = { path = "../ecs" }
 winny_math = { path = "../winny_math" }
-plugins = { path = "../plugins" }
+app = { path = "../app" }
+
+wgpu = "0.19.3"
+winit = "0.29.15"
 
 pollster = "0.3.0"
 bytemuck = { version = "1.12", features = [ "derive" ] }
-wgpu = "0.19.3"
-egui = "0.27.2"
-winit = "0.29.15"
-egui-wgpu = "0.27.2"
-egui-winit = "0.27.2"
-libflate = "2.1.0"
 
-[dependencies.image]
-version = "0.24"
-features = ["png"]
+libflate = { version = "2.1.0", optional = true }
+egui = { version = "0.27.2", optional = true }
+egui-wgpu = { version = "0.27.2", optional = true }
+egui-winit = { version = "0.27.2", optional = true }
+
+[features]
+egui = ["dep:egui", "dep:egui-wgpu", "dep:egui-winit"]
+png = ["dep:libflate"]
