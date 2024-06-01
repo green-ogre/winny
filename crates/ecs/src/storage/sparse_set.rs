@@ -8,7 +8,7 @@ use super::*;
 //     events: SparseSet<TypeId, EventId>,
 // }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SparseArray<V> {
     values: Vec<Option<V>>,
 }
@@ -49,6 +49,22 @@ impl<V: Debug> SparseArray<V> {
             println!("{:?}", value);
         }
         self.values[index] = Some(value);
+    }
+
+    pub fn insert_in_first_empty(&mut self, value: V) -> usize {
+        let index = self
+            .values
+            .iter()
+            .enumerate()
+            .find(|(_, v)| v.is_none())
+            .map(|(i, _)| i)
+            .unwrap_or_else(|| {
+                self.values.push(None);
+                self.len() - 1
+            });
+        self.insert(index, value);
+
+        index
     }
 
     pub fn remove(&mut self, index: usize) -> Option<V> {
@@ -118,7 +134,7 @@ impl<'a, V: Debug> Iterator for SparseArrayIter<'a, V> {
 //     }
 // }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SparseSet<I: SparseArrayIndex, V> {
     dense: Vec<V>,
     indexes: Vec<I>,
@@ -138,6 +154,12 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
         self.sparse.insert(index.to_index(), self.dense.len());
         self.dense.push(value);
         self.indexes.push(index);
+    }
+
+    pub fn insert_in_first_empty(&mut self, value: V) -> usize {
+        let dense_index = self.dense.len();
+        self.dense.push(value);
+        self.sparse.insert_in_first_empty(dense_index)
     }
 
     pub fn get(&self, index: &I) -> Option<&V> {

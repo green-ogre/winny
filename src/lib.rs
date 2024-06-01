@@ -28,6 +28,7 @@ pub mod prelude {
     pub use audio::prelude::*;
 
     pub use app::prelude::*;
+    pub use asset::prelude::*;
     pub use ecs::prelude::*;
     pub use logger::*;
     pub use winny_math as math;

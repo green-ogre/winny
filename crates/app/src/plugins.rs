@@ -45,4 +45,4 @@ macro_rules! impl_plugin_set {
     }
 }
 
-ecs::ecs_derive::all_tuples!(impl_plugin_set, 2, 10, F);
+ecs::ecs_macro::all_tuples!(impl_plugin_set, 2, 10, F);

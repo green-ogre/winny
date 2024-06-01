@@ -7,12 +7,12 @@ pub use entity::*;
 use logger::error;
 
 use core::panic;
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::{collections::VecDeque, fmt::Debug};
 
 use crate::{
-    Any, Archetype, Component, Event, EventId, Events, Res, ResMut, Resource, Resources, Table,
-    TypeGetter, TypeId,
+    Archetype, Component, Event, EventId, Events, Res, ResMut, Resource, Resources, Table,
 };
 
 use crate::storage::*;
@@ -23,7 +23,6 @@ pub use self::unsafe_world::UnsafeWorldCell;
 pub struct World {
     pub archetypes: Archetypes,
     pub tables: Tables,
-    pub events: Events,
     pub resources: Resources,
 
     //component_ids: fxhash::FxHashMap<TypeId, ComponentId>,
@@ -31,10 +30,8 @@ pub struct World {
     //event_ids: fxhash::FxHashMap<TypeId, EventId>,
     component_ids: HashMap<TypeId, ComponentId>,
     pub resource_ids: HashMap<TypeId, ResourceId>,
-    event_ids: HashMap<TypeId, EventId>,
     next_comp_id: usize,
     next_resource_id: usize,
-    next_event_id: usize,
 
     entities: Vec<EntityMeta>,
     free_entities: Vec<u32>,
@@ -46,17 +43,14 @@ impl Default for World {
             archetypes: Archetypes::new(),
             entities: Vec::new(),
             tables: Tables::new(),
-            events: Events::new(),
 
             // component_ids: fxhash::FxHashMap::default(),
             // resource_ids: fxhash::FxHashMap::default(),
             // event_ids: fxhash::FxHashMap::default(),
             component_ids: HashMap::default(),
             resource_ids: HashMap::default(),
-            event_ids: HashMap::default(),
             next_comp_id: 0,
             next_resource_id: 0,
-            next_event_id: 0,
 
             resources: Resources::new(),
             free_entities: Vec::new(),
@@ -70,7 +64,7 @@ impl World {
     }
 
     pub fn spawn<T: Bundle>(&mut self, bundle: T) -> Entity {
-        self.register_component_ids(&bundle.type_ids());
+        self.register_components(&bundle.type_ids());
         let meta_location = self.find_or_create_storage(bundle);
 
         let entity = self.new_entity(meta_location);
@@ -82,7 +76,7 @@ impl World {
         entity
     }
 
-    fn register_component_ids(&mut self, type_ids: &[TypeId]) {
+    pub fn register_components(&mut self, type_ids: &[TypeId]) {
         for id in type_ids.iter() {
             if !self.component_ids.contains_key(id) {
                 self.component_ids
@@ -250,66 +244,48 @@ impl World {
     }
 
     pub fn insert_resource<R: Resource>(&mut self, resource: R) {
-        let type_id = R::type_id();
-        if !self.resource_ids.contains_key(&type_id) {
-            self.resource_ids.insert(type_id, self.resources.new_id());
-        }
         unsafe { self.as_unsafe_world().insert_resource(resource) }
     }
 
     pub fn register_event<E: Event>(&mut self) {
-        let id = self.events.new_id();
-        self.event_ids.insert(E::type_id(), id);
-        self.events.insert::<E>(id);
+        self.register_resource(std::any::TypeId::of::<Events<E>>());
+        self.insert_resource(Events::<E>::new());
     }
 
     pub fn resource<R: Resource>(&self) -> Res<'_, R> {
-        Res::new(unsafe { self.as_unsafe_world() })
+        let type_id = std::any::TypeId::of::<R>();
+        let id = self
+            .resource_ids
+            .get(&type_id)
+            .expect("resource registered");
+        Res::new(unsafe { self.as_unsafe_world() }, *id)
     }
 
     pub fn resource_mut<R: Resource>(&self) -> ResMut<'_, R> {
-        ResMut::new(unsafe { self.as_unsafe_world() })
+        let type_id = std::any::TypeId::of::<R>();
+        let id = self
+            .resource_ids
+            .get(&type_id)
+            .expect("resource registered");
+        ResMut::new(unsafe { self.as_unsafe_world() }, *id)
     }
 
-    pub fn flush_events(&mut self) {
-        for event_queue in self.events.iter_mut() {
-            event_queue.flush();
-        }
-    }
-
-    pub fn get_component_ids(&self, type_ids: &[TypeId]) -> Result<Vec<ComponentId>, ()> {
+    pub fn get_component_ids(&self, type_ids: &[TypeId]) -> Vec<ComponentId> {
         let mut component_ids = Vec::with_capacity(type_ids.len());
         for t in type_ids.iter() {
-            component_ids.push(*self.component_ids.get(t).expect("component is registered"))
+            component_ids.push(
+                *self
+                    .component_ids
+                    .get(t)
+                    .ok_or_else(|| error!("Failed to get component id: {:?}", t))
+                    .unwrap(),
+            )
         }
 
-        Ok(component_ids)
+        component_ids
     }
 
-    pub fn get_event_id<E: Event>(&self) -> EventId {
-        let type_id = E::type_id();
-        let type_name = E::type_name();
-
-        *self.event_ids.get(&type_id).unwrap_or_else(|| {
-            error!("Queried event is not registered: {}", type_name.as_string());
-            panic!();
-        })
-    }
-
-    pub fn get_resource_id<R: Resource>(&self) -> ResourceId {
-        let type_id = R::type_id();
-        let type_name = R::type_name();
-
-        *self.resource_ids.get(&type_id).unwrap_or_else(|| {
-            error!(
-                "Queried resource is not registered: {}",
-                type_name.as_string()
-            );
-            panic!();
-        })
-    }
-
-    pub fn get_or_make_resource_id(&mut self, type_id: TypeId) -> ResourceId {
+    pub fn register_resource(&mut self, type_id: TypeId) -> ResourceId {
         if let Some(id) = self.resource_ids.get(&type_id) {
             *id
         } else {
@@ -317,5 +293,15 @@ impl World {
             self.resource_ids.insert(type_id, new_resource_id);
             new_resource_id
         }
+    }
+
+    pub fn get_resource_id<R: Resource>(&self) -> ResourceId {
+        let type_id = std::any::TypeId::of::<R>();
+        let type_name = std::any::type_name::<R>();
+
+        *self.resource_ids.get(&type_id).unwrap_or_else(|| {
+            error!("Queried resource is not registered: {}", type_name);
+            panic!();
+        })
     }
 }

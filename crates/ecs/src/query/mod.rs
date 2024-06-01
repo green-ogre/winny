@@ -2,20 +2,17 @@ pub mod filter;
 pub mod iter;
 pub mod state;
 
-use ecs_derive::all_tuples;
+use ecs_macro::all_tuples;
 pub use filter::*;
 pub use iter::*;
 pub use state::*;
 
-use std::{fmt::Debug, marker::PhantomData};
+use std::{any::TypeId, borrow::Cow, fmt::Debug, marker::PhantomData};
 
 use crate::{
     entity::Entity, unsafe_world::UnsafeWorldCell, ArchEntity, ArchId, Archetype, Component,
-    ComponentId, Mut, Table, TableId, TypeGetter, TypeId,
+    ComponentId, Table, TableId,
 };
-
-#[cfg(debug_assertions)]
-use crate::TypeName;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AccessType {
@@ -23,23 +20,19 @@ pub enum AccessType {
     Mutable,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ComponentAccess {
     access_type: AccessType,
     id: TypeId,
-
-    #[cfg(debug_assertions)]
-    name: TypeName,
+    name: Cow<'static, str>,
 }
 
 impl ComponentAccess {
-    pub fn new<T: TypeGetter>(access_type: AccessType) -> Self {
+    pub fn new<T: 'static>(access_type: AccessType) -> Self {
         Self {
             access_type,
             id: TypeId::of::<T>(),
-
-            #[cfg(debug_assertions)]
-            name: TypeName::of::<T>(),
+            name: Cow::Borrowed(std::any::type_name::<T>()),
         }
     }
 
@@ -63,23 +56,19 @@ pub enum AccessFilter {
     Or,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ComponentAccessFilter {
     filter: AccessFilter,
     id: TypeId,
-
-    #[cfg(debug_assertions)]
-    name: TypeName,
+    name: Cow<'static, str>,
 }
 
 impl ComponentAccessFilter {
-    pub fn new<T: TypeGetter>(filter: AccessFilter) -> Self {
+    pub fn new<T: Component>(filter: AccessFilter) -> Self {
         Self {
             id: TypeId::of::<T>(),
             filter,
-
-            #[cfg(debug_assertions)]
-            name: TypeName::of::<T>(),
+            name: Cow::Borrowed(std::any::type_name::<T>()),
         }
     }
 
@@ -102,7 +91,7 @@ pub struct StorageId {
     archetype_id: ArchId,
 }
 
-pub trait QueryData {
+pub trait QueryData: Send + Sync {
     type ReadOnly<'d>;
     type Item<'d>;
 
@@ -163,6 +152,8 @@ macro_rules! impl_query_data {
 
 all_tuples!(impl_query_data, 1, 10, D);
 
+pub struct Mut<T>(PhantomData<T>);
+
 impl<T: Component> QueryData for Mut<T> {
     type ReadOnly<'d> = &'d T;
     type Item<'d> = &'d mut T;
@@ -188,7 +179,7 @@ impl<T: Component> QueryData for Mut<T> {
     }
 
     fn set_ids() -> Vec<TypeId> {
-        vec![T::type_id()]
+        vec![std::any::TypeId::of::<T>()]
     }
 }
 
@@ -217,7 +208,7 @@ impl<T: Component> QueryData for T {
     }
 
     fn set_ids() -> Vec<TypeId> {
-        vec![T::type_id()]
+        vec![std::any::TypeId::of::<T>()]
     }
 }
 
@@ -246,7 +237,7 @@ impl QueryData for Entity {
     }
 
     fn set_ids() -> Vec<TypeId> {
-        vec![Entity::type_id()]
+        vec![std::any::TypeId::of::<Entity>()]
     }
 }
 

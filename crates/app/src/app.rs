@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ecs::{prelude::*, Scheduler, TypeGetter, WinnyEvent, WinnyResource, World};
+use ecs::{prelude::*, Events, Scheduler, WinnyEvent, WinnyResource, World};
 use logger::{error, info};
 
 use crate::plugins::{Plugin, PluginSet};
@@ -12,18 +12,18 @@ use crate::plugins::{Plugin, PluginSet};
 pub struct AppExit;
 
 pub struct App {
-    world: Option<World>,
-    scheduler: Option<Scheduler>,
-    plugins: Option<Vec<Box<dyn Plugin>>>,
+    world: World,
+    scheduler: Scheduler,
+    plugins: Vec<Box<dyn Plugin>>,
     window_event_loop: Option<Box<dyn FnOnce()>>,
 }
 
 impl Default for App {
     fn default() -> Self {
         App {
-            world: Some(World::default()),
-            scheduler: Some(Scheduler::new()),
-            plugins: Some(vec![]),
+            world: World::default(),
+            scheduler: Scheduler::new(),
+            plugins: Vec::new(),
             window_event_loop: None,
         }
     }
@@ -31,7 +31,15 @@ impl Default for App {
 
 impl App {
     pub(crate) fn add_plugin_boxed(&mut self, plugin: Box<dyn Plugin>) {
-        self.plugins.as_mut().unwrap().push(plugin);
+        self.plugins.push(plugin);
+    }
+
+    pub fn world(&mut self) -> &World {
+        &self.world
+    }
+
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
     }
 
     pub fn add_plugins<T: PluginSet>(&mut self, plugins: T) -> &mut Self {
@@ -43,12 +51,15 @@ impl App {
     }
 
     pub fn insert_resource<R: Resource>(&mut self, resource: R) -> &mut Self {
-        self.world.as_mut().unwrap().insert_resource(resource);
+        self.world.insert_resource(resource);
         self
     }
 
     pub fn register_event<E: Event>(&mut self) -> &mut Self {
-        self.world.as_mut().unwrap().register_event::<E>();
+        self.world.register_event::<E>();
+        self.add_systems(Schedule::FlushEvents, |queue: EventReader<E>| {
+            let _ = queue.read();
+        });
         self
     }
 
@@ -57,10 +68,7 @@ impl App {
         schedule: Schedule,
         systems: B,
     ) -> &mut Self {
-        self.scheduler
-            .as_mut()
-            .unwrap()
-            .add_systems(schedule, systems);
+        self.scheduler.add_systems(schedule, systems);
         self
     }
 
@@ -72,40 +80,47 @@ impl App {
     pub fn run(&mut self) {
         logger::init();
         set_panic_hook();
-        self.world.as_mut().unwrap().register_event::<AppExit>();
-        self.world.as_mut().unwrap().insert_resource(DeltaT(0.0));
+        self.world.register_event::<AppExit>();
+        self.world.insert_resource(DeltaT(0.0));
 
         loop {
-            let mut plugins = self.plugins.replace(vec![]).unwrap();
-            for plugin in plugins.iter_mut() {
+            let plugins = self.plugins.drain(..).collect::<Vec<_>>();
+            for mut plugin in plugins {
                 plugin.build(self);
             }
-            if plugins.is_empty() {
+            if self.plugins.is_empty() {
                 break;
             }
         }
 
-        let mut world = self.world.take().unwrap();
-        let mut scheduler = self.scheduler.take().unwrap();
+        self.scheduler.optimize_schedule();
+        self.scheduler.init_systems(&self.world);
 
-        let h = std::thread::spawn(move || {
-            scheduler.startup(&world);
+        let mut world = &mut self.world;
+        let mut scheduler = &mut self.scheduler;
 
-            let mut start = SystemTime::now();
-            let mut end = SystemTime::now();
-            loop {
-                let dt = DeltaT(end.duration_since(start).unwrap_or_default().as_secs_f64());
-                start = SystemTime::now();
-                update_ecs(dt, &mut world, &mut scheduler);
-                end = SystemTime::now();
+        std::thread::scope(|s| {
+            let h = s.spawn(move || {
+                println!("{:#?}", scheduler);
+                scheduler.startup(&world);
+                println!("hello");
+
+                let mut start = SystemTime::now();
+                let mut end = SystemTime::now();
+                loop {
+                    let dt = DeltaT(end.duration_since(start).unwrap_or_default().as_secs_f64());
+                    start = SystemTime::now();
+                    update_ecs(dt, &mut world, &mut scheduler);
+                    end = SystemTime::now();
+                }
+            });
+
+            if let Some(window_event_loop) = self.window_event_loop.take() {
+                window_event_loop();
+            } else {
+                let _ = h.join();
             }
         });
-
-        if let Some(window_event_loop) = self.window_event_loop.take() {
-            window_event_loop();
-        } else {
-            let _ = h.join();
-        }
     }
 }
 
@@ -128,7 +143,10 @@ pub struct DeltaT(pub f64);
 fn update_ecs(delta_t: DeltaT, world: &mut World, scheduler: &mut Scheduler) {
     update_delta_t(world, delta_t);
 
-    if world.resource_ids.contains_key(&PerfCounter::type_id()) {
+    if world
+        .resource_ids
+        .contains_key(&std::any::TypeId::of::<PerfCounter>())
+    {
         // TODO: fix me
         let mut perf = world.resource_mut::<PerfCounter>().clone();
         perf.start();
@@ -138,13 +156,12 @@ fn update_ecs(delta_t: DeltaT, world: &mut World, scheduler: &mut Scheduler) {
         run_schedule_and_log(scheduler, &mut perf, world, Schedule::PostUpdate);
         run_schedule_and_log(scheduler, &mut perf, world, Schedule::Render);
         check_for_exit(world, scheduler);
-        world.flush_events();
+        run_schedule_and_log(scheduler, &mut perf, world, Schedule::FlushEvents);
         perf.stop();
         *world.resource_mut::<PerfCounter>() = perf;
     } else {
         scheduler.run(world);
         check_for_exit(world, scheduler);
-        world.flush_events();
     }
 }
 
@@ -167,9 +184,10 @@ fn update_delta_t(world: &mut World, delta_t: DeltaT) {
 
 fn check_for_exit(world: &mut World, scheduler: &mut Scheduler) {
     if world
-        .events
-        .get_mut(world.get_event_id::<AppExit>())
-        .is_some_and(|exit| exit.read::<AppExit>().next().is_some())
+        .resource_mut::<Events<AppExit>>()
+        .read()
+        .next()
+        .is_some()
     {
         scheduler.run_schedule(ecs::Schedule::Exit, world);
     }

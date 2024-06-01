@@ -1,5 +1,5 @@
 [package]
-name = "ecs_derive"
+name = "ecs_macro"
 version = "0.1.0"
 edition = "2021"
 

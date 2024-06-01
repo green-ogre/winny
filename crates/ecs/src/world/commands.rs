@@ -21,8 +21,8 @@ pub struct InsertComponent {
 }
 
 impl InsertComponent {
-    pub fn new<T: Send + Component + TypeGetter + Storage + Clone + Debug>(component: T) -> Self {
-        let type_id = component.type_id();
+    pub fn new<T: Send + Component + Storage + Clone + Debug>(component: T) -> Self {
+        let type_id = std::any::TypeId::of::<T>();
         let storage_type = component.storage_type();
 
         let mut c = Box::new(DumbVec::new(
@@ -58,7 +58,7 @@ impl EntityCommands {
         }
     }
 
-    pub fn insert<T: Send + Component + TypeGetter + Storage + Debug + Clone>(
+    pub fn insert<T: Send + Component + Storage + Debug + Clone>(
         &mut self,
         component: T,
     ) -> &mut Self {
@@ -66,7 +66,7 @@ impl EntityCommands {
         self
     }
 
-    pub fn remove<T: Component + TypeGetter>(&mut self) -> &mut Self {
+    pub fn remove<T: Component>(&mut self) -> &mut Self {
         self.remove.push(TypeId::of::<T>());
         self
     }
@@ -85,13 +85,13 @@ pub struct NewResourceCommands {
 }
 
 impl NewResourceCommands {
-    pub fn new<R: Resource + TypeGetter>(res: R) -> Self {
+    pub fn new<R: Resource>(res: R) -> Self {
         let mut storage = DumbVec::new(std::alloc::Layout::new::<R>(), 1, new_dumb_drop::<R>());
         storage.push(res).unwrap();
 
         Self {
             resource: storage,
-            type_id: R::type_id(),
+            type_id: std::any::TypeId::of::<R>(),
         }
     }
 }

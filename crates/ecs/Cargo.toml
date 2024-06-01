@@ -5,6 +5,6 @@ edition = "2021"
 
 [dependencies]
 logger = { path = "../logger" }
-ecs_derive = { path = "../ecs_derive" }
+ecs_macro = { path = "macro" }
 
 # fxhash = "0.2.1"

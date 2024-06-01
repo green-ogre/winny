@@ -1,11 +1,11 @@
-use crate::{any::*, ArchId, TableId, TableRow};
+use crate::{ArchId, TableId, TableRow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Entity(usize);
+pub struct Entity(u64);
 
 impl Entity {
     pub fn new(generation: u32, storage_index: u32) -> Self {
-        Self(((generation as usize) << 32) | storage_index as usize)
+        Self(((generation as u64) << 32) | storage_index as u64)
     }
 
     pub fn generation(&self) -> u32 {
@@ -13,17 +13,7 @@ impl Entity {
     }
 
     pub fn index(&self) -> u32 {
-        (self.0 & 0x00000000ffffffff) as u32
-    }
-}
-
-impl TypeGetter for Entity {
-    fn type_id() -> TypeId {
-        ENTITY
-    }
-
-    fn type_name() -> TypeName {
-        TypeName::new("Entity")
+        self.0 as u32
     }
 }
 

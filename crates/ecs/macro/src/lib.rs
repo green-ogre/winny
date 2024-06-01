@@ -63,7 +63,7 @@ fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) ->
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    let derive = quote! {
+    quote! {
         impl #impl_generics #path_to_ecs::storage::Storage for #name #ty_generics #where_clause {
             fn storage_type() -> #path_to_ecs::storage::StorageType {
                 #path_to_ecs::storage::StorageType::#storage   
@@ -71,9 +71,7 @@ fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) ->
         }
 
         impl #impl_generics #path_to_ecs::storage::Component for #name #ty_generics #where_clause {}
-    }.into();
-
-    append_type_getter(input, derive, path_to_ecs)
+    }.into()
 }
 
 #[proc_macro_derive(Resource)]
@@ -97,11 +95,9 @@ fn parse_resource(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> 
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    let derive = quote! {
+    quote! {
         impl #impl_generics #path_to_ecs::storage::Resource for #name #ty_generics #where_clause {}
-    }.into();
-
-    append_type_getter(input, derive, path_to_ecs)
+    }.into()
 }
 
 #[proc_macro_derive(Event)]
@@ -125,67 +121,8 @@ fn parse_event(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> Tok
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    let derive = quote! {
-        impl #impl_generics #path_to_ecs::Event for #name #ty_generics #where_clause {}
-    }.into();
-
-    append_type_getter(input, derive, path_to_ecs)
-}
-
-// #[proc_macro_derive(TypeGetter)]
-// pub fn type_getter_impl(input: TokenStream) -> TokenStream {
-//     parse_type_getter(input, quote! { winny::prelude::ecs }.into())
-// }
-// 
-// #[proc_macro_derive(WinnyTypeGetter)]
-// pub fn winny_type_getter_impl(input: TokenStream) -> TokenStream {
-//     parse_type_getter(input, quote! { ecs }.into())
-// }
-// 
-// #[proc_macro_derive(InternalTypeGetter)]
-// pub fn internal_type_getter_impl(input: TokenStream) -> TokenStream {
-//     parse_type_getter(input, quote! { crate }.into())
-// }
-
-fn append_type_getter(input: DeriveInput, derive: proc_macro2::TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
-    let name = &input.ident;
-    let generics = &input.generics;
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-
-    let data = &input.data;
-    let data_decon = match data {
-        syn::Data::Enum(data) => {
-            let d = &data.variants;
-            quote! { #d }.to_string()
-        }
-        syn::Data::Union(_data) => {
-            panic!()
-        }
-        syn::Data::Struct(data) => {
-            let d = &data.fields;
-            quote! { #d }.to_string()
-        }
-    };
-
-    let names = name.to_string() + &data_decon;
-    let name_str = name.to_string();
-
-    let mut hasher = DefaultHasher::default();
-    hasher.write(names.as_bytes());
-    let id = hasher.finish();
-
     quote! {
-        #derive
-
-        impl #impl_generics #path_to_ecs::any::TypeGetter for #name #ty_generics #where_clause {
-            fn type_id() -> #path_to_ecs::any::TypeId {
-                #path_to_ecs::any::TypeId::new(#id)
-            }
-
-            fn type_name() -> #path_to_ecs::any::TypeName {
-                #path_to_ecs::any::TypeName::new(#name_str)
-            }
-        }
+        impl #impl_generics #path_to_ecs::Event for #name #ty_generics #where_clause {}
     }.into()
 }
 
@@ -239,7 +176,7 @@ fn parse_bundle(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
                         (#(self.#fields.clone()),*).new_storages(world)
                     }
 
-                    fn type_ids(&self) -> Vec<#path_to_ecs::any::TypeId>  {
+                    fn type_ids(&self) -> Vec<std::any::TypeId>  {
                         (#(self.#fields.clone()),*).type_ids()
                     }
 

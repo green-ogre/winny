@@ -3,11 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{
-    any::{self, *},
-    entity::Entity,
-    QueryData,
-};
+use crate::{entity::Entity, QueryData};
 
 pub(crate) mod archetype;
 pub mod bundle;

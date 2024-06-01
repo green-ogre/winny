@@ -1,6 +1,8 @@
+use std::any::TypeId;
+
 use super::*;
 
-pub trait Component: 'static + TypeGetter + Debug {
+pub trait Component: 'static + Send + Sync + Debug {
     // fn component_id() -> ComponentId;
 }
 
@@ -25,11 +27,12 @@ pub struct ComponentSet {
 
 impl ComponentSet {
     pub fn new(mut ids: Vec<TypeId>) -> Self {
-        ids.insert(0, any::ENTITY);
+        // Assume that Entity is the first Component?
+        ids.insert(0, std::any::TypeId::of::<Entity>());
         Self { ids }
     }
 
-    pub fn contains<T: TypeGetter>(&self) -> bool {
+    pub fn contains<T: Component>(&self) -> bool {
         self.ids.contains(&TypeId::of::<T>())
     }
 
