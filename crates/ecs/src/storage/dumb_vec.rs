@@ -126,6 +126,11 @@ impl DumbVec {
         }
     }
 
+    pub fn pop_unchecked<T>(&mut self) -> T {
+        self.len -= 1;
+        unsafe { ptr::read(self.get_unchecked(self.len).cast::<T>().as_ref()) }
+    }
+
     pub fn push_dyn<T>(&mut self, val: T) -> Result<(), ()> {
         if std::alloc::Layout::new::<T>() != self.item_layout {
             return Err(());

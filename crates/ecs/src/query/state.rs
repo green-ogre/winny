@@ -23,25 +23,6 @@ impl<T, F> Debug for QueryState<T, F> {
 }
 
 impl<T: QueryData, F: Filter> QueryState<T, F> {
-    // pub fn from_world(world: &World) -> Self {
-    //     let storages = unsafe {
-    //         world
-    //             .as_unsafe_world()
-    //             .read_only()
-    //             .archetypes
-    //             .iter()
-    //             .filter(|arch| arch.contains_query::<T>())
-    //             .filter(|arch| F::condition(arch))
-    //             .map(|arch| StorageId {
-    //                 table_id: arch.table_id,
-    //                 archetype_id: arch.id,
-    //             })
-    //             .collect()
-    //     };
-
-    //     Self::new(storages, )
-    // }
-
     pub fn from_world_unsafe<'w>(world: UnsafeWorldCell<'w>) -> Self {
         let storages = unsafe {
             world
@@ -57,9 +38,7 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
                 .collect()
         };
 
-        let component_ids = unsafe { world.read_only() }
-            .get_component_ids(&T::set_ids())
-            .unwrap();
+        let component_ids = unsafe { world.read_only() }.get_component_ids(&T::set_ids());
 
         Self::new(storages, component_ids)
     }

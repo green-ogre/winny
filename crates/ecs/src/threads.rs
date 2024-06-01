@@ -3,7 +3,7 @@ use std::{
     sync::mpsc::{Receiver, SendError, Sender, TryIter},
 };
 
-use ecs_derive::InternalResource;
+use ecs_macro::InternalResource;
 
 #[derive(Debug, InternalResource)]
 pub struct ChannelSender<T>

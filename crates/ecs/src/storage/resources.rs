@@ -4,7 +4,7 @@ use crate::unsafe_world::UnsafeWorldCell;
 
 use super::*;
 
-pub trait Resource: TypeGetter + Debug + Send {}
+pub trait Resource: Send + Sync + 'static {}
 
 #[derive(Debug)]
 pub struct Res<'a, R> {
@@ -20,15 +20,15 @@ impl<R> Deref for Res<'_, R> {
 }
 
 impl<R: Resource> Res<'_, R> {
-    pub fn new<'w>(world: UnsafeWorldCell<'w>) -> Self {
+    pub fn new<'w>(world: UnsafeWorldCell<'w>, id: ResourceId) -> Self {
         Self {
-            value: unsafe { &*world.resource_ptr() },
+            value: unsafe { &*world.resource_ptr(id) },
         }
     }
 
-    pub fn try_new<'w>(world: UnsafeWorldCell<'w>) -> Option<Self> {
+    pub fn try_new<'w>(world: UnsafeWorldCell<'w>, id: ResourceId) -> Option<Self> {
         unsafe {
-            if let Some(ptr) = world.try_resource() {
+            if let Some(ptr) = world.read_only().resources.try_resource_by_id(id) {
                 Some(Self { value: &*ptr })
             } else {
                 None
@@ -57,15 +57,15 @@ impl<R> DerefMut for ResMut<'_, R> {
 }
 
 impl<R: Resource> ResMut<'_, R> {
-    pub fn new<'w>(world: UnsafeWorldCell<'w>) -> Self {
+    pub fn new<'w>(world: UnsafeWorldCell<'w>, id: ResourceId) -> Self {
         Self {
-            value: unsafe { &mut *world.resource_ptr_mut() },
+            value: unsafe { &mut *world.resource_ptr_mut(id) },
         }
     }
 
-    pub fn try_new<'w>(world: UnsafeWorldCell<'w>) -> Option<Self> {
+    pub fn try_new<'w>(world: UnsafeWorldCell<'w>, id: ResourceId) -> Option<Self> {
         unsafe {
-            if let Some(ptr) = world.try_resource_mut() {
+            if let Some(ptr) = world.read_and_write().resources.try_resource_mut_by_id(id) {
                 Some(Self { value: &mut *ptr })
             } else {
                 None
@@ -74,13 +74,13 @@ impl<R: Resource> ResMut<'_, R> {
     }
 }
 
-impl<R: Resource + TypeGetter> AsRef<R> for Res<'_, R> {
+impl<R: Resource> AsRef<R> for Res<'_, R> {
     fn as_ref(&self) -> &R {
         &self.value
     }
 }
 
-impl<R: Resource + TypeGetter> AsMut<R> for ResMut<'_, R> {
+impl<R: Resource> AsMut<R> for ResMut<'_, R> {
     fn as_mut(&mut self) -> &mut R {
         &mut self.value
     }
@@ -136,9 +136,9 @@ impl Resources {
             return res.get_unchecked(0).cast::<R>().as_ref();
         } else {
             error!(
-            "Resource [{}] does not exist: Remeber to 'app.insert_resource::<...>()' your resource!",
-            R::type_name().as_string()
-        );
+                "Resource [{}] does not exist: Remeber to 'app.insert_resource::<...>()' your resource!",
+                std::any::type_name::<R>()
+            );
             panic!();
         }
     }
@@ -149,9 +149,25 @@ impl Resources {
         } else {
             error!(
             "Resource [{}] does not exist: Remeber to 'app.insert_resource::<...>()' your resource!",
-            R::type_name().as_string()
+                std::any::type_name::<R>()
         );
             panic!();
+        }
+    }
+
+    pub unsafe fn try_resource_by_id<R: Resource>(&self, id: ResourceId) -> Option<&R> {
+        if let Some(res) = self.resources.get(&id) {
+            Some(res.get_unchecked(0).cast::<R>().as_ref())
+        } else {
+            None
+        }
+    }
+
+    pub unsafe fn try_resource_mut_by_id<R: Resource>(&self, id: ResourceId) -> Option<&mut R> {
+        if let Some(res) = self.resources.get(&id) {
+            Some(res.get_mut_unchecked(0).cast::<R>().as_mut())
+        } else {
+            None
         }
     }
 

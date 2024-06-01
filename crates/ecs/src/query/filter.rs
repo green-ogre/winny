@@ -1,6 +1,6 @@
 use super::*;
 
-pub trait Filter {
+pub trait Filter: Send + Sync {
     fn condition(arch: &Archetype) -> bool;
     fn set_access() -> Vec<ComponentAccessFilter>;
 }

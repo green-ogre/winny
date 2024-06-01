@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use super::*;
 
-pub trait Event: TypeGetter + Send + Sync {}
+pub trait Event: Send + Sync + 'static {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct EventId(usize);
@@ -25,39 +25,37 @@ impl SparseArrayIndex for EventId {
     }
 }
 
-#[derive(Debug)]
-pub struct Events {
-    events: SparseSet<EventId, EventQueue>,
+#[derive(Debug, InternalResource)]
+pub struct Events<E: Event> {
+    storage: DumbVec,
+    _phantom: PhantomData<E>,
 }
 
-unsafe impl Sync for Events {}
-unsafe impl Send for Events {}
+unsafe impl<E: Event> Sync for Events<E> {}
+unsafe impl<E: Event> Send for Events<E> {}
 
-impl Events {
+impl<E: Event> Events<E> {
     pub fn new() -> Self {
         Self {
-            events: SparseSet::new(),
+            storage: DumbVec::new(std::alloc::Layout::new::<E>(), 0, new_dumb_drop::<E>()),
+            _phantom: PhantomData,
         }
     }
 
-    pub fn insert<E: Event>(&mut self, event_id: EventId) {
-        self.events.insert(event_id, EventQueue::new::<E>());
+    pub fn len(&self) -> usize {
+        self.storage.len()
     }
 
-    pub fn get(&self, event_id: EventId) -> Option<&EventQueue> {
-        self.events.get(&event_id)
+    pub fn flush(&mut self) {
+        self.storage.clear_drop();
     }
 
-    pub fn get_mut(&mut self, event_id: EventId) -> Option<&mut EventQueue> {
-        self.events.get_mut(&event_id)
+    pub fn push(&mut self, val: E) -> Result<(), IntoStorageError> {
+        self.storage.push(val)
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut EventQueue> {
-        self.events.values_mut().iter_mut()
-    }
-
-    pub fn new_id(&self) -> EventId {
-        EventId::new(self.events.len())
+    pub fn read(&mut self) -> impl Iterator<Item = E> {
+        self.storage.into_vec::<E>().into_iter()
     }
 }
 
@@ -90,80 +88,36 @@ impl EventQueue {
     }
 }
 
-pub struct EventWriter<'w, T> {
-    world: UnsafeWorldCell<'w>,
-    event_id: EventId,
-    event_type: PhantomData<T>,
-}
-
-impl<'a, E: Event> std::fmt::Debug for EventWriter<'a, E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventWriter")
-            .field("{:#?}", unsafe {
-                self.world
-                    .read_only()
-                    .events
-                    .get(self.event_id)
-                    .expect("Event type is registered")
-            })
-            .finish()
-    }
+#[derive(Debug)]
+pub struct EventWriter<'w, E: Event> {
+    events: ResMut<'w, Events<E>>,
 }
 
 impl<'w, E: Event> EventWriter<'w, E> {
-    pub fn new(world: UnsafeWorldCell<'w>) -> Self {
-        return Self {
-            world,
-            event_id: unsafe { world.read_only() }.get_event_id::<E>(),
-            event_type: PhantomData,
-        };
+    pub fn new(world: UnsafeWorldCell<'w>, resource_id: ResourceId) -> Self {
+        Self {
+            events: ResMut::new(world, resource_id),
+        }
     }
 
     pub fn send(&mut self, event: E) {
-        if let Some(queue) = unsafe { self.world.read_and_write().events.get_mut(self.event_id) } {
-            let _ = queue.push(event);
-        } else {
-            error!("Event not registered: {}", E::type_name().as_string());
-            panic!();
+        let _ = self.events.push(event);
+    }
+}
+
+#[derive(Debug)]
+pub struct EventReader<'w, E: Event> {
+    events: ResMut<'w, Events<E>>,
+}
+
+impl<'w, E: Event> EventReader<'w, E> {
+    pub fn new(world: UnsafeWorldCell<'w>, resource_id: ResourceId) -> Self {
+        Self {
+            events: ResMut::new(world, resource_id),
         }
     }
-}
 
-pub struct EventReader<'w, T> {
-    world: UnsafeWorldCell<'w>,
-    event_id: EventId,
-    event_type: PhantomData<T>,
-}
-
-impl<'a, E: Event> std::fmt::Debug for EventReader<'a, E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventReader")
-            .field("{:#?}", unsafe {
-                self.world
-                    .read_only()
-                    .events
-                    .get(self.event_id)
-                    .expect("Event is registered")
-            })
-            .finish()
-    }
-}
-
-impl<'w, E: Event + TypeGetter> EventReader<'w, E> {
-    pub fn new(world: UnsafeWorldCell<'w>) -> Self {
-        return Self {
-            world,
-            event_id: unsafe { world.read_only() }.get_event_id::<E>(),
-            event_type: PhantomData,
-        };
-    }
-
-    pub fn read(self) -> impl Iterator<Item = E> {
-        if let Some(queue) = unsafe { self.world.read_and_write().events.get_mut(self.event_id) } {
-            queue.read()
-        } else {
-            error!("Event not registered: {}", E::type_name().as_string());
-            panic!();
-        }
+    pub fn read(mut self) -> impl Iterator<Item = E> {
+        self.events.read()
     }
 }
