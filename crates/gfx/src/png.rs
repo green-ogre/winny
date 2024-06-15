@@ -1,7 +1,8 @@
 // TODO: remove
 #![allow(dead_code)]
-use std::{collections::VecDeque, io::Read, path::Path};
+use std::{collections::VecDeque, fs::File, io::Read, path::Path};
 
+use asset::reader::ByteReader;
 use libflate::zlib::Decoder;
 use logger::{error, warn};
 
@@ -218,7 +219,10 @@ impl PNGParser {
                 ChunkType::IDAT => {
                     // 1. Inflate the data using zlib decoder
 
-                    let compressed_data = chunk.reader.read_bytes(chunk.length as usize)?;
+                    let compressed_data = chunk
+                        .reader
+                        .read_bytes(chunk.length as usize)
+                        .map_err(|_| Error::Reader)?;
                     let mut decoder = Decoder::new(compressed_data.as_slice()).map_err(|err| {
                         error!("{err}");
                         Error::Decoding
@@ -464,13 +468,13 @@ impl PNGFormat {
     pub fn from_ihdr_chunk(mut chunk: Chunk) -> Result<Self, Error> {
         debug_assert!(chunk.chunk_type == ChunkType::IHDR);
 
-        let width = chunk.reader.read_u32()?;
-        let height = chunk.reader.read_u32()?;
-        let bit_depth = chunk.reader.read_u8()?;
-        let color_type = chunk.reader.read_u8()?;
-        let compression_method = chunk.reader.read_u8()?;
-        let filter_method = chunk.reader.read_u8()?;
-        let interlace_method = chunk.reader.read_u8()?;
+        let width = chunk.reader.read_u32_be().map_err(|_| Error::Reader)?;
+        let height = chunk.reader.read_u32_be().map_err(|_| Error::Reader)?;
+        let bit_depth = chunk.reader.read_u8().map_err(|_| Error::Reader)?;
+        let color_type = chunk.reader.read_u8().map_err(|_| Error::Reader)?;
+        let compression_method = chunk.reader.read_u8().map_err(|_| Error::Reader)?;
+        let filter_method = chunk.reader.read_u8().map_err(|_| Error::Reader)?;
+        let interlace_method = chunk.reader.read_u8().map_err(|_| Error::Reader)?;
 
         let bytes_per_pixel = match color_type {
             // RGB
@@ -528,11 +532,13 @@ struct Chunk {
 
 impl Chunk {
     pub fn new(file_reader: &mut ByteReader<std::fs::File>) -> Result<Self, Error> {
-        let length = file_reader.read_u32()?;
-        let chunk_type = file_reader.read_bytes(4)?;
-        let data = file_reader.read_bytes(length as usize)?;
+        let length = file_reader.read_u32_be().map_err(|_| Error::Reader)?;
+        let chunk_type = file_reader.read_bytes(4).map_err(|_| Error::Reader)?;
+        let data = file_reader
+            .read_bytes(length as usize)
+            .map_err(|_| Error::Reader)?;
         let reader = ByteReader::new(std::io::BufReader::new(std::io::Cursor::new(data)));
-        let _crc = file_reader.read_u32()?;
+        let _crc = file_reader.read_u32_be().map_err(|_| Error::Reader)?;
 
         let chunk_type = match chunk_type
             .iter()
@@ -665,8 +671,10 @@ impl BitReader {
                 }
             }
         } else {
-            self.byte_buf
-                .push_back((self.byte_reader.read_u8()?, Endian::BE));
+            self.byte_buf.push_back((
+                self.byte_reader.read_u8().map_err(|_| Error::Reader)?,
+                Endian::BE,
+            ));
             self.offset = 0;
             self.byte_buf.back().unwrap().0
         };
@@ -690,8 +698,10 @@ impl BitReader {
         let byte_depth = bit_index / 8;
 
         while self.byte_buf.get(byte_depth).is_none() {
-            self.byte_buf
-                .push_back((self.byte_reader.read_u8()?, Endian::BE));
+            self.byte_buf.push_back((
+                self.byte_reader.read_u8().map_err(|_| Error::Reader)?,
+                Endian::BE,
+            ));
         }
 
         if self.byte_buf[byte_depth].1 == Endian::LE {
@@ -777,86 +787,9 @@ impl BitReader {
     }
 }
 
-struct ByteReader<T: std::io::Read> {
-    buf_reader: std::io::BufReader<T>,
-}
-
-impl<T: std::io::Read> ByteReader<T> {
-    pub fn new(buf_reader: std::io::BufReader<T>) -> Self {
-        Self { buf_reader }
-    }
-
-    pub fn read_bytes(&mut self, bytes_to_read: usize) -> Result<Vec<u8>, Error> {
-        if bytes_to_read == 0 {
-            return Ok(vec![]);
-        }
-
-        let mut buf = vec![0; bytes_to_read];
-        self.buf_reader.read_exact(&mut buf).map_err(|err| {
-            if err.kind() == std::io::ErrorKind::UnexpectedEof {
-                Error::EndOfBuf
-            } else {
-                logger::error!("Failed to read exact: {}", err);
-                Error::Reader
-            }
-        })?;
-
-        Ok(buf)
-    }
-
-    pub fn read_u32(&mut self) -> Result<u32, Error> {
-        let bytes = self.read_bytes(4)?;
-        Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-    }
-
-    pub fn read_u16(&mut self) -> Result<u16, Error> {
-        let bytes = self.read_bytes(2)?;
-        Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
-    }
-
-    pub fn read_u8(&mut self) -> Result<u8, Error> {
-        let bytes = self.read_bytes(1)?;
-        Ok(bytes[0])
-    }
-
-    pub fn read_remaining_bytes(&mut self, buf_capacity: usize) -> Result<Vec<u8>, Error> {
-        let mut buf = Vec::with_capacity(buf_capacity);
-        self.buf_reader
-            .read_to_end(&mut buf)
-            .map_err(|_| Error::Reader)?;
-
-        Ok(buf)
-    }
-
-    pub fn read_null_terminated_string(&mut self) -> Result<String, Error> {
-        let mut buf = Vec::with_capacity(79);
-        loop {
-            let byte = self.read_bytes(1)?;
-            if byte[0] == b'\0' {
-                break;
-            }
-
-            buf.push(byte[0] as char);
-        }
-        Ok(buf.iter().collect())
-    }
-
-    pub fn read_string(&mut self, len: usize) -> Result<String, Error> {
-        let buf = self.read_bytes(len)?;
-        Ok(buf.iter().map(|b| *b as char).collect())
-    }
-}
-
-pub fn to_bytes<P: AsRef<Path>>(path: P) -> Result<(Vec<u8>, (u32, u32)), Error> {
-    let f = std::fs::File::open(path).map_err(|err| {
-        logger::error!("Could not open file: {}", err);
-        Error::InvalidPath
-    })?;
-    let buf_reader = std::io::BufReader::new(f);
-    let mut reader = ByteReader::new(buf_reader);
-
+pub fn to_bytes(mut reader: ByteReader<File>) -> Result<(Vec<u8>, (u32, u32)), Error> {
     let png_signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-    let read_signature = reader.read_bytes(8)?;
+    let read_signature = reader.read_bytes(8).map_err(|_| Error::Reader)?;
 
     if png_signature != *read_signature {
         logger::error!("Provided file is not a png");

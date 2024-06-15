@@ -8,7 +8,6 @@ use self::texture::Texture;
 
 #[cfg(feature = "egui")]
 pub mod gui;
-#[cfg(feature = "png")]
 pub mod png;
 pub mod prelude;
 pub mod renderer;

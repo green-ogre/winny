@@ -174,6 +174,17 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
             .map(|dense_index| &mut self.dense[*dense_index])
     }
 
+    pub fn get_or_insert_with<F>(&mut self, index: I, f: F) -> &V
+    where
+        F: FnOnce() -> V,
+    {
+        if let None = self.get(&index) {
+            self.insert(index, f());
+        }
+
+        self.get(&index).unwrap()
+    }
+
     pub fn indexes(&self) -> &[I] {
         &self.indexes
     }
@@ -184,6 +195,10 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
 
     pub fn values_mut(&mut self) -> &mut [V] {
         &mut self.dense
+    }
+
+    pub fn contains_key(&self, index: &I) -> bool {
+        self.get(&index).is_some()
     }
 
     pub fn len(&self) -> usize {

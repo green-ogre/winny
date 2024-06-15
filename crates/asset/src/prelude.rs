@@ -1,1 +1,1 @@
-pub use crate::{AssetLoader, AssetLoaderPlugin, Handle};
+pub use crate::{AssetLoader, AssetLoaderPlugin, AssetServer, Handle};
