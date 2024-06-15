@@ -44,7 +44,7 @@ impl Column {
     }
 }
 
-pub trait SparseArrayIndex {
+pub trait SparseArrayIndex: Copy {
     fn to_index(&self) -> usize;
 }
 

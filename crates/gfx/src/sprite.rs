@@ -1,3 +1,5 @@
+use asset::{Asset, AssetLoader, Handle, LoadedAsset};
+
 use self::renderer::Renderer;
 
 use super::*;
@@ -37,7 +39,7 @@ impl RGBA {
 #[derive(Debug, Clone, WinnyBundle)]
 pub struct SpriteBundle {
     pub sprite: Sprite,
-    pub sprite_binding: SpriteBinding,
+    pub handle: Handle<Sprite>,
 }
 
 #[derive(Debug, WinnyComponent, Clone, Copy)]
@@ -50,6 +52,8 @@ pub struct Sprite {
     pub v_flip: bool,
     pub z: f32,
 }
+
+impl Asset for Sprite {}
 
 impl Default for Sprite {
     fn default() -> Self {
@@ -156,141 +160,85 @@ impl Vertex for SpriteVertex {
     }
 }
 
-#[derive(Debug, WinnyComponent, Clone)]
-pub struct SpriteBinding {
-    pub path: PathBuf,
+#[derive(Debug)]
+pub struct SpriteData {
+    pub bytes: Vec<u8>,
+    pub dimensions: (u32, u32),
 }
 
-#[derive(Debug)]
-pub struct SpriteBindingRaw {
-    pub texture: Texture,
+impl Asset for SpriteData {}
+
+impl SpriteData {
+    // pub fn write_to_texture(&self, dimensions: (u32, u32), data: &[u8], renderer: &Renderer) {
+    //     let size = wgpu::Extent3d {
+    //         width: dimensions.0,
+    //         height: dimensions.1,
+    //         depth_or_array_layers: 1,
+    //     };
+
+    //     renderer.queue.write_texture(
+    //         self.texture.tex.as_image_copy(),
+    //         &data,
+    //         wgpu::ImageDataLayout {
+    //             offset: 0,
+    //             bytes_per_row: Some(4 * dimensions.0),
+    //             rows_per_image: Some(dimensions.1),
+    //         },
+    //         size,
+    //     );
+    //     renderer.queue.submit([]);
+    // }
+}
+
+#[derive(Debug, WinnyComponent)]
+pub struct SpriteBinding {
     pub bind_group: wgpu::BindGroup,
 }
 
-impl SpriteBindingRaw {
-    pub fn initialize(path: &PathBuf, renderer: &Renderer) -> Result<Self, ()> {
-        let layout = renderer
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("bind group layout for sprite"),
-            });
-
-        let texture = texture::load_texture(path.clone(), &renderer.device, &renderer.queue)
-            .map_err(|_| ())?;
-
-        let bind_group = renderer
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&texture.sampler),
-                    },
-                ],
-                label: Some("bind group for sprite"),
-            });
-
-        Ok(Self {
-            texture,
-            bind_group,
-        })
-    }
-
-    pub fn from_texture(texture: Texture, renderer: &Renderer) -> Self {
-        let layout = renderer
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("bind group layout for sprite"),
-            });
-
-        let bind_group = renderer
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&texture.sampler),
-                    },
-                ],
-                label: Some("bind group for sprite"),
-            });
-
-        Self {
-            texture,
-            bind_group,
-        }
-    }
-
-    pub fn write_to_texture(&self, dimensions: (u32, u32), data: &[u8], renderer: &Renderer) {
-        let size = wgpu::Extent3d {
-            width: dimensions.0,
-            height: dimensions.1,
-            depth_or_array_layers: 1,
-        };
-
-        renderer.queue.write_texture(
-            self.texture.tex.as_image_copy(),
-            &data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * dimensions.0),
-                rows_per_image: Some(dimensions.1),
-            },
-            size,
-        );
-        renderer.queue.submit([]);
-    }
-}
-
 impl SpriteBinding {
-    pub fn new<P: Into<PathBuf>>(path: P) -> Self {
-        Self { path: path.into() }
+    pub fn from_texture(texture: &Texture, renderer: &Renderer) -> Self {
+        let layout = renderer
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("bind group layout for sprite"),
+            });
+
+        let bind_group = renderer
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                    },
+                ],
+                label: Some("bind group for sprite"),
+            });
+
+        Self { bind_group }
     }
 }
 
@@ -320,5 +268,25 @@ impl Vertex for SpriteInstance {
                 },
             ],
         }
+    }
+}
+
+pub struct SpriteAssetLoader;
+
+impl AssetLoader for SpriteAssetLoader {
+    type Asset = SpriteData;
+
+    fn extensions(&self) -> Vec<String> {
+        // TODO: feature flags
+        vec!["png".into()]
+    }
+
+    fn load(
+        reader: asset::reader::ByteReader<std::fs::File>,
+        ext: &str,
+    ) -> Result<asset::LoadedAsset<Self::Asset>, ()> {
+        let (bytes, dimensions) =
+            png::to_bytes(reader).map_err(|err| logger::error!("{:?}", err))?;
+        Ok(LoadedAsset::new(SpriteData { bytes, dimensions }))
     }
 }

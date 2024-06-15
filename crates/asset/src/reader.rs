@@ -52,4 +52,19 @@ impl<R: Read> ByteReader<R> {
         let buf = self.read_bytes(len)?;
         Ok(buf.iter().map(|b| *b as char).collect())
     }
+
+    pub fn read_u8(&mut self) -> Result<u8, Error> {
+        let bytes = self.read_bytes(1)?;
+        Ok(bytes[0])
+    }
+
+    pub fn read_u32_be(&mut self) -> Result<u32, Error> {
+        let bytes = self.read_bytes(4)?;
+        Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    pub fn read_u16_be(&mut self) -> Result<u16, Error> {
+        let bytes = self.read_bytes(2)?;
+        Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
+    }
 }

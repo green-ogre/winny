@@ -1,0 +1,10 @@
+C:\dev\sandbox\winny\crates\audio\target\debug\deps\libwindows_result-7c14273817a4f5a0.rmeta: C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\lib.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\bindings.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\com.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\strings.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\error.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\hresult.rs
+
+C:\dev\sandbox\winny\crates\audio\target\debug\deps\windows_result-7c14273817a4f5a0.d: C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\lib.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\bindings.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\com.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\strings.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\error.rs C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\hresult.rs
+
+C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\lib.rs:
+C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\bindings.rs:
+C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\com.rs:
+C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\strings.rs:
+C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\error.rs:
+C:\Users\genji\.cargo\registry\src\index.crates.io-6f17d22bba15001f\windows-result-0.1.1\src\hresult.rs:

@@ -30,6 +30,7 @@ macro_rules! map_stream_err {
     };
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct AudioStreamHandle(usize);
 
 impl AudioStreamHandle {
