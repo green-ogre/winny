@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use ecs::{WinnyBundle, WinnyComponent};
 
 use winny_math::{matrix::Matrix2x2f, vector::Vec2f};

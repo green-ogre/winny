@@ -1,45 +1,41 @@
-use std::path::PathBuf;
+use crate::sprite::{SpriteBinding, SpriteData};
+use asset::{AssetId, Handle};
+use ecs::{SparseSet, WinnyResource};
 
-#[cfg(feature = "png")]
-use logger::info;
-
-#[cfg(feature = "png")]
-use crate::png;
-
-#[cfg(feature = "png")]
-pub fn load_texture_png(
-    file_name: PathBuf,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<Texture, ()> {
-    info!("Loading texture: {:?}", file_name);
-    let (bytes, dimensions) = png::to_bytes(file_name).map_err(|err| logger::error!("{err}"))?;
-    Ok(Texture::from_bytes(&bytes, dimensions, device, queue))
-}
-
-#[allow(unused)]
-pub fn load_texture(
-    file_name: PathBuf,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<Texture, ()> {
-    let Some(ext) = file_name.extension() else {
-        logger::error!(
-            "Could not determine image extension: {:?}",
-            file_name.as_path()
-        );
-        return Err(());
-    };
-
-    match ext.to_str().unwrap_or_default() {
-        #[cfg(feature = "png")]
-        "png" => load_texture_png(file_name, device, queue),
-        _ => {
-            logger::error!("Cannot parse file format: {:?}", ext);
-            return Err(());
-        }
-    }
-}
+// #[cfg(feature = "png")]
+// pub fn load_texture_png(
+//     file_name: PathBuf,
+//     device: &wgpu::Device,
+//     queue: &wgpu::Queue,
+// ) -> Result<Texture, ()> {
+//     info!("Loading texture: {:?}", file_name);
+//     let (bytes, dimensions) = png::to_bytes(file_name).map_err(|err| logger::error!("{err}"))?;
+//     Ok(Texture::from_bytes(&bytes, dimensions, device, queue))
+// }
+//
+// #[allow(unused)]
+// pub fn load_texture(
+//     file_name: PathBuf,
+//     device: &wgpu::Device,
+//     queue: &wgpu::Queue,
+// ) -> Result<Texture, ()> {
+//     let Some(ext) = file_name.extension() else {
+//         logger::error!(
+//             "Could not determine image extension: {:?}",
+//             file_name.as_path()
+//         );
+//         return Err(());
+//     };
+//
+//     match ext.to_str().unwrap_or_default() {
+//         #[cfg(feature = "png")]
+//         "png" => load_texture_png(file_name, device, queue),
+//         _ => {
+//             logger::error!("Cannot parse file format: {:?}", ext);
+//             return Err(());
+//         }
+//     }
+// }
 
 #[derive(Debug)]
 pub struct Texture {
@@ -106,5 +102,38 @@ impl Texture {
             view,
             sampler,
         }
+    }
+}
+
+#[derive(Debug, WinnyResource)]
+pub struct Textures {
+    storage: SparseSet<AssetId, (Texture, SpriteBinding)>,
+}
+
+impl Textures {
+    pub fn new() -> Self {
+        Self {
+            storage: SparseSet::new(),
+        }
+    }
+
+    pub fn insert(&mut self, handle: &Handle<SpriteData>, texture: Texture, bind: SpriteBinding) {
+        self.storage.insert(handle.id(), (texture, bind));
+    }
+
+    pub fn get_tex(&self, handle: &Handle<SpriteData>) -> Option<&Texture> {
+        self.storage.get(&handle.id()).map(|(t, _)| t)
+    }
+
+    pub fn get_tex_mut(&mut self, handle: &Handle<SpriteData>) -> Option<&mut Texture> {
+        self.storage.get_mut(&handle.id()).map(|(t, _)| t)
+    }
+
+    pub fn contains_key(&self, key: &AssetId) -> bool {
+        self.storage.contains_key(key)
+    }
+
+    pub fn iter_bindings(&self) -> impl Iterator<Item = &SpriteBinding> {
+        self.storage.values().iter().map(|(_, b)| b)
     }
 }

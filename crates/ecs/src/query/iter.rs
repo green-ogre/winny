@@ -40,7 +40,7 @@ impl<'s, T, F> QueryIter<'s, T, F> {
 
         Self {
             query_state,
-            cursor: storage.archetype.entities.iter(),
+            cursor: storage.archetype.entities.values().iter(),
             next_storage: 1,
             storage: Some(storage),
             query: PhantomData,
@@ -79,7 +79,7 @@ impl<'s, T: QueryData, F: Filter> Iterator for QueryIter<'s, T, F> {
             storage.archetype = &next_storage.0;
             storage.table = &next_storage.1;
 
-            self.cursor = storage.archetype.entities.iter();
+            self.cursor = storage.archetype.entities.values().iter();
             let Some(next) = self.cursor.next() else {
                 return None;
             };
@@ -119,7 +119,7 @@ impl<'s, T, F> QueryIterMut<'s, T, F> {
 
         Self {
             query_state,
-            cursor: storage.archetype.entities.iter(),
+            cursor: storage.archetype.entities.values().iter(),
             next_storage: 1,
             storage: Some(storage),
             query: PhantomData,
@@ -158,7 +158,7 @@ impl<'s, T: QueryData, F: Filter> Iterator for QueryIterMut<'s, T, F> {
             storage.archetype = &next_storage.0;
             storage.table = &next_storage.1;
 
-            self.cursor = storage.archetype.entities.iter();
+            self.cursor = storage.archetype.entities.values().iter();
             let Some(next) = self.cursor.next() else {
                 return None;
             };

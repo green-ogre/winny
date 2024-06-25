@@ -2,9 +2,7 @@ use std::any::TypeId;
 
 use super::*;
 
-pub trait Component: 'static + Send + Sync + Debug {
-    // fn component_id() -> ComponentId;
-}
+pub trait Component: 'static + Send + Sync {}
 
 pub trait ComponentStorageType {
     fn storage_type(&self) -> StorageType;

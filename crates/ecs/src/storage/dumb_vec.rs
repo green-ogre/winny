@@ -43,6 +43,49 @@ impl DumbVec {
         }
     }
 
+    pub fn to_new_with_capacity(&self, capacity: usize) -> DumbVec {
+        let alloc_layout = unsafe {
+            Layout::from_size_align_unchecked(
+                self.item_layout.size() * capacity,
+                self.item_layout.align(),
+            )
+        };
+        let ptr = unsafe { std::alloc::alloc(alloc_layout) };
+        let Some(data) = NonNull::new(ptr) else {
+            panic!("Failed to allocate memory of capaity {}!", capacity);
+        };
+
+        Self {
+            capacity,
+            data,
+            len: 0,
+            item_layout: self.item_layout.clone(),
+            drop: self.drop.clone(),
+        }
+    }
+
+    pub fn remove_and_push_other(&mut self, other: &mut DumbVec, src: usize) {
+        if src >= self.len {
+            panic!("removal index exceedes bounds");
+        }
+
+        if other.len >= other.capacity || other.capacity == 0 {
+            other.reserve(1);
+        }
+
+        let size = self.item_layout.size();
+
+        unsafe {
+            {
+                let ptr = self.get_ptr().add(src * size);
+                ptr::copy(ptr, other.get_ptr().add(other.len * size), size);
+                ptr::copy(ptr.add(1 * size), ptr, (self.len - src - 1) * size);
+            }
+            self.len -= 1;
+            other.len += 1;
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -115,6 +158,16 @@ impl DumbVec {
         self.len += 1;
 
         Ok(())
+    }
+
+    pub fn push_erased_unchecked(&mut self, val: *const u8) {
+        if self.len >= self.capacity || self.capacity == 0 {
+            self.reserve(1);
+        }
+
+        let size = self.item_layout.size();
+
+        unsafe { self.get_ptr().add(self.len * size).copy_from(val, size) }
     }
 
     pub fn pop<T>(&mut self) -> Option<T> {

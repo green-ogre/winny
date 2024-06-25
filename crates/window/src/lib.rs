@@ -111,6 +111,7 @@ impl Plugin for WindowPlugin {
                 let _ = event_loop.run(move |event, elwt| match event {
                     winit::event::Event::WindowEvent { event, .. } => {
                         if let Ok(_) = werx.try_recv() {
+                            logger::info!("Exiting");
                             elwt.exit();
                         } else {
                             let _ = wwetx.send(event.clone());
@@ -177,6 +178,7 @@ fn pipe_winit_events(
                     delta.1,
                     mouse_state.last_mouse_position.0,
                     mouse_state.last_mouse_position.1,
+                    None,
                     mouse_state.last_held_key,
                 ));
             }
@@ -260,16 +262,26 @@ fn inner_handle_winit_events(
                 0.0,
                 position.x,
                 position.y,
+                None,
                 mouse_state.last_held_key,
             ));
             mouse_state.last_mouse_position = (position.x, position.y);
         }
         WindowEvent::MouseInput { state, button, .. } => {
+            let mut held = None;
+
             mouse_state.last_held_key = if state == ElementState::Pressed {
-                match button {
+                let button = match button {
                     winit::event::MouseButton::Left => Some(MouseButton::Left),
                     winit::event::MouseButton::Right => Some(MouseButton::Right),
                     _ => None,
+                };
+
+                if button == mouse_state.last_held_key {
+                    held = button;
+                    None
+                } else {
+                    button
                 }
             } else {
                 None
@@ -281,6 +293,7 @@ fn inner_handle_winit_events(
                 mouse_state.last_mouse_position.0,
                 mouse_state.last_mouse_position.1,
                 mouse_state.last_held_key,
+                held,
             ));
         }
         WindowEvent::Resized(new_size) => {

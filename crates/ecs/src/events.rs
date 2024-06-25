@@ -1,5 +1,4 @@
 use self::unsafe_world::UnsafeWorldCell;
-use logger::error;
 use std::marker::PhantomData;
 
 use super::*;

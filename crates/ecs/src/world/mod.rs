@@ -11,9 +11,7 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::{collections::VecDeque, fmt::Debug};
 
-use crate::{
-    Archetype, Component, Event, EventId, Events, Res, ResMut, Resource, Resources, Table,
-};
+use crate::{Archetype, Component, Event, Events, Res, ResMut, Resource, Resources, Table};
 
 use crate::storage::*;
 
@@ -25,9 +23,6 @@ pub struct World {
     pub tables: Tables,
     pub resources: Resources,
 
-    //component_ids: fxhash::FxHashMap<TypeId, ComponentId>,
-    //resource_ids: fxhash::FxHashMap<TypeId, ResourceId>,
-    //event_ids: fxhash::FxHashMap<TypeId, EventId>,
     component_ids: HashMap<TypeId, ComponentId>,
     pub resource_ids: HashMap<TypeId, ResourceId>,
     next_comp_id: usize,
@@ -58,6 +53,10 @@ impl Default for World {
     }
 }
 
+struct UnstoredEntity {
+    storage: SparseSet<ComponentId, DumbVec>,
+}
+
 impl World {
     pub unsafe fn as_unsafe_world<'w>(&self) -> UnsafeWorldCell<'w> {
         UnsafeWorldCell::new(self)
@@ -68,10 +67,23 @@ impl World {
         let meta_location = self.find_or_create_storage(bundle);
 
         let entity = self.new_entity(meta_location);
-        self.archetypes
+
+        let table_row = TableRow(
+            self.tables
+                .get(meta_location.table_id)
+                .expect("must exist")
+                .depth()
+                - 1,
+        );
+
+        let arch_index = self
+            .archetypes
             .get_mut(meta_location.archetype_id)
-            .entities
-            .push(ArchEntity::new(entity, meta_location.table_row));
+            .new_entity(ArchEntity::new(entity, table_row));
+
+        self.entities[entity.index() as usize]
+            .location
+            .archetype_index = arch_index;
 
         entity
     }
@@ -87,19 +99,14 @@ impl World {
     }
 
     fn find_or_create_storage<T: Bundle>(&mut self, bundle: T) -> MetaLocation {
+        let world = unsafe { self.as_unsafe_world() };
         if let Some(arch) = self.archetypes.get_from_type_ids(&mut bundle.type_ids()) {
-            let world = unsafe { self.as_unsafe_world() };
             self.tables
                 .get_mut(arch.table_id)
                 .expect("must exist")
                 .new_entity(bundle, world);
 
-            MetaLocation::new(
-                arch.table_id,
-                TableRow(self.tables.get(arch.table_id).expect("must exist").depth() - 1),
-                arch.id,
-                arch.entities.len().saturating_sub(1),
-            )
+            MetaLocation::new(arch.table_id, arch.id, ArchIndex::new(usize::MAX))
         } else {
             let table_id = self.tables.new_id();
             let arch_id = self.archetypes.new_id();
@@ -121,17 +128,12 @@ impl World {
             );
             self.archetypes.new_archetype(
                 arch_id,
-                Archetype::new(arch_id, table_id, component_ids, component_desc, vec![]),
+                Archetype::new(arch_id, table_id, component_ids, component_desc),
             );
 
-            let arch = self.archetypes.get(arch_id).expect("just constructed");
+            let arch = self.archetypes.get_mut(arch_id);
 
-            MetaLocation::new(
-                arch.table_id,
-                TableRow(self.tables.get(arch.table_id).expect("must exist").depth() - 1),
-                arch.id,
-                arch.entities.len().saturating_sub(1),
-            )
+            MetaLocation::new(arch.table_id, arch.id, ArchIndex::new(usize::MAX))
         }
     }
 
@@ -164,21 +166,16 @@ impl World {
             .and_then(|m| (entity.generation() == m.generation).then_some(m))
     }
 
-    pub fn despawn(&mut self, entity: Entity) -> Result<(), ()> {
-        let Some(meta) = self
-            .entities
-            .get_mut(entity.index() as usize)
-            .and_then(|m| (entity.generation() == m.generation).then_some(m))
-        else {
-            return Ok(());
+    pub fn despawn(&mut self, entity: Entity) {
+        let Some(meta) = self.get_entity_mut(entity) else {
+            logger::error!("Tried to despawn invalid entity");
+            return;
         };
 
         meta.free = true;
         self.free_entities.push(entity.index());
 
-        self.remove_entity(entity)?;
-
-        Ok(())
+        self.remove_entity(entity);
     }
 
     fn check_entity_generation(&self, entity: Entity) -> Result<(), ()> {
@@ -189,7 +186,7 @@ impl World {
         Err(())
     }
 
-    fn remove_entity(&mut self, _entity: Entity) -> Result<(), ()> {
+    fn remove_entity(&mut self, _entity: Entity) {
         // let meta = self.get_entity(entity).ok_or(())?;
 
         // self.tables[meta.location.table_id].len -= 1;
@@ -239,8 +236,137 @@ impl World {
 
         // self.archetypes[meta.location.archetype_id].entities[meta.location.archetype_index].row =
         //     meta.location.table_row;
+    }
 
-        Ok(())
+    pub fn apply_entity_commands(
+        &mut self,
+        entity: Entity,
+        new_ids: Vec<TypeId>,
+        remove_ids: Vec<TypeId>,
+        insert_ids: Vec<TypeId>,
+        mut insert: Vec<InsertComponent>,
+    ) {
+        // Checked by commands before called
+        let entity_meta = self.get_entity(entity).unwrap();
+
+        self.register_components(&new_ids);
+
+        let remove_component_ids = self.get_component_ids(&remove_ids);
+        let component_ids = self.get_component_ids(&new_ids);
+        let current_table = unsafe { self.as_unsafe_world().read_and_write() }
+            .tables
+            .get_mut(entity_meta.location.table_id)
+            .unwrap();
+
+        let current_table_row = self
+            .archetypes
+            .get(entity_meta.location.archetype_id)
+            .unwrap()
+            .get_entity_table_row(entity_meta);
+
+        let meta = if let Some(arch) = self
+            .archetypes
+            .get_from_type_ids(new_ids.clone().as_mut_slice())
+        {
+            for (component_id, type_id) in component_ids.iter().zip(new_ids.iter()) {
+                remove_entity_from_old_storage_and_put_in_new(
+                    {
+                        if insert_ids.contains(type_id) {
+                            &mut insert
+                                .iter_mut()
+                                .find(|i| i.type_id == *type_id)
+                                .unwrap()
+                                .component
+                        } else {
+                            unsafe {
+                                current_table
+                                    .column_mut(*component_id)
+                                    .unwrap()
+                                    .storage_mut()
+                            }
+                        }
+                    },
+                    {
+                        let table = self.tables.get_mut(arch.table_id).expect("must exist");
+                        let column = table.column_mut(*component_id).unwrap();
+                        unsafe { column.storage_mut() }
+                    },
+                    current_table_row.0,
+                );
+            }
+
+            for _component_id in remove_component_ids.iter() {
+                todo!();
+            }
+
+            let table_row = TableRow(
+                self.tables
+                    .get(arch.table_id)
+                    .expect("must exist")
+                    .depth()
+                    .saturating_sub(1),
+            );
+            let arch_index = arch.new_entity(ArchEntity::new(entity, table_row));
+
+            MetaLocation::new(arch.table_id, arch.id, arch_index)
+        } else {
+            let table_id = self.tables.new_id();
+            let arch_id = self.archetypes.new_id();
+            let component_desc = SparseSet::new();
+
+            // TODO: Component desc
+
+            let mut storages = current_table
+                .storage
+                .iter()
+                .filter(|(id, _)| component_ids.contains(id))
+                .map(|(id, c)| (*id, unsafe { c.storage() }.to_new_with_capacity(1)))
+                .collect::<Vec<_>>();
+            storages.extend(
+                insert
+                    .into_iter()
+                    .map(|i| (self.get_component_ids(&[i.type_id])[0], i.component)),
+            );
+
+            for (component_id, type_id) in component_ids.iter().zip(new_ids.iter()) {
+                if !insert_ids.contains(type_id) {
+                    remove_entity_from_old_storage_and_put_in_new(
+                        unsafe {
+                            current_table
+                                .column_mut(*component_id)
+                                .unwrap()
+                                .storage_mut()
+                        },
+                        {
+                            storages
+                                .iter_mut()
+                                .find(|(id, _)| *id == *component_id)
+                                .map(|(_, vec)| vec)
+                                .unwrap()
+                        },
+                        current_table_row.0,
+                    );
+                }
+            }
+
+            self.tables.new_table(table_id, Table::new(storages));
+            self.archetypes.new_archetype(
+                arch_id,
+                Archetype::new(arch_id, table_id, new_ids, component_desc),
+            );
+
+            let arch = self.archetypes.get_mut(arch_id);
+            let table_row = TableRow(0);
+            let arch_index = arch.new_entity(ArchEntity::new(entity, table_row));
+
+            MetaLocation::new(arch.table_id, arch.id, arch_index)
+        };
+
+        self.archetypes
+            .get_mut(entity_meta.location.archetype_id)
+            .remove_entity(entity_meta.location.archetype_index);
+
+        self.entities[entity.index() as usize].location = meta;
     }
 
     pub fn insert_resource<R: Resource>(&mut self, resource: R) {
@@ -254,19 +380,25 @@ impl World {
 
     pub fn resource<R: Resource>(&self) -> Res<'_, R> {
         let type_id = std::any::TypeId::of::<R>();
-        let id = self
-            .resource_ids
-            .get(&type_id)
-            .expect("resource registered");
+        let id = self.resource_ids.get(&type_id).unwrap_or_else(|| {
+            logger::error!(
+                "Plugin: Resource [{}] is not registered",
+                std::any::type_name::<R>().to_string()
+            );
+            panic!();
+        });
         Res::new(unsafe { self.as_unsafe_world() }, *id)
     }
 
     pub fn resource_mut<R: Resource>(&self) -> ResMut<'_, R> {
         let type_id = std::any::TypeId::of::<R>();
-        let id = self
-            .resource_ids
-            .get(&type_id)
-            .expect("resource registered");
+        let id = self.resource_ids.get(&type_id).unwrap_or_else(|| {
+            logger::error!(
+                "Plugin: Resource [{}] is not registered",
+                std::any::type_name::<R>().to_string()
+            );
+            panic!();
+        });
         ResMut::new(unsafe { self.as_unsafe_world() }, *id)
     }
 
@@ -304,4 +436,12 @@ impl World {
             panic!();
         })
     }
+}
+
+fn remove_entity_from_old_storage_and_put_in_new(
+    src: &mut DumbVec,
+    dst: &mut DumbVec,
+    index: usize,
+) {
+    src.remove_and_push_other(dst, index);
 }

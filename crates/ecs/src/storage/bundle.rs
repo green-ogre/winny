@@ -13,8 +13,7 @@ pub enum IntoStorageError {
     IncorrectSparseIndex,
 }
 
-// TODO: get rid of clone
-pub trait Bundle: Debug + Clone {
+pub trait Bundle {
     fn new_storages<'w>(&self, world: UnsafeWorldCell<'w>) -> Vec<(ComponentId, DumbVec)>;
     fn push_storage<'w>(
         self,
@@ -26,7 +25,7 @@ pub trait Bundle: Debug + Clone {
     fn storage_locations(&self) -> Vec<StorageType>;
 }
 
-impl<T: Debug + Clone + Storage + Component + 'static> Bundle for T {
+impl<T: Storage + Component + 'static> Bundle for T {
     fn push_storage<'w>(
         self,
         world: UnsafeWorldCell<'w>,
