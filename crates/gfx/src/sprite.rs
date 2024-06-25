@@ -1,4 +1,4 @@
-use asset::{Asset, AssetLoader, Handle, LoadedAsset};
+use asset::{Asset, AssetLoader, Handle};
 
 use self::renderer::Renderer;
 
@@ -39,7 +39,7 @@ impl RGBA {
 #[derive(Debug, Clone, WinnyBundle)]
 pub struct SpriteBundle {
     pub sprite: Sprite,
-    pub handle: Handle<Sprite>,
+    pub handle: Handle<SpriteData>,
 }
 
 #[derive(Debug, WinnyComponent, Clone, Copy)]
@@ -271,6 +271,7 @@ impl Vertex for SpriteInstance {
     }
 }
 
+// TODO: this is coupled with the renderer right now, need to be pulled apart
 pub struct SpriteAssetLoader;
 
 impl AssetLoader for SpriteAssetLoader {
@@ -283,10 +284,10 @@ impl AssetLoader for SpriteAssetLoader {
 
     fn load(
         reader: asset::reader::ByteReader<std::fs::File>,
-        ext: &str,
-    ) -> Result<asset::LoadedAsset<Self::Asset>, ()> {
-        let (bytes, dimensions) =
-            png::to_bytes(reader).map_err(|err| logger::error!("{:?}", err))?;
-        Ok(LoadedAsset::new(SpriteData { bytes, dimensions }))
+        _ext: &str,
+    ) -> Result<Self::Asset, ()> {
+        let (bytes, dimensions) = png::to_bytes(reader)
+            .map_err(|err| logger::error!("Could not load sprite: {:?}", err))?;
+        Ok(SpriteData { bytes, dimensions })
     }
 }

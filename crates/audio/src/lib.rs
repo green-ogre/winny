@@ -1,11 +1,20 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    fmt::Debug,
+    sync::{
+        mpsc::{Receiver, Sender},
+        Arc,
+    },
+};
 
-use asset::Asset;
+use asset::{Asset, Assets, Handle, LoadedAsset};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    SampleRate,
+    Device, StreamConfig,
 };
-use ecs::{SparseArrayIndex, SparseSet};
+use ecs::{
+    Commands, Entity, Query, Res, ResMut, SparseArrayIndex, WinnyBundle, WinnyComponent,
+    WinnyResource, Without,
+};
 use logger::error;
 use wav::WavFormat;
 
@@ -45,149 +54,291 @@ impl SparseArrayIndex for AudioStreamHandle {
     }
 }
 
+pub enum StreamCommand {
+    Play,
+    Pause,
+    Stop,
+}
+
+#[derive(WinnyResource)]
+pub struct GlobalAudio {
+    pub volume: f32,
+    device: Option<Device>,
+    config: Option<StreamConfig>,
+}
+
+impl GlobalAudio {
+    pub fn new() -> Self {
+        Self {
+            volume: 1.0,
+            device: None,
+            config: None,
+        }
+    }
+
+    pub fn device(&mut self) -> Result<Device, Error> {
+        if self.device.is_some() {
+            Ok(self.device.as_ref().unwrap().clone())
+        } else {
+            let host = cpal::default_host();
+            let device = map_stream_err!(Error::HostNA, host.default_output_device().ok_or(()))?;
+            self.device = Some(device);
+            Ok(self.device.as_ref().unwrap().clone())
+        }
+    }
+
+    pub fn config(&mut self) -> Result<StreamConfig, Error> {
+        if self.config.is_some() {
+            Ok(self.config.as_ref().unwrap().clone())
+        } else {
+            if self.device.is_some() {
+                let mut supported_output_configs = map_stream_err!(
+                    Error::SupportedOutputConfigNA,
+                    self.device.as_ref().unwrap().supported_output_configs()
+                )?;
+                // TODO: find the right one
+                let config = supported_output_configs.nth(2).unwrap();
+                let config = config.with_max_sample_rate().into();
+                self.config = Some(config);
+                Ok(self.config.as_ref().unwrap().clone())
+            } else {
+                Err(Error::HostNA)
+            }
+        }
+    }
+}
+
 pub struct AudioSource {
-    byte_stream: Vec<u8>,
+    bytes: Arc<Vec<u8>>,
     format: WavFormat,
 }
 
 impl Asset for AudioSource {}
 
 impl AudioSource {
-    pub fn new(byte_stream: Vec<u8>, format: WavFormat) -> Self {
+    pub fn new(bytes: Vec<u8>, format: WavFormat) -> Self {
         Self {
-            byte_stream,
+            bytes: Arc::new(bytes),
             format,
         }
+    }
+
+    pub fn stream(
+        &self,
+        device: Device,
+        config: StreamConfig,
+        _playback_settings: PlaybackSettings,
+        commands: Receiver<StreamCommand>,
+    ) -> Result<(), Error> {
+        let volume = 0.5;
+        let mut stream_offset = 0;
+
+        let data = self.bytes.clone();
+        let format = self.format.clone();
+
+        // TODO: resampling
+        let resample_ratio: f64 = format.samples_per_sec as f64 / config.sample_rate.0 as f64;
+        let _playhead = 0.0;
+
+        error!("{} {}", resample_ratio, data.len());
+
+        std::thread::spawn(move || {
+            let (eos_tx, eos_rx) = std::sync::mpsc::channel();
+
+            let stream = map_stream_err!(
+                Error::BuildStream,
+                device.build_output_stream(
+                    &config,
+                    move |output: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                        let bytes_per_sample = format.bits_per_sample as usize / 8;
+                        let mut byte_offset = 0;
+                        let mut end_of_stream = false;
+
+                        for frame in output.chunks_mut(format.channels as usize) {
+                            let stream_index = byte_offset + stream_offset;
+                            for sample in frame.iter_mut() {
+                                if stream_index >= data.len() {
+                                    *sample = 0;
+                                    end_of_stream = true;
+                                } else {
+                                    let mut s = i16::from_le_bytes([
+                                        data[stream_index],
+                                        data[stream_index + 1],
+                                    ]);
+                                    s = (volume * s as f32) as i16;
+                                    *sample = s;
+                                }
+
+                                byte_offset += bytes_per_sample;
+                            }
+                        }
+
+                        let samples_read = output.len();
+                        stream_offset += samples_read * bytes_per_sample;
+
+                        if end_of_stream {
+                            let _ = eos_tx.send(());
+                        }
+                    },
+                    move |err| error!("Error in audio stream: {}", err),
+                    None,
+                )
+            )
+            .unwrap();
+
+            stream.play().map_err(|_| Error::PlayStream).unwrap();
+
+            while let Ok(command) = commands.recv() {
+                match command {
+                    StreamCommand::Play => {}
+                    StreamCommand::Pause => {}
+                    StreamCommand::Stop => {
+                        break;
+                    }
+                }
+
+                if let Ok(_) = eos_rx.try_recv() {
+                    break;
+                }
+            }
+
+            // TODO: streams don't seem to exit
+            logger::info!("Exiting audio stream");
+        });
+
+        Ok(())
     }
 }
 
 impl Debug for AudioSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AudioSource")
-            .field("byte_stream: Vec<u8>", &self.byte_stream.len())
+            .field("bytes: Vec<u8>", &self.bytes.len())
             .field("format", &self.format)
             .finish()
     }
 }
 
-struct Stream(pub cpal::Stream);
+#[derive(WinnyComponent, Clone, Copy)]
+pub struct PlaybackSettings {
+    pub volume: f32,
+    pub speed: f32,
+    pub loop_sample: bool,
+    pub play_on_creation: bool,
+}
 
-// NOTE: Stream can safely implement Send and Sync because only one system
-// can access AudioStream mutably at any given time
-unsafe impl Sync for Stream {}
-unsafe impl Send for Stream {}
-
-impl Stream {
-    pub fn new(raw_stream: cpal::Stream) -> Self {
-        Self(raw_stream)
-    }
-
-    pub fn play(&mut self) -> Result<(), Error> {
-        map_stream_err!(Error::PlayStream, self.0.play())
-    }
-
-    pub fn pause(&mut self) -> Result<(), Error> {
-        map_stream_err!(Error::PauseStream, self.0.pause())
+impl Default for PlaybackSettings {
+    fn default() -> Self {
+        Self {
+            volume: 1.0,
+            speed: 1.0,
+            loop_sample: false,
+            play_on_creation: true,
+        }
     }
 }
 
-struct AudioStreamPlayer {
-    active_streams: SparseSet<AudioStreamHandle, Stream>,
+#[derive(Debug, WinnyComponent, Clone)]
+pub struct AudioPlayback {
+    commands: Sender<StreamCommand>,
 }
 
-impl AudioStreamPlayer {
-    pub fn new(&self, data: Arc<AudioSource>) -> Result<cpal::Stream, Error> {
-        let host = cpal::default_host();
-        let ddevice = map_stream_err!(Error::HostNA, host.default_output_device().ok_or(()))?;
-        let mut supported_output_configs = map_stream_err!(
-            Error::SupportedOutputConfigNA,
-            ddevice.supported_output_configs()
-        )?;
+impl AudioPlayback {
+    pub fn new(
+        source: &LoadedAsset<AudioSource>,
+        playback_settings: PlaybackSettings,
+        global_audio: &mut GlobalAudio,
+    ) -> Result<Self, Error> {
+        let (commands_tx, commands_rx) = std::sync::mpsc::channel();
 
-        // TODO: fix
-        let config = supported_output_configs.nth(2).unwrap();
-        let config = config.with_sample_rate(SampleRate(48000)).into();
+        let device = global_audio.device()?;
+        let config = global_audio.config()?;
 
-        let volume = 0.5;
-        let mut stream_offset = 0;
+        source.stream(device, config, playback_settings, commands_rx)?;
 
-        let stream = map_stream_err!(
-            Error::BuildStream,
-            ddevice.build_output_stream(
-                &config,
-                move |output: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                    let bytes_per_sample = data.format.bits_per_sample as usize / 8;
-                    let mut byte_offset = 0;
+        Ok(Self {
+            commands: commands_tx,
+        })
+    }
 
-                    for frame in output.chunks_mut(data.format.channels as usize) {
-                        let stream_index = byte_offset + stream_offset;
-                        for sample in frame.iter_mut() {
-                            if stream_index >= data.byte_stream.len() {
-                                *sample = 0;
-                            } else {
-                                let mut s = i16::from_le_bytes([
-                                    data.byte_stream[stream_index],
-                                    data.byte_stream[stream_index + 1],
-                                ]);
-                                s = (volume * s as f32) as i16;
-                                *sample = s;
-                            }
+    pub fn play(&self) {
+        let _ = self
+            .commands
+            .send(StreamCommand::Play)
+            .map_err(|err| logger::error!("Could not play audio playback: {:?}", err));
+    }
 
-                            byte_offset += bytes_per_sample;
-                        }
-                    }
+    pub fn pause(&self) {
+        let _ = self
+            .commands
+            .send(StreamCommand::Pause)
+            .map_err(|err| logger::error!("Could not pause audio playback: {:?}", err));
+    }
 
-                    let samples_read = output.len();
-                    stream_offset += samples_read * bytes_per_sample;
-                },
-                move |err| error!("Error in stream: {}", err),
-                None,
-            )
-        )?;
+    pub fn stop(&self) {
+        let _ = self
+            .commands
+            .send(StreamCommand::Stop)
+            .map_err(|err| logger::error!("Could not stop audio playback: {:?}", err));
+    }
+}
 
-        let stream = map_stream_err!(
-            Error::BuildStream,
-            ddevice.build_output_stream(
-                &config,
-                move |output: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                    output.fill(0);
-                },
-                move |err| error!("Error in stream: {}", err),
-                None,
-            )
-        )?;
+#[derive(WinnyBundle, Clone)]
+pub struct AudioBundle {
+    pub handle: Handle<AudioSource>,
+    pub playback_settings: PlaybackSettings,
+}
 
-        Ok(stream)
+fn init_audio_bundle_streams(
+    mut commands: Commands,
+    bundles: Query<(Entity, Handle<AudioSource>, PlaybackSettings), Without<AudioPlayback>>,
+    sources: Res<Assets<AudioSource>>,
+    mut global_audio: ResMut<GlobalAudio>,
+) {
+    for (entity, handle, playback_settings) in bundles.iter() {
+        if let Some(source) = sources.get(handle) {
+            if let Ok(playback) = AudioPlayback::new(source, *playback_settings, &mut global_audio)
+            {
+                commands.get_entity(entity).insert(playback);
+            } else {
+                logger::error!("Could not create playback for audio bundle");
+            }
+        }
     }
 }
 
 struct AudioAssetLoader;
 
-// impl AssetLoader for AudioAssetLoader {
-//     type Asset = AudioSource;
-//
-//     fn load(
-//         &self,
-//         reader: asset::reader::ByteReader<File>,
-//     ) -> Result<LoadedAsset<Self::Asset>, ()> {
-//         let (bytes, format) = wav::load_from_bytes(reader).map_err(|err| {
-//             error!("{:?}", err);
-//             ()
-//         })?;
-//
-//         Ok(LoadedAsset::new(AudioSource::new(bytes, format)))
-//     }
-//
-//     fn extensions(&self) -> Vec<String> {
-//         vec!["wav".into()]
-//     }
-// }
+use app::app::App;
+use app::plugins::Plugin;
+use asset::{AssetApp, AssetLoader};
 
-struct AudioPlugin;
+impl AssetLoader for AudioAssetLoader {
+    type Asset = AudioSource;
 
-// impl Plugin for AudioPlugin {
-//     fn build(&mut self, app: &mut App) {
-//         let loader = AudioAssetLoader {};
-//         app.register_asset_loader::<AudioSource>(loader);
-//     }
-// }
+    fn load(
+        reader: asset::reader::ByteReader<std::fs::File>,
+        _ext: &str,
+    ) -> Result<Self::Asset, ()> {
+        let (bytes, format) = wav::load_from_bytes(reader).map_err(|err| {
+            error!("{:?}", err);
+        })?;
+
+        Ok(AudioSource::new(bytes, format))
+    }
+
+    fn extensions(&self) -> Vec<String> {
+        vec!["wav".into()]
+    }
+}
+
+pub struct AudioPlugin;
+
+impl Plugin for AudioPlugin {
+    fn build(&mut self, app: &mut App) {
+        let loader = AudioAssetLoader {};
+        app.register_asset_loader::<AudioSource>(loader)
+            .add_systems(ecs::Schedule::PreUpdate, init_audio_bundle_streams)
+            .insert_resource(GlobalAudio::new());
+    }
+}

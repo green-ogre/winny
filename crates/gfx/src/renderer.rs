@@ -1,13 +1,15 @@
-use std::{collections::HashMap, path::PathBuf};
-
 use app::{app::App, plugins::Plugin};
-use asset::{Asset, AssetApp, AssetId, Assets, Handle};
-use ecs::{Mut, Query, Res, ResMut, SparseSet, WinnyResource, With};
+use asset::{AssetApp, Assets, Handle};
+use ecs::{Query, Res, ResMut, WinnyResource};
 
 use wgpu::{util::DeviceExt, BindGroupLayout, SurfaceTargetUnsafe};
 use winit::window::Window;
 
-use crate::{sprite::*, Vertex};
+use crate::{
+    sprite::*,
+    texture::{Texture, Textures},
+    Vertex,
+};
 
 const VERTICES: u32 = 3;
 
@@ -37,6 +39,8 @@ impl Plugin for RendererPlugin {
 
         let loader = SpriteAssetLoader {};
         app.register_asset_loader::<SpriteData>(loader);
+
+        app.insert_resource(Textures::new());
     }
 }
 
@@ -58,7 +62,6 @@ impl RendererContext {
 #[derive(Debug, WinnyResource)]
 pub struct Renderer {
     pub window: Window,
-    pub sprite_bindings: SparseSet<AssetId, SpriteBinding>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
@@ -167,7 +170,6 @@ impl Renderer {
         Renderer {
             window,
             num_sprites: 0,
-            sprite_bindings: SparseSet::new(),
             sprite_buffer,
             surface,
             device,
@@ -210,7 +212,7 @@ pub fn create_context(renderer: Res<Renderer>, mut renderer_context: ResMut<Rend
 pub fn render(
     renderer: Res<Renderer>,
     mut renderer_context: ResMut<RendererContext>,
-    handles: Query<Handle<Sprite>, With<Sprite>>,
+    textures: Res<Textures>,
 ) {
     let mut encoder = renderer_context.encoder.take().unwrap();
     let view = renderer_context.view.take().unwrap();
@@ -237,17 +239,9 @@ pub fn render(
     });
 
     let mut offset = 0;
-    for handle in handles.iter() {
+    for binding in textures.iter_bindings() {
         render_pass.set_pipeline(&renderer.render_pipeline);
-        render_pass.set_bind_group(
-            0,
-            &renderer
-                .sprite_bindings
-                .get(&handle.id())
-                .expect("sprite binding added before render pass")
-                .bind_group,
-            &[],
-        );
+        render_pass.set_bind_group(0, &binding.bind_group, &[]);
         render_pass.set_vertex_buffer(0, renderer.vertex_buffer.slice(..));
         render_pass.set_vertex_buffer(1, renderer.sprite_buffer.slice(..));
         render_pass.draw(
@@ -265,14 +259,21 @@ pub fn render(
 pub fn update_sprite_data(
     sprites: Query<(Sprite, Handle<SpriteData>)>,
     assets: ResMut<Assets<SpriteData>>,
+    mut textures: ResMut<Textures>,
     mut renderer: ResMut<Renderer>,
 ) {
     // TODO: Event system to make this do no unnecessary checks
     for (_, handle) in sprites.iter_mut() {
-        if !renderer.sprite_bindings.contains_key(&handle.id()) {
-            if let Some(loaded_sprite) = assets.get(&handle) {
-                let binding = SpriteBinding::from_data(&loaded_sprite.asset, &renderer);
-                renderer.sprite_bindings.insert(handle.id(), binding);
+        if !textures.contains_key(&handle.id()) {
+            if let Some(asset) = assets.get(&handle) {
+                let texture = Texture::from_bytes(
+                    &asset.bytes,
+                    asset.dimensions,
+                    &renderer.device,
+                    &renderer.queue,
+                );
+                let binding = SpriteBinding::from_texture(&texture, &renderer);
+                textures.insert(&handle, texture, binding);
             }
         }
     }

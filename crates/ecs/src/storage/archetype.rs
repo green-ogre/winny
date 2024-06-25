@@ -2,6 +2,8 @@ use std::any::TypeId;
 
 use logger::error;
 
+use crate::EntityMeta;
+
 use super::*;
 
 #[derive(Debug)]
@@ -16,15 +18,17 @@ impl Archetypes {
         }
     }
 
-    pub fn get(&self, id: ArchId) -> Option<&Archetype> {
-        self.archetypes.get(&id)
+    pub fn get_from_type_ids(&mut self, ids: &mut [TypeId]) -> Option<&mut Archetype> {
+        // type_ids sorted on creation
+        ids.sort();
+        self.archetypes
+            .values_mut()
+            .iter_mut()
+            .find(|arch| arch.type_ids.as_slice() == ids)
     }
 
-    pub fn get_from_type_ids(&self, ids: &mut [TypeId]) -> Option<&Archetype> {
-        self.archetypes
-            .iter()
-            .find(|(_, arch)| arch.component_ids.clone().sort() == ids.sort())
-            .map(|(_, arch)| arch)
+    pub fn get(&self, id: ArchId) -> Option<&Archetype> {
+        self.archetypes.get(&id)
     }
 
     pub fn get_mut(&mut self, id: ArchId) -> &mut Archetype {
@@ -66,15 +70,30 @@ impl SparseArrayIndex for ArchId {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ArchIndex(usize);
+
+impl ArchIndex {
+    pub fn new(index: usize) -> Self {
+        Self(index)
+    }
+}
+
+impl SparseArrayIndex for ArchIndex {
+    fn to_index(&self) -> usize {
+        self.0
+    }
+}
+
 #[derive(Debug)]
 pub struct Archetype {
     pub id: ArchId,
     pub table_id: TableId,
 
-    pub component_ids: Vec<TypeId>,
+    pub type_ids: Vec<TypeId>,
     pub component_desc: SparseSet<ComponentId, StorageType>,
 
-    pub entities: Vec<ArchEntity>,
+    pub entities: SparseSet<ArchIndex, ArchEntity>,
 }
 
 #[derive(Debug)]
@@ -93,21 +112,37 @@ impl Archetype {
     pub fn new(
         id: ArchId,
         table_id: TableId,
-        component_ids: Vec<TypeId>,
+        mut type_ids: Vec<TypeId>,
         component_desc: SparseSet<ComponentId, StorageType>,
-        entities: Vec<ArchEntity>,
     ) -> Self {
+        type_ids.sort();
         Self {
             id,
             table_id,
-            component_ids,
+            type_ids,
             component_desc,
-            entities,
+            entities: SparseSet::new(),
         }
     }
 
+    pub fn new_entity(&mut self, arch_entity: ArchEntity) -> ArchIndex {
+        let index = self.entities.insert_in_first_empty(arch_entity);
+        ArchIndex::new(index)
+    }
+
+    pub fn remove_entity(&mut self, index: ArchIndex) {
+        self.entities.remove(&index);
+    }
+
+    pub fn get_entity_table_row(&self, entity: EntityMeta) -> TableRow {
+        self.entities
+            .get(&entity.location.archetype_index)
+            .unwrap()
+            .row
+    }
+
     pub fn contains_type_id<T: Component>(&self) -> bool {
-        self.component_ids.contains(&TypeId::of::<T>())
+        self.type_ids.contains(&TypeId::of::<T>())
     }
 
     pub fn contains_query<T: QueryData>(&self) -> bool {
@@ -115,15 +150,21 @@ impl Archetype {
     }
 
     pub fn contains_id(&self, id: &TypeId) -> bool {
-        self.component_ids.contains(id)
+        self.type_ids.contains(id)
     }
 
     pub fn contains_id_set(&self, components: &[TypeId]) -> bool {
-        components.iter().all(|c| self.component_ids.contains(c))
+        components.iter().all(|c| {
+            if *c == std::any::TypeId::of::<Entity>() {
+                true
+            } else {
+                self.type_ids.contains(c)
+            }
+        })
     }
 
     pub fn comp_set_eq(&self, components: &[TypeId]) -> bool {
-        components.iter().all(|c| self.component_ids.contains(c))
-            && components.len() == self.component_ids.len()
+        components.iter().all(|c| self.type_ids.contains(c))
+            && components.len() == self.type_ids.len()
     }
 }

@@ -17,78 +17,55 @@ impl<O: 'static> Debug for dyn System<Out = O> {
 }
 
 #[derive(Debug)]
-enum SystemNode {
-    Branch(SystemSet),
-    Leaf {
-        system: StoredSystem,
-        condition: Option<StoredCondition>,
-    },
+pub struct ScheduleBuilder {
+    sets: Vec<SystemSet>,
 }
 
-impl SystemNode {
-    pub fn system(system: StoredSystem) -> Self {
-        Self::Leaf {
-            system,
-            condition: None,
-        }
+impl ScheduleBuilder {
+    pub fn new() -> Self {
+        Self { sets: Vec::new() }
     }
 
-    pub fn access(&self) -> Vec<SystemAccess> {
-        match self {
-            Self::Leaf { system, .. } => vec![system.access()],
-            Self::Branch(s) => s.access(),
-        }
+    pub fn push_set(&mut self, set: SystemSet) {
+        self.sets.push(set);
     }
+
+    pub fn build_schedule(self) -> Vec<SystemSet> {
+        flatten_sets(self.sets)
+    }
+}
+
+fn flatten_sets(sets: Vec<SystemSet>) -> Vec<SystemSet> {
+    sets
 }
 
 #[derive(Debug)]
 pub struct SystemSet {
-    nodes: Vec<SystemNode>,
+    systems: Vec<StoredSystem>,
     condition: Option<StoredCondition>,
     chain: bool,
 }
 
 impl SystemSet {
-    pub fn new_system(system: StoredSystem) -> Self {
+    pub fn join_disjoint(sets: Vec<Self>) -> Self {
+        let systems = sets.into_iter().map(|s| s.systems).flatten().collect();
         Self {
-            nodes: vec![SystemNode::system(system)],
-            condition: None,
             chain: false,
+            condition: None,
+            systems,
         }
     }
 
-    pub fn from_nodes(nodes: Vec<SystemNode>) -> Self {
+    pub fn new_system(system: StoredSystem) -> Self {
         Self {
-            nodes,
+            systems: vec![system],
             condition: None,
             chain: false,
         }
     }
 
     fn access(&self) -> Vec<SystemAccess> {
-        self.nodes.iter().map(|s| s.access()).flatten().collect()
-    }
-
-    fn try_into_nodes(&mut self) -> Result<Vec<SystemNode>, ()> {
-        if self.chain || self.condition.is_some() {
-            Err(())
-        } else {
-            Ok(self.nodes.drain(..).collect())
-        }
-    }
-
-    pub fn join_disjoint(sets: Vec<Self>) -> Self {
-        let mut parent_set = SystemSet {
-            nodes: Vec::new(),
-            condition: None,
-            chain: false,
-        };
-
-        parent_set
-            .nodes
-            .extend(sets.into_iter().map(|s| SystemNode::Branch(s)));
-
-        parent_set
+        self.systems.iter().map(|s| s.access()).collect::<Vec<_>>()
     }
 
     pub fn run_if<M, F: IntoCondition<M>>(mut self, condition: F) -> Self {
@@ -102,104 +79,18 @@ impl SystemSet {
     }
 
     pub fn validate_or_panic(&self) {
-        for node in self.nodes.iter() {
-            match node {
-                SystemNode::Branch(ss) => ss.validate_or_panic(),
-                SystemNode::Leaf { system, condition } => {
-                    system.access().validate_or_panic();
-                    if let Some(condition) = condition {
-                        condition.access().is_read_and_write().then(|| panic!());
-                    }
-                }
-            }
+        for system in self.access().iter() {
+            system.validate_or_panic();
         }
     }
 
-    pub fn condense(&mut self) {
-        if self.chain {
-            return;
+    pub fn init(&mut self, world: UnsafeWorldCell<'_>) {
+        for system in self.systems.iter_mut() {
+            system.init(world);
         }
-
-        let mut parent_set = Vec::new();
-        let mut empty_nodes = Vec::new();
-        let mut new_nodes = Vec::new();
-
-        for i in 0..self.nodes.len().saturating_sub(1) {
-            for j in i + 1..self.nodes.len() {
-                if !self.nodes[i].access().iter().any(|a| {
-                    self.nodes[j]
-                        .access()
-                        .iter()
-                        .any(|other| a.conflicts_with(other))
-                }) {
-                    let new_node = match &mut self.nodes[i] {
-                        SystemNode::Leaf { .. } => panic!(),
-                        SystemNode::Branch(s) => {
-                            if let Ok(mut s_nodes) = s.try_into_nodes() {
-                                let s_access = s_nodes
-                                    .iter()
-                                    .map(|n| n.access())
-                                    .flatten()
-                                    .collect::<Vec<_>>();
-
-                                match &mut self.nodes[j] {
-                                    SystemNode::Leaf { .. } => panic!(),
-                                    SystemNode::Branch(b) => {
-                                        if let Ok(mut b_nodes) = b.try_into_nodes() {
-                                            s_nodes.append(&mut b_nodes);
-                                            empty_nodes.push(i);
-                                            empty_nodes.push(j);
-
-                                            let b_access = b_nodes
-                                                .iter()
-                                                .map(|n| n.access())
-                                                .flatten()
-                                                .collect::<Vec<_>>();
-
-                                            if b_access.iter().any(|a| {
-                                                s_access.iter().any(|other| a.conflicts_with(other))
-                                            }) {
-                                                empty_nodes.push(i);
-                                                Some(SystemNode::Branch(SystemSet {
-                                                    nodes: s_nodes,
-                                                    chain: true,
-                                                    condition: None,
-                                                }))
-                                            } else {
-                                                Some(SystemNode::Branch(SystemSet::from_nodes(
-                                                    s_nodes,
-                                                )))
-                                            }
-                                        } else {
-                                            empty_nodes.push(i);
-                                            Some(SystemNode::Branch(SystemSet::from_nodes(s_nodes)))
-                                        }
-                                    }
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                    };
-
-                    if let Some(node) = new_node {
-                        new_nodes.push(node);
-                    }
-                }
-            }
-        }
-
-        parent_set.extend(new_nodes.into_iter());
-        for (i, node) in self.nodes.drain(..).enumerate() {
-            if !empty_nodes.contains(&i) {
-                parent_set.push(node);
-            }
-        }
-
-        self.nodes.append(&mut parent_set);
     }
 
-    pub fn run_tree(&mut self, world: UnsafeWorldCell<'_>) {
+    pub fn run(&mut self, world: UnsafeWorldCell<'_>) {
         if let Some(condition) = &mut self.condition {
             if !condition.run_unsafe(world) {
                 return;
@@ -208,40 +99,21 @@ impl SystemSet {
 
         std::thread::scope(|s| {
             let mut handles = Vec::new();
-            for node in self.nodes.iter_mut() {
-                match node {
-                    SystemNode::Branch(ss) => ss.run_tree(world),
-                    SystemNode::Leaf { system, condition } => {
-                        if let Some(condition) = condition {
-                            if !condition.run_unsafe(world) {
-                                return;
-                            }
-                        }
-                        if self.chain {
-                            system.run_unsafe(world);
-                        } else {
-                            let h = s.spawn(|| system.run_unsafe(world));
-                            handles.push(h);
-                        }
-                    }
+            for system in self.systems.iter_mut() {
+                if self.chain {
+                    system.run_unsafe(world);
+                } else {
+                    let h = s.spawn(|| system.run_unsafe(world));
+                    handles.push(h);
                 }
             }
 
             handles.into_iter().all(|h| {
                 h.join()
-                    .map_err(|err| logger::error!("problem joining system handles: {:?}", err))
+                    .map_err(|err| logger::error!("could not join system handles: {:?}", err))
                     .is_ok()
             });
         });
-    }
-
-    pub fn init_systems(&mut self, world: UnsafeWorldCell<'_>) {
-        for node in self.nodes.iter_mut() {
-            match node {
-                SystemNode::Branch(ss) => ss.init_systems(world),
-                SystemNode::Leaf { system, .. } => system.init(world),
-            }
-        }
     }
 }
 
@@ -252,10 +124,6 @@ pub trait System: Send + Sync + 'static {
     fn name(&self) -> &str;
     fn init<'w>(&self, world: UnsafeWorldCell<'w>);
     fn run_unsafe<'w>(&mut self, world: UnsafeWorldCell<'w>) -> Self::Out;
-}
-
-mod sealed {
-    pub struct Locked;
 }
 
 pub trait SystemParamFunc<Marker, Out>: 'static + Send + Sync {

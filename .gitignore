@@ -1,6 +1,4 @@
 /target
-/crates/ecs/target
-/crates/ecs_derive/target
-/crates/winny_engine/target
+/crates/*/target
 Cargo.lock
 

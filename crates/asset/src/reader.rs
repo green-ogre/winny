@@ -1,11 +1,9 @@
-use std::io::{BufReader, Cursor, Read};
+use std::io::{BufReader, Read};
 
 pub enum Error {
     EndOfBuf,
     Interrupted,
 }
-
-type ByteReaderVec = BufReader<Cursor<Vec<u8>>>;
 
 pub struct ByteReader<R: Read> {
     buf_reader: BufReader<R>,

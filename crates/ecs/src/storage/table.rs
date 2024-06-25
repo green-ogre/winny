@@ -18,6 +18,14 @@ impl Column {
         Self { storage }
     }
 
+    pub unsafe fn storage_mut(&mut self) -> &mut DumbVec {
+        &mut self.storage
+    }
+
+    pub unsafe fn storage(&self) -> &DumbVec {
+        &self.storage
+    }
+
     pub fn len(&self) -> usize {
         self.storage.len()
     }
@@ -111,7 +119,7 @@ pub struct Table {
 }
 
 impl Table {
-    fn new(storages: Vec<(ComponentId, DumbVec)>) -> Self {
+    pub fn new(storages: Vec<(ComponentId, DumbVec)>) -> Self {
         let mut storage = SparseSet::new();
 
         for (component_id, dumb_vec) in storages.into_iter() {
@@ -192,6 +200,10 @@ impl Table {
             .get_mut(&component_id)
             .ok_or_else(|| IntoStorageError::IncorrectSparseIndex)?
             .push(val)?)
+    }
+
+    pub fn column_mut(&mut self, component_id: ComponentId) -> Option<&mut Column> {
+        self.storage.get_mut(&component_id)
     }
 }
 

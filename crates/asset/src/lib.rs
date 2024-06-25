@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::Debug,
     fs::File,
     io::BufReader,
@@ -12,7 +13,6 @@ use ecs::{
     new_dumb_drop, DumbVec, Events, ResMut, SparseArrayIndex, SparseSet, UnsafeWorldCell,
     WinnyComponent, WinnyEvent, WinnyResource,
 };
-use logger::info;
 use reader::ByteReader;
 
 pub mod prelude;
@@ -20,7 +20,7 @@ pub mod reader;
 
 // TODO: could become enum with strong and weak variants which determine
 // dynamic loading behaviour
-#[derive(Clone, WinnyComponent)]
+#[derive(WinnyComponent)]
 pub struct Handle<A: Asset>(AssetId, PhantomData<A>);
 
 impl<A: Asset> Debug for Handle<A> {
@@ -29,6 +29,12 @@ impl<A: Asset> Debug for Handle<A> {
             .field(&self.0)
             .field(&self.1)
             .finish()
+    }
+}
+
+impl<A: Asset> Clone for Handle<A> {
+    fn clone(&self) -> Self {
+        Handle::new(self.id())
     }
 }
 
@@ -42,6 +48,7 @@ impl<A: Asset> Handle<A> {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct ErasedHandle(AssetId);
 
 impl ErasedHandle {
@@ -93,11 +100,33 @@ pub trait Asset: Send + Sync + 'static {}
 #[derive(Debug)]
 pub struct LoadedAsset<A: Asset> {
     pub asset: A,
+    pub path: String,
+    pub handle: ErasedHandle,
 }
 
 impl<A: Asset> LoadedAsset<A> {
-    pub fn new(asset: A) -> Self {
-        Self { asset }
+    pub fn new(asset: A, path: String, handle: ErasedHandle) -> Self {
+        Self {
+            asset,
+            path,
+            handle,
+        }
+    }
+}
+
+use std::ops::{Deref, DerefMut};
+
+impl<A: Asset> Deref for LoadedAsset<A> {
+    type Target = A;
+
+    fn deref(&self) -> &Self::Target {
+        &self.asset
+    }
+}
+
+impl<A: Asset> DerefMut for LoadedAsset<A> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.asset
     }
 }
 
@@ -208,6 +237,7 @@ impl AssetHandleCreator {
 struct AssetLoaders {
     loaders: Vec<InternalAssetLoader>,
     ext_to_loader: Vec<(Vec<String>, usize)>,
+    loaded_assets: HashMap<String, ErasedHandle>,
 }
 
 impl AssetLoaders {
@@ -215,6 +245,7 @@ impl AssetLoaders {
         Self {
             loaders: Vec::new(),
             ext_to_loader: Vec::new(),
+            loaded_assets: HashMap::new(),
         }
     }
 
@@ -232,32 +263,38 @@ impl AssetLoaders {
     }
 
     pub fn load<A: Asset, P: AsRef<Path>>(&mut self, asset_folder: String, path: P) -> Handle<A> {
-        info!("Loading Asset: {:?}", path.as_ref().to_path_buf());
+        if let Some(handle) = self.loaded_assets.get(path.as_ref().to_str().unwrap()) {
+            return handle.into_typed_handle();
+        }
 
         let file_ext = path
             .as_ref()
             .extension()
             .expect("file extension")
             .to_owned();
+        let path = path.as_ref().to_str().unwrap().to_owned();
+
         let loader_index = self
             .ext_to_loader
             .iter()
             .find(|(ext, _)| ext.contains(&file_ext.to_str().unwrap().to_string()))
             .map(|(_, i)| i)
             .expect("valid file");
-        let f = std::fs::File::open(Path::new(&asset_folder).join(path)).expect("valid file");
+        let f =
+            std::fs::File::open(Path::new(&asset_folder).join(path.clone())).expect("valid file");
         let reader = ByteReader::new(BufReader::new(f));
         let internal_loader = &mut self.loaders[*loader_index];
 
-        internal_loader
-            .loader
-            .load(
-                reader,
-                internal_loader.async_dispatch.clone(),
-                &mut internal_loader.handler,
-                file_ext.to_str().unwrap().to_owned(),
-            )
-            .into()
+        let handle = internal_loader.loader.load(
+            reader,
+            internal_loader.async_dispatch.clone(),
+            &mut internal_loader.handler,
+            path.clone(),
+            file_ext.to_str().unwrap().to_owned(),
+        );
+        self.loaded_assets.insert(path, handle.clone());
+
+        handle.into()
     }
 }
 
@@ -296,8 +333,40 @@ impl AssetApp for App {
     fn register_asset_loader<A: Asset>(&mut self, loader: impl AssetLoader) -> &mut Self {
         let assets: Assets<A> = Assets::new();
         self.insert_resource(assets);
-
         self.world_mut().insert_resource(AssetEvents::<A>::new());
+
+        let (asset_result_tx, asset_result_rx) = std::sync::mpsc::channel();
+        let arrx = ecs::threads::ChannelReciever::new(asset_result_rx);
+
+        self.add_systems(
+            ecs::Schedule::PreUpdate,
+            move |asset_events: ResMut<AssetEvents<A>>, mut assets: ResMut<Assets<A>>| {
+                if let Ok(()) = arrx.try_recv() {
+                    for event in asset_events.events.lock().unwrap().read() {
+                        match event {
+                            AssetEvent::Err => {
+                                // TODO: Handle asset errors
+                                logger::error!(
+                                    "Failed to load asset [{}] => {:?}",
+                                    std::any::type_name::<A>(),
+                                    "unknown"
+                                );
+                            }
+                            AssetEvent::Loaded { asset } => {
+                                logger::info!(
+                                    "Loaded asset [{}] => {:?}",
+                                    std::any::type_name::<A>(),
+                                    asset.path
+                                );
+                                let id = asset.handle.id();
+                                assets.insert(asset, id);
+                            }
+                        }
+                    }
+                }
+            },
+        );
+
         let mut asset_event_writer =
             AssetEventWriter::<A>::new(unsafe { self.world().as_unsafe_world() });
 
@@ -308,6 +377,8 @@ impl AssetApp for App {
             } else {
                 AssetEvent::Err
             });
+            // TODO: will this fail sometimes?
+            let _ = asset_result_tx.send(());
         };
 
         let mut server = self.world_mut().resource_mut::<AssetServer>();
@@ -325,7 +396,7 @@ pub enum AssetEvent<A: Asset> {
 
 #[derive(Debug, WinnyResource)]
 pub struct AssetEvents<A: Asset> {
-    events: Mutex<Events<AssetEvent<A>>>,
+    pub events: Mutex<Events<AssetEvent<A>>>,
 }
 
 impl<A: Asset> AssetEvents<A> {
@@ -365,7 +436,7 @@ impl<A: Asset> ErasedAssetEventWriter for AssetEventWriter<'_, A> {}
 pub trait AssetLoader: Send + Sync + 'static {
     type Asset: Asset;
 
-    fn load(reader: ByteReader<File>, ext: &str) -> Result<LoadedAsset<Self::Asset>, ()>;
+    fn load(reader: ByteReader<File>, ext: &str) -> Result<Self::Asset, ()>;
     fn extensions(&self) -> Vec<String>;
 }
 
@@ -375,6 +446,7 @@ pub trait ErasedAssetLoader: Send + Sync + 'static {
         reader: ByteReader<File>,
         sender: Arc<Mutex<AsyncAssetSender>>,
         handler: &mut AssetHandleCreator,
+        path: String,
         ext: String,
     ) -> ErasedHandle;
     fn extensions(&self) -> Vec<String>;
@@ -403,20 +475,29 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
         reader: ByteReader<File>,
         sender: Arc<Mutex<AsyncAssetSender>>,
         handler: &mut AssetHandleCreator,
+        path: String,
         ext: String,
     ) -> ErasedHandle {
+        let handle = handler.new_id();
+
         std::thread::spawn(move || {
-            let asset = L::load(reader, ext.as_str());
+            let asset = if let Ok(asset) = L::load(reader, ext.as_str()) {
+                Ok(LoadedAsset::new(asset, path, handle.clone()))
+            } else {
+                Err(())
+            };
             sender.lock().unwrap().send_result(asset);
         });
 
-        handler.new_id()
+        handle
     }
+
     fn extensions(&self) -> Vec<String> {
         self.extensions()
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct AssetLoaderPlugin {
     pub asset_folder: String,
 }

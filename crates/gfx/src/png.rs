@@ -1,6 +1,6 @@
 // TODO: remove
 #![allow(dead_code)]
-use std::{collections::VecDeque, fs::File, io::Read, path::Path};
+use std::{fs::File, io::Read};
 
 use asset::reader::ByteReader;
 use libflate::zlib::Decoder;
@@ -41,82 +41,82 @@ enum PixelType {
     TrueColor,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct HuffmanEntry {
-    symbol: u16,
-    bits_used: u16,
-}
-
-impl HuffmanEntry {
-    pub fn new(symbol: u16, bits_used: u16) -> Self {
-        Self { symbol, bits_used }
-    }
-}
-
-struct HuffmanTable {
-    entries: Vec<HuffmanEntry>,
-    // in bits
-    max_code_len: u16,
-}
-
-impl HuffmanTable {
-    // pub fn new(
-    //     max_code_len: u16,
-    //     symbol_count: usize,
-    //     symbol_code_len: Vec<u16>,
-    //     symbol_addend: u16,
-    // ) -> Self {
-    //     let mut entries = Vec::new();
-    //     let mut symbol_table = Vec::new();
-
-    //     let mut code_len_hist = vec![16; 0];
-    //     for i in 0..symbol_count {
-    //         code_len_hist[symbol_code_len[i] as usize] += 1;
-    //     }
-
-    //     let mut next_unused_code = vec![16; 0];
-    //     let mut code = 0;
-    //     code_len_hist[0] = 0;
-    //     for i in 1..next_unused_code.len() {
-    //         code = (code + code_len_hist[i - 1]) << 1;
-    //         next_unused_code[i] = code;
-    //     }
-
-    //     for i in 0..symbol_count {
-    //         let code_len_in_bits = symbol_code_len[i];
-    //         if code_len_in_bits == 0 {
-    //             continue;
-    //         }
-    //         debug_assert!((code_len_in_bits as usize) < next_unused_code.len());
-    //         let code = next_unused_code[code_len_in_bits as usize];
-    //         next_unused_code[code_len_in_bits as usize] += 1;
-
-    //         let entry = HuffmanEntry::new(i as u16 + symbol_addend, code_len_in_bits);
-
-    //         let trash_bits = max_code_len - code_len_in_bits;
-    //         for i in 0..(1 << trash_bits) {
-    //             let index = (i << code_len_in_bits) | code;
-    //             entries[index] = entry;
-    //         }
-    //     }
-
-    //     Self {
-    //         entries,
-    //         max_code_len,
-    //     }
-    // }
-
-    pub fn decode_next_symbol(&self, bit_reader: &mut BitReader) -> Result<u16, Error> {
-        let entry_index = bit_reader.peek_bits_be(self.max_code_len as usize)?;
-        let table_len = self.entries.len() as u32;
-        debug_assert!(entry_index < table_len);
-
-        let entry = &self.entries[entry_index as usize];
-        bit_reader.discard_bits(entry.bits_used as usize);
-
-        Ok(entry.symbol)
-    }
-}
+// #[derive(Debug, Clone, Copy)]
+// struct HuffmanEntry {
+//     symbol: u16,
+//     bits_used: u16,
+// }
+//
+// impl HuffmanEntry {
+//     pub fn new(symbol: u16, bits_used: u16) -> Self {
+//         Self { symbol, bits_used }
+//     }
+// }
+//
+// struct HuffmanTable {
+//     entries: Vec<HuffmanEntry>,
+//     // in bits
+//     max_code_len: u16,
+// }
+//
+// impl HuffmanTable {
+//     // pub fn new(
+//     //     max_code_len: u16,
+//     //     symbol_count: usize,
+//     //     symbol_code_len: Vec<u16>,
+//     //     symbol_addend: u16,
+//     // ) -> Self {
+//     //     let mut entries = Vec::new();
+//     //     let mut symbol_table = Vec::new();
+//
+//     //     let mut code_len_hist = vec![16; 0];
+//     //     for i in 0..symbol_count {
+//     //         code_len_hist[symbol_code_len[i] as usize] += 1;
+//     //     }
+//
+//     //     let mut next_unused_code = vec![16; 0];
+//     //     let mut code = 0;
+//     //     code_len_hist[0] = 0;
+//     //     for i in 1..next_unused_code.len() {
+//     //         code = (code + code_len_hist[i - 1]) << 1;
+//     //         next_unused_code[i] = code;
+//     //     }
+//
+//     //     for i in 0..symbol_count {
+//     //         let code_len_in_bits = symbol_code_len[i];
+//     //         if code_len_in_bits == 0 {
+//     //             continue;
+//     //         }
+//     //         debug_assert!((code_len_in_bits as usize) < next_unused_code.len());
+//     //         let code = next_unused_code[code_len_in_bits as usize];
+//     //         next_unused_code[code_len_in_bits as usize] += 1;
+//
+//     //         let entry = HuffmanEntry::new(i as u16 + symbol_addend, code_len_in_bits);
+//
+//     //         let trash_bits = max_code_len - code_len_in_bits;
+//     //         for i in 0..(1 << trash_bits) {
+//     //             let index = (i << code_len_in_bits) | code;
+//     //             entries[index] = entry;
+//     //         }
+//     //     }
+//
+//     //     Self {
+//     //         entries,
+//     //         max_code_len,
+//     //     }
+//     // }
+//
+//     // pub fn decode_next_symbol(&self, bit_reader: &mut BitReader) -> Result<u16, Error> {
+//     //     let entry_index = bit_reader.peek_bits_le(self.max_code_len as usize)?;
+//     //     let table_len = self.entries.len() as u32;
+//     //     debug_assert!(entry_index < table_len);
+//
+//     //     let entry = &self.entries[entry_index as usize];
+//     //     bit_reader.discard_bits(entry.bits_used as usize);
+//
+//     //     Ok(entry.symbol)
+//     // }
+// }
 
 #[derive(Debug)]
 struct PNGParser {
@@ -132,8 +132,14 @@ impl PNGParser {
         let ihdr_chunk = Chunk::new(&mut reader)?;
         let format = PNGFormat::from_ihdr_chunk(ihdr_chunk)?;
 
-        let mut chunks = Vec::new();
+        let mut chunks: Vec<Chunk> = Vec::new();
         loop {
+            if let Some(c) = chunks.last() {
+                if c.chunk_type == ChunkType::IEND {
+                    break;
+                }
+            }
+
             let next_chunk = Chunk::new(&mut reader);
             match next_chunk {
                 Ok(next_chunk) => chunks.push(next_chunk),
@@ -593,15 +599,15 @@ impl std::fmt::Debug for Chunk {
     }
 }
 
-struct Inflater {
-    bit_reader: BitReader,
-    comp_window: usize,
-    cinf: u8,
-    cm: u8,
-    fcheck: u8,
-    fdict: u8,
-    flevel: u8,
-}
+// struct Inflater {
+//     bit_reader: BitReader,
+//     comp_window: usize,
+//     cinf: u8,
+//     cm: u8,
+//     fcheck: u8,
+//     fdict: u8,
+//     flevel: u8,
+// }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Endian {
@@ -609,183 +615,183 @@ enum Endian {
     LE,
 }
 
-struct BitReader {
-    byte_reader: ChunkByteReader,
-    byte_buf: VecDeque<(u8, Endian)>,
-    offset: usize,
-}
-
-impl BitReader {
-    pub fn new(byte_reader: ChunkByteReader) -> Self {
-        Self {
-            byte_reader,
-            byte_buf: VecDeque::new(),
-            offset: 0,
-        }
-    }
-
-    pub fn flush_byte(&mut self) {
-        self.byte_buf.pop_front();
-    }
-
-    pub fn discard_bits(&mut self, num_bits: usize) {
-        let _ = self.read_bits_be(num_bits);
-    }
-
-    // pub fn read_bit_le(&mut self) -> Result<bool, Error> {
-    //     let last_byte = if let Some((last_byte, endian)) = self.byte_buf.front() {
-    //         match endian {
-    //             Endian::LE => *last_byte,
-    //             Endian::BE => {
-    //                 return Err(Error::Decoding);
-    //             }
-    //         }
-    //     } else {
-    //         self.byte_buf
-    //             .push_back((self.byte_reader.read_u8()?, Endian::LE));
-    //         self.offset = 7;
-    //         self.byte_buf.back().unwrap().0
-    //     };
-
-    //     let next_bit = match last_byte >> self.offset & 0b0001 {
-    //         0b001 => true,
-    //         0b000 => false,
-    //         _ => unreachable!(),
-    //     };
-
-    //     if self.offset == 0 {
-    //         self.byte_buf.pop_front();
-    //     } else {
-    //         self.offset -= 1;
-    //     }
-
-    //     Ok(next_bit)
-    // }
-
-    pub fn read_bit_be(&mut self) -> Result<bool, Error> {
-        let last_byte = if let Some((last_byte, endian)) = self.byte_buf.front() {
-            match endian {
-                Endian::BE => *last_byte,
-                Endian::LE => {
-                    return Err(Error::Decoding);
-                }
-            }
-        } else {
-            self.byte_buf.push_back((
-                self.byte_reader.read_u8().map_err(|_| Error::Reader)?,
-                Endian::BE,
-            ));
-            self.offset = 0;
-            self.byte_buf.back().unwrap().0
-        };
-
-        let next_bit = match last_byte >> self.offset & 0b0001 {
-            0b001 => true,
-            0b000 => false,
-            _ => unreachable!(),
-        };
-
-        if self.offset == 7 {
-            self.byte_buf.pop_front();
-        } else {
-            self.offset += 1;
-        }
-
-        Ok(next_bit)
-    }
-
-    pub fn peek_bit_be(&mut self, bit_index: usize) -> Result<bool, Error> {
-        let byte_depth = bit_index / 8;
-
-        while self.byte_buf.get(byte_depth).is_none() {
-            self.byte_buf.push_back((
-                self.byte_reader.read_u8().map_err(|_| Error::Reader)?,
-                Endian::BE,
-            ));
-        }
-
-        if self.byte_buf[byte_depth].1 == Endian::LE {
-            return Err(Error::Decoding);
-        }
-
-        let next_bit = match self.byte_buf[byte_depth].0 >> (bit_index as u8 % 8) & 0b0001 {
-            0b001 => true,
-            0b000 => false,
-            _ => unreachable!(),
-        };
-
-        Ok(next_bit)
-    }
-
-    // pub fn read_bits_le(&mut self, num_bits: usize) -> Result<Vec<bool>, Error> {
-    //     let mut bits = Vec::with_capacity(num_bits);
-    //     for _ in 0..num_bits {
-    //         bits.push(self.read_bit_le()?);
-    //     }
-
-    //     Ok(bits)
-    // }
-
-    pub fn read_bits_be(&mut self, num_bits: usize) -> Result<Vec<bool>, Error> {
-        let mut bits = Vec::with_capacity(num_bits);
-        for _ in 0..num_bits {
-            bits.push(self.read_bit_be()?);
-        }
-
-        bits.reverse();
-
-        Ok(bits)
-    }
-
-    pub fn peek_bits_be(&mut self, num_bits: usize) -> Result<u32, Error> {
-        let mut bits = Vec::with_capacity(num_bits);
-        for i in 0..num_bits {
-            bits.push(self.peek_bit_be(i)?);
-        }
-
-        bits.reverse();
-
-        let mut final_uint = 0;
-        for bit in bits.into_iter() {
-            final_uint <<= 1;
-            if bit {
-                final_uint |= 1;
-            }
-        }
-
-        Ok(final_uint)
-    }
-
-    // pub fn read_bits_to_u8_le(&mut self, num_bits: usize) -> Result<u8, Error> {
-    //     let mut bits = 0;
-    //     for bit in self.read_bits_le(num_bits)?.into_iter() {
-    //         bits <<= 1;
-    //         if bit {
-    //             bits |= 1;
-    //         }
-    //     }
-
-    //     Ok(bits)
-    // }
-
-    pub fn read_bits_to_u8_be(&mut self, num_bits: usize) -> Result<u8, Error> {
-        let mut bits = 0;
-        for bit in self.read_bits_be(num_bits)?.into_iter() {
-            bits <<= 1;
-            if bit {
-                bits |= 1;
-            }
-        }
-
-        Ok(bits)
-    }
-
-    pub fn read_u16_be(&mut self) -> Result<u16, Error> {
-        let b1 = self.read_bits_to_u8_be(4)?;
-        let b2 = self.read_bits_to_u8_be(4)?;
-        Ok(u16::from_be_bytes([b2, b1]))
-    }
-}
+// struct BitReader {
+//     byte_reader: ChunkByteReader,
+//     byte_buf: VecDeque<(u8, Endian)>,
+//     offset: usize,
+// }
+//
+// impl BitReader {
+//     pub fn new(byte_reader: ChunkByteReader) -> Self {
+//         Self {
+//             byte_reader,
+//             byte_buf: VecDeque::new(),
+//             offset: 0,
+//         }
+//     }
+//
+//     pub fn flush_byte(&mut self) {
+//         self.byte_buf.pop_front();
+//     }
+//
+//     pub fn discard_bits(&mut self, num_bits: usize) {
+//         let _ = self.read_bits_le(num_bits);
+//     }
+//
+//     // pub fn read_bit_le(&mut self) -> Result<bool, Error> {
+//     //     let last_byte = if let Some((last_byte, endian)) = self.byte_buf.front() {
+//     //         match endian {
+//     //             Endian::LE => *last_byte,
+//     //             Endian::BE => {
+//     //                 return Err(Error::Decoding);
+//     //             }
+//     //         }
+//     //     } else {
+//     //         self.byte_buf
+//     //             .push_back((self.byte_reader.read_u8()?, Endian::LE));
+//     //         self.offset = 7;
+//     //         self.byte_buf.back().unwrap().0
+//     //     };
+//
+//     //     let next_bit = match last_byte >> self.offset & 0b0001 {
+//     //         0b001 => true,
+//     //         0b000 => false,
+//     //         _ => unreachable!(),
+//     //     };
+//
+//     //     if self.offset == 0 {
+//     //         self.byte_buf.pop_front();
+//     //     } else {
+//     //         self.offset -= 1;
+//     //     }
+//
+//     //     Ok(next_bit)
+//     // }
+//
+//     pub fn read_bit_be(&mut self) -> Result<bool, Error> {
+//         let last_byte = if let Some((last_byte, endian)) = self.byte_buf.front() {
+//             match endian {
+//                 Endian::BE => *last_byte,
+//                 Endian::LE => {
+//                     return Err(Error::Decoding);
+//                 }
+//             }
+//         } else {
+//             self.byte_buf.push_back((
+//                 self.byte_reader.read_u8().map_err(|_| Error::Reader)?,
+//                 Endian::BE,
+//             ));
+//             self.offset = 0;
+//             self.byte_buf.back().unwrap().0
+//         };
+//
+//         let next_bit = match last_byte >> self.offset & 0b0001 {
+//             0b001 => true,
+//             0b000 => false,
+//             _ => unreachable!(),
+//         };
+//
+//         if self.offset == 7 {
+//             self.byte_buf.pop_front();
+//         } else {
+//             self.offset += 1;
+//         }
+//
+//         Ok(next_bit)
+//     }
+//
+//     pub fn peek_bit_be(&mut self, bit_index: usize) -> Result<bool, Error> {
+//         let byte_depth = bit_index / 8;
+//
+//         while self.byte_buf.get(byte_depth).is_none() {
+//             self.byte_buf.push_back((
+//                 self.byte_reader.read_u8().map_err(|_| Error::Reader)?,
+//                 Endian::BE,
+//             ));
+//         }
+//
+//         if self.byte_buf[byte_depth].1 == Endian::LE {
+//             return Err(Error::Decoding);
+//         }
+//
+//         let next_bit = match self.byte_buf[byte_depth].0 >> (bit_index as u8 % 8) & 0b0001 {
+//             0b001 => true,
+//             0b000 => false,
+//             _ => unreachable!(),
+//         };
+//
+//         Ok(next_bit)
+//     }
+//
+//     // pub fn read_bits_le(&mut self, num_bits: usize) -> Result<Vec<bool>, Error> {
+//     //     let mut bits = Vec::with_capacity(num_bits);
+//     //     for _ in 0..num_bits {
+//     //         bits.push(self.read_bit_le()?);
+//     //     }
+//
+//     //     Ok(bits)
+//     // }
+//
+//     pub fn read_bits_be(&mut self, num_bits: usize) -> Result<Vec<bool>, Error> {
+//         let mut bits = Vec::with_capacity(num_bits);
+//         for _ in 0..num_bits {
+//             bits.push(self.read_bit_be()?);
+//         }
+//
+//         bits.reverse();
+//
+//         Ok(bits)
+//     }
+//
+//     pub fn peek_bits_be(&mut self, num_bits: usize) -> Result<u32, Error> {
+//         let mut bits = Vec::with_capacity(num_bits);
+//         for i in 0..num_bits {
+//             bits.push(self.peek_bit_be(i)?);
+//         }
+//
+//         bits.reverse();
+//
+//         let mut final_uint = 0;
+//         for bit in bits.into_iter() {
+//             final_uint <<= 1;
+//             if bit {
+//                 final_uint |= 1;
+//             }
+//         }
+//
+//         Ok(final_uint)
+//     }
+//
+//     // pub fn read_bits_to_u8_le(&mut self, num_bits: usize) -> Result<u8, Error> {
+//     //     let mut bits = 0;
+//     //     for bit in self.read_bits_le(num_bits)?.into_iter() {
+//     //         bits <<= 1;
+//     //         if bit {
+//     //             bits |= 1;
+//     //         }
+//     //     }
+//
+//     //     Ok(bits)
+//     // }
+//
+//     pub fn read_bits_to_u8_be(&mut self, num_bits: usize) -> Result<u8, Error> {
+//         let mut bits = 0;
+//         for bit in self.read_bits_be(num_bits)?.into_iter() {
+//             bits <<= 1;
+//             if bit {
+//                 bits |= 1;
+//             }
+//         }
+//
+//         Ok(bits)
+//     }
+//
+//     pub fn read_u16_be(&mut self) -> Result<u16, Error> {
+//         let b1 = self.read_bits_to_u8_be(4)?;
+//         let b2 = self.read_bits_to_u8_be(4)?;
+//         Ok(u16::from_be_bytes([b2, b1]))
+//     }
+// }
 
 pub fn to_bytes(mut reader: ByteReader<File>) -> Result<(Vec<u8>, (u32, u32)), Error> {
     let png_signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];

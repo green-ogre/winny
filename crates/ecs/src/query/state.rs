@@ -2,7 +2,6 @@ use logger::error;
 
 use super::*;
 
-// TODO: cache state inbetween queries
 pub struct QueryState<T, F> {
     storages: Vec<StorageId>,
     component_access: Vec<ComponentAccess>,
@@ -132,7 +131,7 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
                 )
                 .expect("correct archetype id")
                 .entities
-                .first()
+                .get_single()
                 .ok_or_else(|| {
                     error!("Query could not produce any entities for single");
                     ()
@@ -155,9 +154,9 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
                         .table_id,
                 )
                 .expect("correct table id"),
-            unsafe { world.read_only() }
+            unsafe { world.read_and_write() }
                 .archetypes
-                .get(
+                .get_mut(
                     self.storages
                         .first()
                         .ok_or_else(|| {
@@ -165,9 +164,8 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
                         })?
                         .archetype_id,
                 )
-                .expect("correct index")
                 .entities
-                .first()
+                .get_single_mut()
                 .ok_or_else(|| {
                     error!("Query could not produce any entities for single mut");
                     ()

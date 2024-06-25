@@ -31,5 +31,3 @@ gilrs = ["window/controller"]
 hot_reload = ["dep:hot_reload"]
 
 audio = ["dep:audio"]
-
-png = ["gfx/png"]

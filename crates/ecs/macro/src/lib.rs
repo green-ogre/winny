@@ -1,7 +1,5 @@
 use core::panic;
 use proc_macro2::{Ident, Span};
-use std::hash::Hasher;
-use std::collections::hash_map::DefaultHasher;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};

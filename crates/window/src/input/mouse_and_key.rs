@@ -101,6 +101,7 @@ pub struct MouseInput {
     pub x: f64,
     pub y: f64,
     pub button_pressed: Option<MouseButton>,
+    pub button_held: Option<MouseButton>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,13 +111,21 @@ pub enum MouseButton {
 }
 
 impl MouseInput {
-    pub fn new(dx: f64, dy: f64, x: f64, y: f64, button: Option<MouseButton>) -> Self {
+    pub fn new(
+        dx: f64,
+        dy: f64,
+        x: f64,
+        y: f64,
+        pressed: Option<MouseButton>,
+        held: Option<MouseButton>,
+    ) -> Self {
         Self {
             dx,
             dy,
             x,
             y,
-            button_pressed: button,
+            button_pressed: pressed,
+            button_held: held,
         }
     }
 }

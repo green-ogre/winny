@@ -35,8 +35,14 @@ impl WavParser {
         let fmt_chunk = Chunk::new(reader)?;
         let format = WavFormat::from_fmt_chunk(fmt_chunk)?;
 
-        let mut chunks = Vec::new();
+        let mut chunks: Vec<Chunk> = Vec::new();
         loop {
+            if let Some(c) = chunks.last() {
+                if c.chunk_id == ChunkId::data {
+                    break;
+                }
+            }
+
             let next_chunk = Chunk::new(reader);
             match next_chunk {
                 Ok(next_chunk) => chunks.push(next_chunk),
@@ -57,8 +63,6 @@ impl WavParser {
         // let total_bytes = self.format.width * self.format.height * 4;
         // let mut bytes = Vec::with_capacity(total_bytes as usize);
         let mut bytes = Vec::new();
-
-        println!("{self:#?}");
 
         for mut chunk in self.chunks.into_iter() {
             match chunk.chunk_id {
@@ -92,8 +96,7 @@ impl WavParser {
                 }
 
                 _ => {
-                    println!("Did not parse chunk in PNG: {:?}", chunk.chunk_id);
-                    warn!("Did not parse chunk in PNG: {:?}", chunk.chunk_id);
+                    warn!("Did not parse chunk in WAV: {:?}", chunk.chunk_id);
                 }
             }
         }
@@ -102,7 +105,7 @@ impl WavParser {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(unused)]
 pub struct ExtendedWavFormat {
     pub valid_bits_per_sample: u16,
@@ -110,7 +113,7 @@ pub struct ExtendedWavFormat {
     pub sub_format: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(unused)]
 pub struct WavFormat {
     pub format_code: FormatCode,
@@ -122,7 +125,7 @@ pub struct WavFormat {
     pub extended_format: Option<ExtendedWavFormat>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub enum FormatCode {
     PCM,

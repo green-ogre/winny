@@ -1,9 +1,37 @@
-use core::panic;
-
 use super::*;
 
 #[derive(Debug)]
+struct SchedulerBuilder {
+    pub startup: Option<ScheduleBuilder>,
+    pub platform: Option<ScheduleBuilder>,
+    pub pre_update: Option<ScheduleBuilder>,
+    pub update: Option<ScheduleBuilder>,
+    pub post_update: Option<ScheduleBuilder>,
+    pub render: Option<ScheduleBuilder>,
+    pub flush_events: Option<ScheduleBuilder>,
+    pub exit: Option<ScheduleBuilder>,
+}
+
+impl SchedulerBuilder {
+    pub fn new() -> Self {
+        Self {
+            startup: Some(ScheduleBuilder::new()),
+            platform: Some(ScheduleBuilder::new()),
+            pre_update: Some(ScheduleBuilder::new()),
+            update: Some(ScheduleBuilder::new()),
+            post_update: Some(ScheduleBuilder::new()),
+            render: Some(ScheduleBuilder::new()),
+            flush_events: Some(ScheduleBuilder::new()),
+            exit: Some(ScheduleBuilder::new()),
+        }
+    }
+}
+
+// TODO: fix system tree
+#[derive(Debug)]
 pub struct Scheduler {
+    builder: SchedulerBuilder,
+
     startup: Vec<SystemSet>,
     platform: Vec<SystemSet>,
     pre_update: Vec<SystemSet>,
@@ -17,6 +45,7 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn new() -> Self {
         Self {
+            builder: SchedulerBuilder::new(),
             startup: Vec::new(),
             platform: Vec::new(),
             pre_update: Vec::new(),
@@ -29,36 +58,37 @@ impl Scheduler {
     }
 
     pub fn add_systems<M, S: IntoSystemStorage<M>>(&mut self, schedule: Schedule, systems: S) {
-        let storage = match schedule {
-            Schedule::StartUp => &mut self.startup,
-            Schedule::Platform => &mut self.platform,
-            Schedule::PreUpdate => &mut self.pre_update,
-            Schedule::Update => &mut self.update,
-            Schedule::PostUpdate => &mut self.post_update,
-            Schedule::Render => &mut self.render,
-            Schedule::FlushEvents => &mut self.flush_events,
-            Schedule::Exit => &mut self.exit,
+        let builder = match schedule {
+            Schedule::StartUp => &mut self.builder.startup,
+            Schedule::Platform => &mut self.builder.platform,
+            Schedule::PreUpdate => &mut self.builder.pre_update,
+            Schedule::Update => &mut self.builder.update,
+            Schedule::PostUpdate => &mut self.builder.post_update,
+            Schedule::Render => &mut self.builder.render,
+            Schedule::FlushEvents => &mut self.builder.flush_events,
+            Schedule::Exit => &mut self.builder.exit,
         };
+        let builder = builder.as_mut().unwrap();
 
-        let mut set = systems.into_set();
-        set.validate_or_panic();
-        set.condense();
-
-        storage.push(set);
+        let set = systems.into_set();
+        builder.push_set(set);
     }
 
-    pub fn optimize_schedule(&mut self) {
-        let optimize = |storage: &mut Vec<SystemSet>| {
-            let optimized_set = SystemSet::join_disjoint(storage.drain(..).collect());
-            storage.push(optimized_set)
-        };
-        self.apply_to_all_schedules(optimize)
+    pub fn build_schedule(&mut self) {
+        self.startup = self.builder.startup.take().unwrap().build_schedule();
+        self.platform = self.builder.platform.take().unwrap().build_schedule();
+        self.pre_update = self.builder.pre_update.take().unwrap().build_schedule();
+        self.update = self.builder.update.take().unwrap().build_schedule();
+        self.post_update = self.builder.post_update.take().unwrap().build_schedule();
+        self.render = self.builder.render.take().unwrap().build_schedule();
+        self.flush_events = self.builder.flush_events.take().unwrap().build_schedule();
+        self.exit = self.builder.exit.take().unwrap().build_schedule();
     }
 
     pub fn init_systems(&mut self, world: &World) {
         let init = |storage: &mut Vec<SystemSet>| {
             for set in storage.iter_mut() {
-                set.init_systems(unsafe { world.as_unsafe_world() });
+                set.init(unsafe { world.as_unsafe_world() });
             }
         };
         self.apply_to_all_schedules(init)
@@ -90,7 +120,7 @@ impl Scheduler {
         };
 
         for set in schedule.iter_mut() {
-            unsafe { set.run_tree(world.as_unsafe_world()) };
+            unsafe { set.run(world.as_unsafe_world()) };
         }
     }
 

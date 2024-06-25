@@ -15,7 +15,7 @@ impl NewEntityCommands {
 
 #[derive(Debug)]
 pub struct InsertComponent {
-    pub component: Box<DumbVec>,
+    pub component: DumbVec,
     pub type_id: TypeId,
     pub storage_type: StorageType,
 }
@@ -25,11 +25,7 @@ impl InsertComponent {
         let type_id = std::any::TypeId::of::<T>();
         let storage_type = component.storage_type();
 
-        let mut c = Box::new(DumbVec::new(
-            std::alloc::Layout::new::<T>(),
-            1,
-            new_dumb_drop::<T>(),
-        ));
+        let mut c = DumbVec::new(std::alloc::Layout::new::<T>(), 1, new_dumb_drop::<T>());
         c.push(component).unwrap();
 
         Self {
@@ -75,7 +71,41 @@ impl EntityCommands {
         self.despawn = true;
     }
 
-    pub fn commit<'w>(self, _world: &mut UnsafeWorldCell<'w>) {}
+    pub fn commit<'w>(self, world: &mut UnsafeWorldCell<'w>) {
+        let world = unsafe { world.read_and_write() };
+
+        if self.despawn {
+            world.despawn(self.entity);
+            return;
+        }
+
+        let Some(entity) = world.get_entity(self.entity) else {
+            logger::error!("[EntityCommands] points to invalid [EntityMeta]");
+            return;
+        };
+
+        let insert_ids = self
+            .insert
+            .iter()
+            .map(|i| i.type_id.clone())
+            .collect::<Vec<_>>();
+        let remove_ids = self.remove.clone();
+        let current_ids = world
+            .archetypes
+            .get(entity.location.archetype_id)
+            .unwrap()
+            .type_ids
+            .clone();
+
+        let mut new_ids = current_ids
+            .iter()
+            .filter(|id| !remove_ids.contains(id))
+            .collect::<Vec<_>>();
+        new_ids.extend(insert_ids.iter().filter(|id| !current_ids.contains(id)));
+        let new_ids = new_ids.into_iter().cloned().collect::<Vec<_>>();
+
+        world.apply_entity_commands(self.entity, new_ids, remove_ids, insert_ids, self.insert);
+    }
 }
 
 #[derive(Debug)]
@@ -97,6 +127,8 @@ impl NewResourceCommands {
 }
 
 #[derive(Debug)]
+// TODO: this should be deffered... maybe? At some point, will have to do in sequence anyway unless
+// sorted, which may be slower
 pub struct Commands<'w> {
     world: UnsafeWorldCell<'w>,
     entity_commands: VecDeque<EntityCommands>,
@@ -114,7 +146,6 @@ impl<'w> Commands<'w> {
         }
     }
 
-    // TODO: this should be deffered
     pub fn spawn<T: Bundle + 'static>(&mut self, bundle: T) {
         unsafe { self.world.read_and_write().spawn(bundle) };
 
@@ -126,7 +157,6 @@ impl<'w> Commands<'w> {
 
     pub fn get_entity(&mut self, entity: Entity) -> &mut EntityCommands {
         self.entity_commands.push_back(EntityCommands::new(entity));
-
         self.entity_commands.back_mut().unwrap()
     }
 

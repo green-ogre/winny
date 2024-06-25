@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     collections::VecDeque,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -93,24 +94,27 @@ impl App {
             }
         }
 
-        self.scheduler.optimize_schedule();
+        self.scheduler.build_schedule();
         self.scheduler.init_systems(&self.world);
 
         let mut world = &mut self.world;
         let mut scheduler = &mut self.scheduler;
 
+        println!("{:#?}", scheduler);
+        panic!();
+
         std::thread::scope(|s| {
             let h = s.spawn(move || {
-                println!("{:#?}", scheduler);
                 scheduler.startup(&world);
-                println!("hello");
 
                 let mut start = SystemTime::now();
                 let mut end = SystemTime::now();
                 loop {
                     let dt = DeltaT(end.duration_since(start).unwrap_or_default().as_secs_f64());
                     start = SystemTime::now();
-                    update_ecs(dt, &mut world, &mut scheduler);
+                    if !update_ecs(dt, &mut world, &mut scheduler) {
+                        break;
+                    }
                     end = SystemTime::now();
                 }
             });
@@ -140,7 +144,7 @@ fn set_panic_hook() {
 #[derive(Debug, WinnyResource)]
 pub struct DeltaT(pub f64);
 
-fn update_ecs(delta_t: DeltaT, world: &mut World, scheduler: &mut Scheduler) {
+fn update_ecs(delta_t: DeltaT, world: &mut World, scheduler: &mut Scheduler) -> bool {
     update_delta_t(world, delta_t);
 
     if world
@@ -155,13 +159,14 @@ fn update_ecs(delta_t: DeltaT, world: &mut World, scheduler: &mut Scheduler) {
         run_schedule_and_log(scheduler, &mut perf, world, Schedule::Update);
         run_schedule_and_log(scheduler, &mut perf, world, Schedule::PostUpdate);
         run_schedule_and_log(scheduler, &mut perf, world, Schedule::Render);
-        check_for_exit(world, scheduler);
+        let exit = check_for_exit(world, scheduler);
         run_schedule_and_log(scheduler, &mut perf, world, Schedule::FlushEvents);
         perf.stop();
         *world.resource_mut::<PerfCounter>() = perf;
+        !exit
     } else {
         scheduler.run(world);
-        check_for_exit(world, scheduler);
+        !check_for_exit(world, scheduler)
     }
 }
 
@@ -182,7 +187,7 @@ fn update_delta_t(world: &mut World, delta_t: DeltaT) {
     *dt = delta_t;
 }
 
-fn check_for_exit(world: &mut World, scheduler: &mut Scheduler) {
+fn check_for_exit(world: &mut World, scheduler: &mut Scheduler) -> bool {
     if world
         .resource_mut::<Events<AppExit>>()
         .read()
@@ -190,6 +195,9 @@ fn check_for_exit(world: &mut World, scheduler: &mut Scheduler) {
         .is_some()
     {
         scheduler.run_schedule(ecs::Schedule::Exit, world);
+        true
+    } else {
+        false
     }
 }
 
@@ -355,6 +363,7 @@ impl PerfCounter {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct PerfPlugin;
 
 impl Plugin for PerfPlugin {

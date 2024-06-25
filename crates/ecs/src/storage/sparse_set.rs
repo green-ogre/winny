@@ -43,10 +43,8 @@ impl<V: Debug> SparseArray<V> {
             self.values.push(None);
         }
 
-        // TODO: remove this if it is never proc
         if self.values[index].is_some() {
             warn!("Overwriting data stored in sparse array");
-            println!("{:?}", value);
         }
         self.values[index] = Some(value);
     }
@@ -73,6 +71,13 @@ impl<V: Debug> SparseArray<V> {
 
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.values
+            .iter_mut()
+            .filter(|v| v.is_some())
+            .map(|v| v.as_mut().unwrap())
     }
 }
 
@@ -134,7 +139,7 @@ impl<'a, V: Debug> Iterator for SparseArrayIter<'a, V> {
 //     }
 // }
 
-#[derive(Debug, Default)]
+#[derive(Default, Debug)]
 pub struct SparseSet<I: SparseArrayIndex, V> {
     dense: Vec<V>,
     indexes: Vec<I>,
@@ -185,6 +190,40 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
         self.get(&index).unwrap()
     }
 
+    pub fn remove(&mut self, index: &I) {
+        for i in 0..self.indexes.len() {
+            if self.indexes[i].to_index() == index.to_index() {
+                self.indexes.remove(i);
+                break;
+            }
+        }
+
+        let Some(index) = self.sparse.get(index.to_index()) else {
+            panic!("removal index exceedes bounds");
+        };
+
+        let index = *index;
+
+        self.dense.remove(index);
+        self.sparse.remove(index);
+    }
+
+    pub fn get_single(&self) -> Option<&V> {
+        if self.dense.len() == 1 {
+            Some(&self.dense[0])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_single_mut(&mut self) -> Option<&mut V> {
+        if self.dense.len() == 1 {
+            Some(&mut self.dense[0])
+        } else {
+            None
+        }
+    }
+
     pub fn indexes(&self) -> &[I] {
         &self.indexes
     }
@@ -209,9 +248,12 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
         SparseSetIter::new(self)
     }
 
-    // TODO: iter mut
     // pub fn iter_mut(&self) -> SparseSetIterMut<'_, I, V> {
     //     SparseSetIterMut::new(self)
+    // }
+
+    // pub fn iter_indexes(&self) -> Vec<usize> {
+    //     self.indexes.iter().map(|i| i.to_index()).collect()
     // }
 }
 
@@ -243,13 +285,15 @@ impl<'a, I: SparseArrayIndex, V> Iterator for SparseSetIter<'a, I, V> {
 
 // pub struct SparseSetIterMut<'a, I: SparseArrayIndex, V> {
 //     sparse_set: &'a mut SparseSet<I, V>,
-//     indexes: std::slice::Iter<'a, I>,
+//     indexes: std::vec::IntoIter<&'a I>,
 // }
 //
 // impl<'a, I: SparseArrayIndex, V> SparseSetIterMut<'a, I, V> {
-//     pub fn new(sparse_set: &'a mut SparseSet<I, V>) -> Self {
+//     pub fn new(sparse_set: &'a mut SparseSet<I, V>, indexes: Vec<&'a I>) -> Self {
+//         let indexes = indexes.into_iter();
+//
 //         Self {
-//             indexes: sparse_set.indexes().iter(),
+//             indexes,
 //             sparse_set,
 //         }
 //     }
