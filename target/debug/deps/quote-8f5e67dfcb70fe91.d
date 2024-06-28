@@ -1,0 +1,11 @@
+/Users/nicolasball/dev/sandbox/winny/target/debug/deps/libquote-8f5e67dfcb70fe91.rmeta: /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/lib.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/ext.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/format.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/ident_fragment.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/to_tokens.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/runtime.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/spanned.rs
+
+/Users/nicolasball/dev/sandbox/winny/target/debug/deps/quote-8f5e67dfcb70fe91.d: /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/lib.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/ext.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/format.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/ident_fragment.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/to_tokens.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/runtime.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/spanned.rs
+
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/lib.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/ext.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/format.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/ident_fragment.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/to_tokens.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/runtime.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/quote-1.0.36/src/spanned.rs:

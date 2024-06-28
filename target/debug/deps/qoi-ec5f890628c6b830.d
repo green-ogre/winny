@@ -1,0 +1,13 @@
+/Users/nicolasball/dev/sandbox/winny/target/debug/deps/libqoi-ec5f890628c6b830.rmeta: /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/lib.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/decode.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/encode.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/error.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/header.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/pixel.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/types.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/utils.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/consts.rs
+
+/Users/nicolasball/dev/sandbox/winny/target/debug/deps/qoi-ec5f890628c6b830.d: /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/lib.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/decode.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/encode.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/error.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/header.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/pixel.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/types.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/utils.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/consts.rs
+
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/lib.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/decode.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/encode.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/error.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/header.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/pixel.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/types.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/utils.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/qoi-0.4.1/src/consts.rs:

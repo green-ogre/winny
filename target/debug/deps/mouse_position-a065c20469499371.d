@@ -1,0 +1,9 @@
+/Users/nicolasball/dev/sandbox/winny/target/debug/deps/libmouse_position-a065c20469499371.rmeta: /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/lib.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/impl_linux.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/impl_windows.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/impl_macos.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/mouse_position.rs
+
+/Users/nicolasball/dev/sandbox/winny/target/debug/deps/mouse_position-a065c20469499371.d: /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/lib.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/impl_linux.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/impl_windows.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/impl_macos.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/mouse_position.rs
+
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/lib.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/impl_linux.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/impl_windows.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/impl_macos.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/mouse_position-0.1.3/src/mouse_position.rs:

@@ -1,0 +1,12 @@
+/Users/nicolasball/dev/sandbox/winny/target/debug/deps/libuuid-e74c4af65ca6c650.rmeta: /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/lib.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/builder.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/error.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/parser.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/fmt.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/timestamp.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/external.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/macros.rs
+
+/Users/nicolasball/dev/sandbox/winny/target/debug/deps/uuid-e74c4af65ca6c650.d: /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/lib.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/builder.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/error.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/parser.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/fmt.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/timestamp.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/external.rs /Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/macros.rs
+
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/lib.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/builder.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/error.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/parser.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/fmt.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/timestamp.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/external.rs:
+/Users/nicolasball/.cargo/registry/src/index.crates.io-6f17d22bba15001f/uuid-1.8.0/src/macros.rs:
