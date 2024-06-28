@@ -101,7 +101,6 @@ impl App {
         let mut scheduler = &mut self.scheduler;
 
         println!("{:#?}", scheduler);
-        panic!();
 
         std::thread::scope(|s| {
             let h = s.spawn(move || {

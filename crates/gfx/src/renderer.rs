@@ -1,6 +1,6 @@
 use app::{app::App, plugins::Plugin};
 use asset::{AssetApp, Assets, Handle};
-use ecs::{Query, Res, ResMut, WinnyResource};
+use ecs::{Query, Res, ResMut, WinnyResource, With};
 
 use wgpu::{util::DeviceExt, BindGroupLayout, SurfaceTargetUnsafe};
 use winit::window::Window;
@@ -10,8 +10,6 @@ use crate::{
     texture::{Texture, Textures},
     Vertex,
 };
-
-const VERTICES: u32 = 3;
 
 pub struct RendererPlugin {
     renderer: Option<Renderer>,
@@ -67,11 +65,7 @@ pub struct Renderer {
     pub config: wgpu::SurfaceConfiguration,
     pub size: [u32; 2],
     pub virtual_size: [u32; 2],
-    render_pipeline: wgpu::RenderPipeline,
     surface: wgpu::Surface<'static>,
-    vertex_buffer: wgpu::Buffer,
-    sprite_buffer: wgpu::Buffer,
-    num_sprites: u32,
 }
 
 impl Renderer {
@@ -129,44 +123,6 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        let sprite_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("bind group layout for sprite"),
-            });
-
-        let render_pipeline =
-            create_sprite_render_pipeline(&device, &config, &[&sprite_bind_group_layout]);
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("sprite vertex buffer"),
-            contents: &[],
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let sprite_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Sprite Buffer"),
-            contents: bytemuck::cast_slice::<SpriteInstance, u8>(&[]),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
-
         Renderer {
             window,
             num_sprites: 0,
@@ -209,11 +165,7 @@ pub fn create_context(renderer: Res<Renderer>, mut renderer_context: ResMut<Rend
     renderer_context.output = Some(output);
 }
 
-pub fn render(
-    renderer: Res<Renderer>,
-    mut renderer_context: ResMut<RendererContext>,
-    textures: Res<Textures>,
-) {
+pub fn render(renderer: Res<Renderer>, mut renderer_context: ResMut<RendererContext>) {
     let mut encoder = renderer_context.encoder.take().unwrap();
     let view = renderer_context.view.take().unwrap();
     let output = renderer_context.output.take().unwrap();
@@ -238,105 +190,15 @@ pub fn render(
         timestamp_writes: None,
     });
 
-    let mut offset = 0;
-    for binding in textures.iter_bindings() {
-        render_pass.set_pipeline(&renderer.render_pipeline);
-        render_pass.set_bind_group(0, &binding.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, renderer.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, renderer.sprite_buffer.slice(..));
-        render_pass.draw(
-            offset * VERTICES..offset * VERTICES + VERTICES,
-            offset..offset + 1,
-        );
-        offset += 1;
-    }
+    todo!();
+
     drop(render_pass);
 
     renderer.queue.submit(std::iter::once(encoder.finish()));
     output.present();
 }
 
-pub fn update_sprite_data(
-    sprites: Query<(Sprite, Handle<SpriteData>)>,
-    assets: ResMut<Assets<SpriteData>>,
-    mut textures: ResMut<Textures>,
-    mut renderer: ResMut<Renderer>,
-) {
-    // TODO: Event system to make this do no unnecessary checks
-    for (_, handle) in sprites.iter_mut() {
-        if !textures.contains_key(&handle.id()) {
-            if let Some(asset) = assets.get(&handle) {
-                let texture = Texture::from_bytes(
-                    &asset.bytes,
-                    asset.dimensions,
-                    &renderer.device,
-                    &renderer.queue,
-                );
-                let binding = SpriteBinding::from_texture(&texture, &renderer);
-                textures.insert(&handle, texture, binding);
-            }
-        }
-    }
-
-    let sprite_data = sprites
-        .iter()
-        .map(|(s, _)| s.to_raw(&renderer))
-        .collect::<Vec<_>>();
-
-    renderer.sprite_buffer =
-        renderer
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Sprite Buffer"),
-                contents: bytemuck::cast_slice(&sprite_data),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
-
-    let vertex_data: Vec<_> = sprites
-        .iter()
-        .map(|(s, _)| s.to_vertices())
-        .flatten()
-        .collect();
-
-    renderer.num_sprites = vertex_data.len() as u32 / VERTICES;
-
-    renderer.vertex_buffer =
-        renderer
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sprite vertex buffer"),
-                contents: bytemuck::cast_slice(&vertex_data),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
-}
-
-fn create_sprite_render_pipeline(
-    device: &wgpu::Device,
-    config: &wgpu::SurfaceConfiguration,
-    bind_group_layouts: &[&BindGroupLayout],
-) -> wgpu::RenderPipeline {
-    let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Render Pipeline Layout"),
-        bind_group_layouts,
-        push_constant_ranges: &[],
-    });
-
-    let shader = wgpu::ShaderModuleDescriptor {
-        label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sprite_shader.wgsl").into()),
-    };
-
-    create_render_pipeline(
-        &device,
-        &render_pipeline_layout,
-        config.format,
-        // Some(wgpu::TextureFormat::Depth32Float),
-        &[SpriteVertex::desc(), SpriteInstance::desc()],
-        shader,
-    )
-}
-
-fn create_render_pipeline(
+pub fn create_render_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     color_format: wgpu::TextureFormat,

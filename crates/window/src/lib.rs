@@ -63,16 +63,23 @@ impl Plugin for WindowPlugin {
 
         app.add_systems(
             ecs::Schedule::Render,
-            (gfx::renderer::update_sprite_data, gfx::renderer::render).chain(),
+            (
+                gfx::sprite::bind_new_sprite_bundles,
+                gfx::renderer::update_sprite_data,
+                gfx::renderer::render,
+            )
+                .chain(),
         );
 
         app.add_systems(
             ecs::Schedule::Platform,
             (
-                pipe_winit_events,
-                #[cfg(feature = "controller")]
-                pipe_controller_input,
-                handle_winit_events,
+                (
+                    pipe_winit_events,
+                    #[cfg(feature = "controller")]
+                    pipe_controller_input,
+                    handle_winit_events,
+                ),
                 gfx::renderer::create_context,
             )
                 .chain(),
@@ -129,11 +136,14 @@ impl Plugin for WindowPlugin {
 #[derive(Debug, WinnyResource)]
 struct WindowChannels {
     #[cfg(feature = "controller")]
-    pub cirx: Mutex<Receiver<(ControllerInput, ControllerAxisState)>>,
-    pub wwerx: Mutex<Receiver<WindowEvent>>,
-    pub wderx: Mutex<Receiver<DeviceEvent>>,
-    pub wetx: Mutex<Sender<()>>,
+    pub cirx: Receiver<(ControllerInput, ControllerAxisState)>,
+    pub wwerx: Receiver<WindowEvent>,
+    pub wderx: Receiver<DeviceEvent>,
+    pub wetx: Sender<()>,
 }
+
+unsafe impl Send for WindowChannels {}
+unsafe impl Sync for WindowChannels {}
 
 impl WindowChannels {
     #[cfg(feature = "controller")]
@@ -170,7 +180,7 @@ fn pipe_winit_events(
     mut user_input: EventWriter<MouseInput>,
     mouse_state: Res<MouseState>,
 ) {
-    for event in channels.wderx.lock().unwrap().try_iter() {
+    for event in channels.wderx.try_iter() {
         match event {
             DeviceEvent::MouseMotion { delta } => {
                 user_input.send(MouseInput::new(
@@ -231,7 +241,7 @@ fn handle_winit_events(
     mut app_exit: EventWriter<AppExit>,
     channels: Res<WindowChannels>,
 ) {
-    for event in channels.wwerx.lock().unwrap().try_iter() {
+    for event in channels.wwerx.try_iter() {
         inner_handle_winit_events(
             &mut renderer,
             &mut window_plugin,
@@ -300,7 +310,7 @@ fn inner_handle_winit_events(
             renderer.resize(new_size.into());
         }
         WindowEvent::CloseRequested => {
-            channels.wetx.lock().unwrap().send(()).unwrap();
+            channels.wetx.send(()).unwrap();
             app_exit.send(AppExit);
             return false;
         }
@@ -309,7 +319,7 @@ fn inner_handle_winit_events(
         } => {
             if window_plugin.close_on_escape {
                 if key_event.physical_key == PhysicalKey::Code(winit::keyboard::KeyCode::Escape) {
-                    channels.wetx.lock().unwrap().send(()).unwrap();
+                    channels.wetx.send(()).unwrap();
                     app_exit.send(AppExit);
                     return false;
                 }
@@ -350,10 +360,6 @@ fn spawn_controller_thread(
                 }
 
                 if controller_input_sender
-                    .lock()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
                     .send((ControllerInput::new(input), controller_axis_state))
                     .is_err()
                 {
@@ -371,7 +377,7 @@ fn pipe_controller_input(
     mut controller_axis_state: ResMut<ControllerAxisState>,
 ) {
     for (input, axis_state) in channels.cirx.try_iter() {
-        controller_event.lock().unwrap().send(input);
+        controller_event.send(input);
         *controller_axis_state = axis_state;
     }
 }
