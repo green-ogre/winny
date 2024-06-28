@@ -21,7 +21,7 @@ pub struct InsertComponent {
 }
 
 impl InsertComponent {
-    pub fn new<T: Send + Component + Storage + Clone + Debug>(component: T) -> Self {
+    pub fn new<T: Send + Component + Storage>(component: T) -> Self {
         let type_id = std::any::TypeId::of::<T>();
         let storage_type = component.storage_type();
 
@@ -54,10 +54,7 @@ impl EntityCommands {
         }
     }
 
-    pub fn insert<T: Send + Component + Storage + Debug + Clone>(
-        &mut self,
-        component: T,
-    ) -> &mut Self {
+    pub fn insert<T: Send + Component + Storage>(&mut self, component: T) -> &mut Self {
         self.insert.push(InsertComponent::new(component));
         self
     }

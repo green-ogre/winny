@@ -1,6 +1,8 @@
-use asset::{Asset, AssetLoader, Handle};
+use asset::{Asset, AssetLoader, Assets, Handle};
+use ecs::{Commands, Entity, Query, ResMut, With};
+use wgpu::util::DeviceExt;
 
-use self::renderer::Renderer;
+use self::{prelude::Textures, renderer::Renderer};
 
 use super::*;
 
@@ -36,10 +38,176 @@ impl RGBA {
     }
 }
 
+fn create_sprite_render_pipeline(
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+) -> wgpu::RenderPipeline {
+    let sprite_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+            label: Some("bind group layout for sprite"),
+        });
+
+    let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Render Pipeline Layout"),
+        bind_group_layouts: &[&sprite_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let shader = wgpu::ShaderModuleDescriptor {
+        label: Some("Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sprite_shader.wgsl").into()),
+    };
+
+    crate::renderer::create_render_pipeline(
+        &device,
+        &render_pipeline_layout,
+        config.format,
+        // Some(wgpu::TextureFormat::Depth32Float),
+        &[SpriteVertex::desc(), SpriteInstance::desc()],
+        shader,
+    )
+}
+
+const VERTICES: u32 = 3;
+
+struct SpriteRenderPipeline {
+    vertex_buffer: wgpu::Buffer,
+    sprite_buffer: wgpu::Buffer,
+    num_sprites: u32,
+    render_pipeline: wgpu::RenderPipeline,
+}
+
+impl SpriteRenderPipeline {
+    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
+        let render_pipeline = create_sprite_render_pipeline(device, config);
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sprite vertex buffer"),
+            contents: &[],
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let sprite_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Sprite Buffer"),
+            contents: bytemuck::cast_slice::<SpriteInstance, u8>(&[]),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
+        Self {
+            vertex_buffer,
+            sprite_buffer,
+            num_sprites: 0,
+            render_pipeline,
+        }
+    }
+}
+
+pub fn update_sprite_data(
+    sprites: Query<(Sprite, Handle<SpriteData>), With<SpriteIsBinded>>,
+    renderer: ResMut<Renderer>,
+    mut pipeline: ResMut<SpriteRenderPipeline>,
+) {
+    let sprite_data = sprites
+        .iter()
+        .map(|(s, _)| s.to_raw(&renderer))
+        .collect::<Vec<_>>();
+
+    pipeline.sprite_buffer =
+        renderer
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Sprite Buffer"),
+                contents: bytemuck::cast_slice(&sprite_data),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+
+    let vertex_data: Vec<_> = sprites
+        .iter()
+        .map(|(s, _)| s.to_vertices())
+        .flatten()
+        .collect();
+
+    pipeline.num_sprites = vertex_data.len() as u32 / VERTICES;
+
+    pipeline.vertex_buffer =
+        renderer
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("sprite vertex buffer"),
+                contents: bytemuck::cast_slice(&vertex_data),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+}
+
+fn sprite_render_pass(
+    render_pipeline: &wgpu::RenderPipeline,
+) -> impl FnMut(&wgpu::RenderPass, &Textures) {
+    |render_pass: &wgpu::RenderPass, textures: &Textures| {
+        let mut offset = 0;
+        for binding in textures.iter_bindings() {
+            render_pass.set_pipeline(render_pipeline);
+            render_pass.set_bind_group(0, &binding.bind_group, &[]);
+            render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, sprite_buffer.slice(..));
+            render_pass.draw(
+                offset * VERTICES..offset * VERTICES + VERTICES,
+                offset..offset + 1,
+            );
+            offset += 1;
+        }
+    }
+}
+
+#[derive(WinnyComponent)]
+pub struct SpriteIsBinded;
+
 #[derive(Debug, Clone, WinnyBundle)]
 pub struct SpriteBundle {
     pub sprite: Sprite,
     pub handle: Handle<SpriteData>,
+}
+
+pub fn bind_new_sprite_bundles(
+    sprites: Query<(Entity, Handle<SpriteData>), With<Sprite>>,
+    assets: ResMut<Assets<SpriteData>>,
+    mut textures: ResMut<Textures>,
+    renderer: ResMut<Renderer>,
+    mut commands: Commands,
+) {
+    for (entity, handle) in sprites.iter_mut() {
+        if !textures.contains_key(&handle.id()) {
+            if let Some(asset) = assets.get(&handle) {
+                let texture = Texture::from_bytes(
+                    &asset.bytes,
+                    asset.dimensions,
+                    &renderer.device,
+                    &renderer.queue,
+                );
+                let binding = SpriteBinding::from_texture(&texture, &renderer);
+                textures.insert(&handle, texture, binding);
+            }
+        }
+
+        commands.get_entity(entity).insert(SpriteIsBinded);
+    }
 }
 
 #[derive(Debug, WinnyComponent, Clone, Copy)]
