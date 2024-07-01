@@ -32,7 +32,7 @@ impl Plugin for RendererPlugin {
 
         // HACK: need to add RendererPlugin before all other renderers, but
         // need to call render after all others...
-        app.add_systems(ecs::Schedule::Platform, render);
+        app.add_systems(ecs::Schedule::FlushEvents, render);
     }
 }
 
@@ -42,7 +42,6 @@ fn render(mut renderer: ResMut<Renderer>, mut context: ResMut<RenderContext>) {
 
     context.submit();
     renderer.present();
-    renderer.flush_view();
 }
 
 #[derive(WinnyResource)]
@@ -97,7 +96,7 @@ pub struct Renderer {
     pub config: wgpu::SurfaceConfiguration,
     pub size: [u32; 2],
     pub virtual_size: [u32; 2],
-    view: Option<wgpu::TextureView>,
+    view: Option<(wgpu::SurfaceTexture, wgpu::TextureView)>,
     surface: wgpu::Surface<'static>,
 }
 
@@ -185,37 +184,34 @@ impl Renderer {
         }
     }
 
-    pub fn flush_view(&mut self) {
-        self.view.take();
-    }
-
     pub fn view(&mut self) -> &wgpu::TextureView {
-        self.view.get_or_insert_with(|| {
-            self.surface
-                .get_current_texture()
-                .map_err(|err| {
-                    logger::error!(
-                        "Unable to retrieve renderer surface current texture: {:?}",
-                        err
-                    );
-                })
-                .unwrap()
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
-        })
+        &self
+            .view
+            .get_or_insert_with(|| {
+                let texture = self
+                    .surface
+                    .get_current_texture()
+                    .map_err(|err| {
+                        logger::error!(
+                            "Unable to retrieve renderer surface current texture: {:?}",
+                            err
+                        );
+                    })
+                    .unwrap();
+
+                let view = texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+
+                (texture, view)
+            })
+            .1
     }
 
-    pub fn present(&self) {
-        self.surface
-            .get_current_texture()
-            .map_err(|err| {
-                logger::error!(
-                    "Unable to retrieve renderer surface current texture: {:?}",
-                    err
-                );
-            })
-            .unwrap()
-            .present();
+    pub fn present(&mut self) {
+        if let Some((surface, _)) = self.view.take() {
+            surface.present();
+        }
     }
 }
 

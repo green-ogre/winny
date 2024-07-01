@@ -14,7 +14,7 @@ pub struct AppExit;
 pub struct App {
     world: World,
     scheduler: Scheduler,
-    plugins: Vec<Box<dyn Plugin>>,
+    plugins: VecDeque<Box<dyn Plugin>>,
     window_event_loop: Option<Box<dyn FnOnce()>>,
 }
 
@@ -23,7 +23,7 @@ impl Default for App {
         App {
             world: World::default(),
             scheduler: Scheduler::new(),
-            plugins: Vec::new(),
+            plugins: VecDeque::new(),
             window_event_loop: None,
         }
     }
@@ -31,7 +31,11 @@ impl Default for App {
 
 impl App {
     pub(crate) fn add_plugin_boxed(&mut self, plugin: Box<dyn Plugin>) {
-        self.plugins.push(plugin);
+        self.plugins.push_back(plugin);
+    }
+
+    pub(crate) fn add_plugin_priority_boxed(&mut self, plugin: Box<dyn Plugin>) {
+        self.plugins.push_front(plugin);
     }
 
     pub fn world(&mut self) -> &World {
@@ -45,6 +49,15 @@ impl App {
     pub fn add_plugins<T: PluginSet>(&mut self, plugins: T) -> &mut Self {
         for p in plugins.get().into_iter() {
             self.add_plugin_boxed(p);
+        }
+
+        self
+    }
+
+    // Should be used for plugins that are dependencies of child plugins
+    pub fn add_plugins_priority<T: PluginSet>(&mut self, plugins: T) -> &mut Self {
+        for p in plugins.get().into_iter() {
+            self.add_plugin_priority_boxed(p);
         }
 
         self
@@ -83,14 +96,8 @@ impl App {
         self.world.register_event::<AppExit>();
         self.world.insert_resource(DeltaT(0.0));
 
-        loop {
-            let plugins = self.plugins.drain(..).collect::<Vec<_>>();
-            for mut plugin in plugins {
-                plugin.build(self);
-            }
-            if self.plugins.is_empty() {
-                break;
-            }
+        while let Some(mut plugin) = self.plugins.pop_front() {
+            plugin.build(self);
         }
 
         self.scheduler.build_schedule();
@@ -98,6 +105,8 @@ impl App {
 
         let mut world = &mut self.world;
         let mut scheduler = &mut self.scheduler;
+
+        // println!("{scheduler:#?}");
 
         std::thread::scope(|s| {
             let h = s.spawn(move || {

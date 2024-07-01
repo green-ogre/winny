@@ -491,6 +491,7 @@ impl AssetLoader for SpriteAssetLoader {
     }
 }
 
+#[derive(Clone)]
 pub struct SpritePlugin;
 
 impl Plugin for SpritePlugin {

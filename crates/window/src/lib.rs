@@ -93,7 +93,7 @@ impl Plugin for WindowPlugin {
         let channels = WindowChannels::new(wwerx, wderx, wetx);
 
         app.insert_resource(channels)
-            .add_plugins(RendererPlugin::new(
+            .add_plugins_priority(RendererPlugin::new(
                 window,
                 self.inner_size,
                 self.virtual_size,

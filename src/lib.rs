@@ -5,7 +5,7 @@ use app::{
     plugins::{Plugin, PluginSet},
 };
 use asset::AssetLoaderPlugin;
-use gfx::sprite::SpritePlugin;
+use gfx::{renderer::RendererPlugin, sprite::SpritePlugin};
 use window::WindowPlugin;
 
 pub extern crate app;
@@ -65,6 +65,7 @@ impl Plugin for DefaultPlugins {
             self.window.clone(),
             self.perf.clone(),
             self.asset_loader.clone(),
+            self.sprites.clone(),
         ));
     }
 }
