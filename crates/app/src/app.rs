@@ -1,4 +1,3 @@
-use core::panic;
 use std::{
     collections::VecDeque,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -99,8 +98,6 @@ impl App {
 
         let mut world = &mut self.world;
         let mut scheduler = &mut self.scheduler;
-
-        println!("{:#?}", scheduler);
 
         std::thread::scope(|s| {
             let h = s.spawn(move || {

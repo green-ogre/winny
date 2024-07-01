@@ -1,8 +1,11 @@
-use asset::{Asset, AssetLoader, Assets, Handle};
-use ecs::{Commands, Entity, Query, ResMut, With};
+use app::plugins::Plugin;
+use asset::{Asset, AssetApp, AssetLoader, Assets, Handle};
+use ecs::{Commands, Entity, IntoSystemStorage, Query, Res, ResMut, WinnyResource, With};
+use renderer::RenderContext;
+use texture::Sprites;
 use wgpu::util::DeviceExt;
 
-use self::{prelude::Textures, renderer::Renderer};
+use self::renderer::Renderer;
 
 use super::*;
 
@@ -88,14 +91,15 @@ fn create_sprite_render_pipeline(
 
 const VERTICES: u32 = 3;
 
-struct SpriteRenderPipeline {
+#[derive(Debug, WinnyResource)]
+pub struct SpriteRenderer {
     vertex_buffer: wgpu::Buffer,
     sprite_buffer: wgpu::Buffer,
     num_sprites: u32,
     render_pipeline: wgpu::RenderPipeline,
 }
 
-impl SpriteRenderPipeline {
+impl SpriteRenderer {
     pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
         let render_pipeline = create_sprite_render_pipeline(device, config);
 
@@ -123,14 +127,14 @@ impl SpriteRenderPipeline {
 pub fn update_sprite_data(
     sprites: Query<(Sprite, Handle<SpriteData>), With<SpriteIsBinded>>,
     renderer: ResMut<Renderer>,
-    mut pipeline: ResMut<SpriteRenderPipeline>,
+    mut sprite_renderer: ResMut<SpriteRenderer>,
 ) {
     let sprite_data = sprites
         .iter()
         .map(|(s, _)| s.to_raw(&renderer))
         .collect::<Vec<_>>();
 
-    pipeline.sprite_buffer =
+    sprite_renderer.sprite_buffer =
         renderer
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -145,9 +149,9 @@ pub fn update_sprite_data(
         .flatten()
         .collect();
 
-    pipeline.num_sprites = vertex_data.len() as u32 / VERTICES;
+    sprite_renderer.num_sprites = vertex_data.len() as u32 / VERTICES;
 
-    pipeline.vertex_buffer =
+    sprite_renderer.vertex_buffer =
         renderer
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -157,23 +161,50 @@ pub fn update_sprite_data(
             });
 }
 
-fn sprite_render_pass(
-    render_pipeline: &wgpu::RenderPipeline,
-) -> impl FnMut(&wgpu::RenderPass, &Textures) {
-    |render_pass: &wgpu::RenderPass, textures: &Textures| {
-        let mut offset = 0;
-        for binding in textures.iter_bindings() {
-            render_pass.set_pipeline(render_pipeline);
-            render_pass.set_bind_group(0, &binding.bind_group, &[]);
-            render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, sprite_buffer.slice(..));
-            render_pass.draw(
-                offset * VERTICES..offset * VERTICES + VERTICES,
-                offset..offset + 1,
-            );
-            offset += 1;
-        }
+fn render_sprites(
+    mut renderer: ResMut<Renderer>,
+    mut context: ResMut<RenderContext>,
+    sprite_renderer: Res<SpriteRenderer>,
+    textures: Res<Sprites>,
+) {
+    let view = renderer.view();
+    let mut render_pass = context
+        .encoder()
+        .begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+    let mut offset = 0;
+    for binding in textures.iter_bindings() {
+        render_pass.set_pipeline(&sprite_renderer.render_pipeline);
+        render_pass.set_bind_group(0, &binding.bind_group, &[]);
+        render_pass.set_vertex_buffer(0, sprite_renderer.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, sprite_renderer.sprite_buffer.slice(..));
+        render_pass.draw(
+            offset * VERTICES..offset * VERTICES + VERTICES,
+            offset..offset + 1,
+        );
+        offset += 1;
     }
+
+    drop(render_pass);
+    context.finish_encoder();
 }
 
 #[derive(WinnyComponent)]
@@ -188,7 +219,7 @@ pub struct SpriteBundle {
 pub fn bind_new_sprite_bundles(
     sprites: Query<(Entity, Handle<SpriteData>), With<Sprite>>,
     assets: ResMut<Assets<SpriteData>>,
-    mut textures: ResMut<Textures>,
+    mut textures: ResMut<Sprites>,
     renderer: ResMut<Renderer>,
     mut commands: Commands,
 ) {
@@ -457,5 +488,25 @@ impl AssetLoader for SpriteAssetLoader {
         let (bytes, dimensions) = png::to_bytes(reader)
             .map_err(|err| logger::error!("Could not load sprite: {:?}", err))?;
         Ok(SpriteData { bytes, dimensions })
+    }
+}
+
+pub struct SpritePlugin;
+
+impl Plugin for SpritePlugin {
+    fn build(&mut self, app: &mut app::app::App) {
+        let loader = SpriteAssetLoader {};
+        app.register_asset_loader::<SpriteData>(loader);
+
+        let renderer = app.world_mut().resource_mut::<Renderer>();
+        let sprite_renderer = SpriteRenderer::new(&renderer.device, &renderer.config);
+
+        app.insert_resource(Sprites::new())
+            .insert_resource(sprite_renderer)
+            .add_systems(
+                ecs::Schedule::PostUpdate,
+                (bind_new_sprite_bundles, update_sprite_data).chain(),
+            )
+            .add_systems(ecs::Schedule::Render, render_sprites);
     }
 }
