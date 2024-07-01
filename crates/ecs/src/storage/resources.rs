@@ -120,6 +120,10 @@ impl Resources {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.resources.len()
+    }
+
     pub fn insert<R: Resource>(&mut self, res: R, id: ResourceId) {
         let mut storage = DumbVec::new(std::alloc::Layout::new::<R>(), 1, new_dumb_drop::<R>());
         storage.push(res).unwrap();

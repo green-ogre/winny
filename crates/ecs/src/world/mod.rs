@@ -436,6 +436,17 @@ impl World {
             panic!();
         })
     }
+
+    pub fn print_size(&self) {
+        let archetypes = self.archetypes.len();
+        let tables = self.tables.len();
+        let resources = self.resources.len();
+        let component_ids = self.component_ids.len();
+        let resource_ids = self.resource_ids.len();
+        let entities = self.entities.len();
+
+        logger::info!("archetypes: {archetypes}, tables: {tables}, resources: {resources}, component_ids: {component_ids}, resource_ids: {resource_ids}, entities: {entities}");
+    }
 }
 
 fn remove_entity_from_old_storage_and_put_in_new(

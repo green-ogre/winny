@@ -96,6 +96,10 @@ impl Tables {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.tables.len()
+    }
+
     pub fn new_table(&mut self, id: TableId, table: Table) {
         self.tables.insert(id, table);
     }

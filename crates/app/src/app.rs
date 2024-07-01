@@ -121,6 +121,8 @@ impl App {
                         break;
                     }
                     end = SystemTime::now();
+
+                    // world.print_size();
                 }
             });
 
