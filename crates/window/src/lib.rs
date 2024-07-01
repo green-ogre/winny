@@ -1,7 +1,4 @@
-use std::sync::{
-    mpsc::{channel, Receiver, Sender},
-    Mutex,
-};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 use app::{
     app::{App, AppExit},
@@ -62,25 +59,12 @@ impl Plugin for WindowPlugin {
         app.insert_resource(MouseState::default());
 
         app.add_systems(
-            ecs::Schedule::Render,
-            (
-                gfx::sprite::bind_new_sprite_bundles,
-                gfx::renderer::update_sprite_data,
-                gfx::renderer::render,
-            )
-                .chain(),
-        );
-
-        app.add_systems(
             ecs::Schedule::Platform,
             (
-                (
-                    pipe_winit_events,
-                    #[cfg(feature = "controller")]
-                    pipe_controller_input,
-                    handle_winit_events,
-                ),
-                gfx::renderer::create_context,
+                pipe_winit_events,
+                #[cfg(feature = "controller")]
+                pipe_controller_input,
+                handle_winit_events,
             )
                 .chain(),
         );

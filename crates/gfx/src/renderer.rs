@@ -1,15 +1,10 @@
+use std::sync::Arc;
+
 use app::{app::App, plugins::Plugin};
-use asset::{AssetApp, Assets, Handle};
-use ecs::{Query, Res, ResMut, WinnyResource, With};
+use ecs::{ResMut, WinnyResource, World};
 
-use wgpu::{util::DeviceExt, BindGroupLayout, SurfaceTargetUnsafe};
+use wgpu::SurfaceTargetUnsafe;
 use winit::window::Window;
-
-use crate::{
-    sprite::*,
-    texture::{Texture, Textures},
-    Vertex,
-};
 
 pub struct RendererPlugin {
     renderer: Option<Renderer>,
@@ -29,44 +24,85 @@ impl RendererPlugin {
 
 impl Plugin for RendererPlugin {
     fn build(&mut self, app: &mut App) {
-        let renderer_context = RendererContext::default();
         let renderer = self.renderer.take().unwrap();
+        let renderer_context = RenderContext::new(renderer.device.clone(), renderer.queue.clone());
 
         app.insert_resource(renderer)
             .insert_resource(renderer_context);
 
-        let loader = SpriteAssetLoader {};
-        app.register_asset_loader::<SpriteData>(loader);
-
-        app.insert_resource(Textures::new());
+        // HACK: need to add RendererPlugin before all other renderers, but
+        // need to call render after all others...
+        app.add_systems(ecs::Schedule::Platform, render);
     }
 }
 
-#[derive(Debug, Default, WinnyResource)]
-pub struct RendererContext {
-    pub view: Option<wgpu::TextureView>,
-    pub encoder: Option<wgpu::CommandEncoder>,
-    pub output: Option<wgpu::SurfaceTexture>,
+fn render(mut renderer: ResMut<Renderer>, mut context: ResMut<RenderContext>) {
+    let new_context = RenderContext::new(renderer.device.clone(), renderer.queue.clone());
+    let context = std::mem::replace(&mut *context, new_context);
+
+    context.submit();
+    renderer.present();
+    renderer.flush_view();
 }
 
-impl RendererContext {
-    pub fn destroy(&mut self) {
-        self.view = None;
-        self.encoder = None;
-        self.output = None;
+#[derive(WinnyResource)]
+pub struct RenderContext {
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+    encoder: Option<wgpu::CommandEncoder>,
+    command_buffer: Vec<wgpu::CommandBuffer>,
+}
+
+impl RenderContext {
+    pub fn new(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Self {
+        Self {
+            device,
+            queue,
+            encoder: None,
+            command_buffer: Vec::new(),
+        }
+    }
+
+    pub fn begin_render_pass<'a>(
+        &'a mut self,
+        desc: wgpu::RenderPassDescriptor<'a, '_>,
+    ) -> wgpu::RenderPass<'a> {
+        let encoder = self.encoder();
+        encoder.begin_render_pass(&desc)
+    }
+
+    pub fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
+        self.encoder.get_or_insert(
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default()),
+        )
+    }
+
+    pub fn finish_encoder(&mut self) {
+        if let Some(encoder) = self.encoder.take() {
+            self.command_buffer.push(encoder.finish());
+        }
+    }
+
+    pub fn submit(mut self) {
+        self.queue.submit(self.command_buffer.drain(..));
     }
 }
 
-#[derive(Debug, WinnyResource)]
+#[derive(WinnyResource)]
 pub struct Renderer {
     pub window: Window,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
     pub config: wgpu::SurfaceConfiguration,
     pub size: [u32; 2],
     pub virtual_size: [u32; 2],
+    view: Option<wgpu::TextureView>,
     surface: wgpu::Surface<'static>,
 }
+
+unsafe impl Send for Renderer {}
+unsafe impl Sync for Renderer {}
 
 impl Renderer {
     pub async fn new(window: Window, size: [u32; 2], virtual_size: [u32; 2]) -> Self {
@@ -102,6 +138,9 @@ impl Renderer {
             .await
             .unwrap();
 
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
             .formats
@@ -123,18 +162,17 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
+        let view = None;
+
         Renderer {
             window,
-            num_sprites: 0,
-            sprite_buffer,
             surface,
             device,
             queue,
             config,
             size,
+            view,
             virtual_size,
-            render_pipeline,
-            vertex_buffer,
         }
     }
 
@@ -146,56 +184,53 @@ impl Renderer {
             self.surface.configure(&self.device, &self.config);
         }
     }
+
+    pub fn flush_view(&mut self) {
+        self.view.take();
+    }
+
+    pub fn view(&mut self) -> &wgpu::TextureView {
+        self.view.get_or_insert_with(|| {
+            self.surface
+                .get_current_texture()
+                .map_err(|err| {
+                    logger::error!(
+                        "Unable to retrieve renderer surface current texture: {:?}",
+                        err
+                    );
+                })
+                .unwrap()
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default())
+        })
+    }
+
+    pub fn present(&self) {
+        self.surface
+            .get_current_texture()
+            .map_err(|err| {
+                logger::error!(
+                    "Unable to retrieve renderer surface current texture: {:?}",
+                    err
+                );
+            })
+            .unwrap()
+            .present();
+    }
 }
 
-pub fn create_context(renderer: Res<Renderer>, mut renderer_context: ResMut<RendererContext>) {
-    let output = renderer.surface.get_current_texture().unwrap();
-    let view = output
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
-
-    let encoder = renderer
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
-
-    renderer_context.encoder = Some(encoder);
-    renderer_context.view = Some(view);
-    renderer_context.output = Some(output);
+#[derive(Debug)]
+pub enum RenderStepError {
+    View,
 }
 
-pub fn render(renderer: Res<Renderer>, mut renderer_context: ResMut<RendererContext>) {
-    let mut encoder = renderer_context.encoder.take().unwrap();
-    let view = renderer_context.view.take().unwrap();
-    let output = renderer_context.output.take().unwrap();
-
-    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("Render Pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: &view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 1.0,
-                }),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        occlusion_query_set: None,
-        timestamp_writes: None,
-    });
-
-    todo!();
-
-    drop(render_pass);
-
-    renderer.queue.submit(std::iter::once(encoder.finish()));
-    output.present();
+pub trait RenderStep: Send + Sync + 'static {
+    fn render(
+        &self,
+        view: &wgpu::TextureView,
+        context: &mut RenderContext,
+        world: &World,
+    ) -> Result<(), RenderStepError>;
 }
 
 pub fn create_render_pipeline(

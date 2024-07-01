@@ -106,11 +106,11 @@ impl Texture {
 }
 
 #[derive(Debug, WinnyResource)]
-pub struct Textures {
+pub struct Sprites {
     storage: SparseSet<AssetId, (Texture, SpriteBinding)>,
 }
 
-impl Textures {
+impl Sprites {
     pub fn new() -> Self {
         Self {
             storage: SparseSet::new(),
