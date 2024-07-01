@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use app::{app::App, plugins::Plugin};
-use ecs::{ResMut, WinnyResource, World};
+use ecs::{ResMut, WinnyResource};
 
 use wgpu::SurfaceTargetUnsafe;
 use winit::window::Window;
@@ -25,7 +25,8 @@ impl RendererPlugin {
 impl Plugin for RendererPlugin {
     fn build(&mut self, app: &mut App) {
         let renderer = self.renderer.take().unwrap();
-        let renderer_context = RenderContext::new(renderer.device.clone(), renderer.queue.clone());
+        let renderer_context =
+            RenderContext::new(Arc::clone(&renderer.device), Arc::clone(&renderer.queue));
 
         app.insert_resource(renderer)
             .insert_resource(renderer_context);
@@ -37,9 +38,6 @@ impl Plugin for RendererPlugin {
 }
 
 fn render(mut renderer: ResMut<Renderer>, mut context: ResMut<RenderContext>) {
-    let new_context = RenderContext::new(renderer.device.clone(), renderer.queue.clone());
-    let context = std::mem::replace(&mut *context, new_context);
-
     context.submit();
     renderer.present();
 }
@@ -83,7 +81,7 @@ impl RenderContext {
         }
     }
 
-    pub fn submit(mut self) {
+    pub fn submit(&mut self) {
         self.queue.submit(self.command_buffer.drain(..));
     }
 }
@@ -215,25 +213,10 @@ impl Renderer {
     }
 }
 
-#[derive(Debug)]
-pub enum RenderStepError {
-    View,
-}
-
-pub trait RenderStep: Send + Sync + 'static {
-    fn render(
-        &self,
-        view: &wgpu::TextureView,
-        context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), RenderStepError>;
-}
-
 pub fn create_render_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     color_format: wgpu::TextureFormat,
-    // depth_format: Option<wgpu::TextureFormat>,
     vertex_layouts: &[wgpu::VertexBufferLayout],
     shader: wgpu::ShaderModuleDescriptor,
 ) -> wgpu::RenderPipeline {

@@ -133,32 +133,45 @@ pub fn update_sprite_data(
         .iter()
         .map(|(s, _)| s.to_raw(&renderer))
         .collect::<Vec<_>>();
+    let sprite_data = bytemuck::cast_slice(&sprite_data);
 
-    sprite_renderer.sprite_buffer =
+    if sprite_data.len() == sprite_renderer.sprite_buffer.size() as usize {
         renderer
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Sprite Buffer"),
-                contents: bytemuck::cast_slice(&sprite_data),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            .queue
+            .write_buffer(&sprite_renderer.sprite_buffer, 0, sprite_data);
+    } else {
+        sprite_renderer.sprite_buffer =
+            renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite instance"),
+                    contents: sprite_data,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
+    }
 
     let vertex_data: Vec<_> = sprites
         .iter()
         .map(|(s, _)| s.to_vertices())
         .flatten()
         .collect();
-
     sprite_renderer.num_sprites = vertex_data.len() as u32 / VERTICES;
+    let vertex_data = bytemuck::cast_slice(&vertex_data);
 
-    sprite_renderer.vertex_buffer =
+    if vertex_data.len() == sprite_renderer.vertex_buffer.size() as usize {
         renderer
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sprite vertex buffer"),
-                contents: bytemuck::cast_slice(&vertex_data),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            .queue
+            .write_buffer(&sprite_renderer.vertex_buffer, 0, vertex_data);
+    } else {
+        sprite_renderer.vertex_buffer =
+            renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite vertex"),
+                    contents: vertex_data,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
+    }
 }
 
 fn render_sprites(
@@ -171,15 +184,15 @@ fn render_sprites(
     let mut render_pass = context
         .encoder()
         .begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Render Pass"),
+            label: Some("sprites"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
+                        r: 0.1,
+                        g: 0.1,
+                        b: 0.1,
                         a: 1.0,
                     }),
                     store: wgpu::StoreOp::Store,
