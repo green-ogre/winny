@@ -18,6 +18,10 @@ impl Archetypes {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.archetypes.len()
+    }
+
     pub fn get_from_type_ids(&mut self, ids: &mut [TypeId]) -> Option<&mut Archetype> {
         // type_ids sorted on creation
         ids.sort();
