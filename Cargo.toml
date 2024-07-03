@@ -17,16 +17,13 @@ logger = { path = "crates/logger" }
 app = { path = "crates/app" }
 winny_math = { path = "crates/winny_math" }
 asset = { path = "crates/asset" }
-window = { path = "crates/window" }
 gfx = { path = "crates/gfx" }
 
 hot_reload = { path = "crates/hot_reload", optional = true }
 audio = { path = "crates/audio", optional = true }
 
 [features]
-egui = ["window/egui", "gfx/egui"]
-gilrs = ["window/controller"]
-
+egui = ["gfx/egui"]
+gilrs = ["app/controller"]
 hot_reload = ["dep:hot_reload"]
-
 audio = ["dep:audio"]

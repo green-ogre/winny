@@ -418,7 +418,7 @@ pub struct AssetEventWriter<'w, A: Asset> {
 
 impl<'w, A: Asset> AssetEventWriter<'w, A> {
     pub fn new(world: UnsafeWorldCell<'w>) -> Self {
-        let id = unsafe { world.read_only() }.get_resource_id::<AssetEvents<A>>();
+        let id = unsafe { world.read_and_write() }.get_resource_id::<AssetEvents<A>>();
         Self {
             events: ResMut::new(world, id),
         }

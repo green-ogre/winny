@@ -10,11 +10,11 @@ winny_math = { path = "../winny_math" }
 app = { path = "../app" }
 asset = { path = "../asset" }
 
-wgpu = "0.19.3"
-winit = "0.29.15"
+wgpu = "0.20.1"
+winit = "0.30.3"
 
 pollster = "0.3.0"
-bytemuck = { version = "1.12", features = [ "derive" ] }
+bytemuck = { version = "1.12", features = ["derive"] }
 
 libflate = { version = "2.1.0", optional = false }
 egui = { version = "0.27.2", optional = true }

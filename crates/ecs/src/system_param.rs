@@ -47,7 +47,7 @@ impl<E: Event> SystemParam for EventReader<'_, E> {
     }
 
     fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
-        unsafe { world.read_only().get_resource_id::<Events<E>>() }
+        unsafe { world.read_and_write().get_resource_id::<Events<E>>() }
     }
 
     fn to_param<'w, 's>(
@@ -70,7 +70,7 @@ impl<E: Event> SystemParam for EventWriter<'_, E> {
     }
 
     fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
-        unsafe { world.read_only().get_resource_id::<Events<E>>() }
+        unsafe { world.read_and_write().get_resource_id::<Events<E>>() }
     }
 
     fn to_param<'w, 's>(
@@ -93,7 +93,7 @@ impl<'a, T: 'static + Resource> SystemParam for Option<Res<'a, T>> {
     }
 
     fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
-        unsafe { world.read_only().get_resource_id::<T>() }
+        unsafe { world.read_and_write().get_resource_id::<T>() }
     }
 
     fn to_param<'w, 's>(
@@ -116,7 +116,7 @@ impl<T: 'static + Resource> SystemParam for Option<ResMut<'_, T>> {
     }
 
     fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
-        unsafe { world.read_only().get_resource_id::<T>() }
+        unsafe { world.read_and_write().get_resource_id::<T>() }
     }
 
     fn to_param<'w, 's>(
@@ -139,7 +139,7 @@ impl<'a, T: 'static + Resource> SystemParam for Res<'a, T> {
     }
 
     fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
-        unsafe { world.read_only().get_resource_id::<T>() }
+        unsafe { world.read_and_write().get_resource_id::<T>() }
     }
 
     fn to_param<'w, 's>(
@@ -162,7 +162,7 @@ impl<T: 'static + Resource> SystemParam for ResMut<'_, T> {
     }
 
     fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
-        unsafe { world.read_only().get_resource_id::<T>() }
+        unsafe { world.read_and_write().get_resource_id::<T>() }
     }
 
     fn to_param<'w, 's>(

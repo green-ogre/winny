@@ -49,8 +49,22 @@ impl<E: Event> Events<E> {
         self.storage.clear_drop();
     }
 
-    pub fn push(&mut self, val: E) -> Result<(), IntoStorageError> {
-        self.storage.push(val)
+    pub fn push(&mut self, val: E) {
+        self.storage.push(val).unwrap()
+    }
+
+    pub fn peak(&self) -> Option<&E> {
+        if self.storage.len() == 0 {
+            None
+        } else {
+            Some(unsafe { self.storage.get_unchecked(0).cast::<E>().as_ref() })
+        }
+    }
+
+    pub fn append(&mut self, vals: impl Iterator<Item = E>) {
+        for val in vals {
+            self.storage.push(val).unwrap()
+        }
     }
 
     pub fn read(&mut self) -> impl Iterator<Item = E> {
@@ -114,6 +128,14 @@ impl<'w, E: Event> EventReader<'w, E> {
         Self {
             events: ResMut::new(world, resource_id),
         }
+    }
+
+    pub fn peak(&self) -> Option<&E> {
+        self.events.peak()
+    }
+
+    pub fn len(&self) -> usize {
+        self.events.len()
     }
 
     pub fn read(mut self) -> impl Iterator<Item = E> {
