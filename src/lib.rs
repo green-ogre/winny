@@ -1,19 +1,18 @@
 #![allow(unused)]
 
 use app::{
-    app::PerfPlugin,
+    perf::PerfPlugin,
     plugins::{Plugin, PluginSet},
+    window::WindowPlugin,
 };
 use asset::AssetLoaderPlugin;
-use gfx::{renderer::RendererPlugin, sprite::SpritePlugin};
-use window::WindowPlugin;
+use gfx::sprite::SpritePlugin;
 
 pub extern crate app;
 pub extern crate asset;
 pub extern crate ecs;
 pub extern crate gfx;
 pub extern crate logger;
-pub extern crate window;
 pub extern crate winny_math as math;
 
 #[cfg(feature = "audio")]
@@ -31,7 +30,6 @@ pub mod prelude {
     pub use ecs::prelude::*;
     pub use gfx::prelude::*;
     pub use logger::*;
-    pub use window::prelude::*;
     pub use winny_math as math;
     pub use winny_math::prelude::*;
 }
@@ -66,6 +64,7 @@ impl Plugin for DefaultPlugins {
             self.perf.clone(),
             self.asset_loader.clone(),
             self.sprites.clone(),
+            app::renderer::RendererPlugin,
         ));
     }
 }

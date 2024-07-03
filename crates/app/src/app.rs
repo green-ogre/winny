@@ -1,12 +1,31 @@
+#![allow(unused)]
 use std::{
     collections::VecDeque,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use ecs::{prelude::*, Events, Scheduler, WinnyEvent, WinnyResource, World};
 use logger::{error, info};
+use winit::{
+    application::ApplicationHandler,
+    dpi::{PhysicalPosition, PhysicalSize},
+    event::{DeviceEvent, DeviceId, ElementState, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::PhysicalKey,
+    window::{Window, WindowId},
+};
 
-use crate::plugins::{Plugin, PluginSet};
+use crate::{
+    perf::PerfCounter,
+    prelude::{KeyCode, KeyInput, MouseInput, WindowPlugin},
+    window::WinitWindow,
+};
+use crate::{
+    plugins::{Plugin, PluginSet},
+    prelude::KeyState,
+    renderer::{RenderContext, Renderer},
+};
 
 #[derive(Debug, WinnyEvent)]
 pub struct AppExit;
@@ -15,27 +34,45 @@ pub struct App {
     world: World,
     scheduler: Scheduler,
     plugins: VecDeque<Box<dyn Plugin>>,
-    window_event_loop: Option<Box<dyn FnOnce()>>,
 }
 
 impl Default for App {
     fn default() -> Self {
+        let mut world = World::default();
+        world.register_event::<AppExit>();
+        world.insert_resource(DeltaT(0.0));
+
         App {
-            world: World::default(),
+            world,
             scheduler: Scheduler::new(),
             plugins: VecDeque::new(),
-            window_event_loop: None,
         }
     }
 }
 
+fn run_schedule(schedule: Schedule, scheduler: &mut Scheduler, world: &mut World) {
+    scheduler.run_schedule(schedule, world);
+}
+
 impl App {
+    pub(crate) fn empty() -> Self {
+        Self {
+            world: World::default(),
+            scheduler: Scheduler::new(),
+            plugins: VecDeque::new(),
+        }
+    }
+
     pub(crate) fn add_plugin_boxed(&mut self, plugin: Box<dyn Plugin>) {
         self.plugins.push_back(plugin);
     }
 
     pub(crate) fn add_plugin_priority_boxed(&mut self, plugin: Box<dyn Plugin>) {
         self.plugins.push_front(plugin);
+    }
+
+    pub(crate) fn run_schedule(&mut self, schedule: Schedule) {
+        run_schedule(schedule, &mut self.scheduler, &mut self.world);
     }
 
     pub fn world(&mut self) -> &World {
@@ -85,16 +122,53 @@ impl App {
         self
     }
 
-    pub fn set_window_callback(&mut self, callback: Box<dyn FnOnce()>) -> &mut Self {
-        self.window_event_loop = Some(callback);
+    pub fn insert_winit_events(&mut self, events: impl Iterator<Item = WinitEvent>) -> &mut Self {
+        for event in events {
+            match event {
+                WinitEvent::KeyboardInput(key) => {
+                    let window_plugin = self.world().resource::<WindowPlugin>();
+                    if window_plugin.close_on_escape {
+                        if key.physical_key == PhysicalKey::Code(winit::keyboard::KeyCode::Escape) {
+                            let mut app_exit = self.world_mut().resource_mut::<Events<AppExit>>();
+                            app_exit.push(AppExit);
+                        }
+                    }
+
+                    let mut key_input = self.world_mut().resource_mut::<Events<KeyInput>>();
+
+                    if let PhysicalKey::Code(key_code) = key.physical_key {
+                        key_input.push(KeyInput::new(
+                            KeyCode::new(key_code),
+                            match key.state {
+                                ElementState::Pressed => KeyState::Pressed,
+                                ElementState::Released => KeyState::Released,
+                            },
+                        ));
+                    }
+                }
+                // TODO: mouse input
+                WinitEvent::MouseInput(state, button) => {
+                    let mut mouse_input = self.world_mut().resource_mut::<Events<MouseInput>>();
+                }
+                WinitEvent::MouseMotion(x, y) => {
+                    let mut mouse_input = self.world_mut().resource_mut::<Events<MouseInput>>();
+                }
+                WinitEvent::RedrawRequested => {
+                    let mut redraw = self.world_mut().resource_mut::<Events<RedrawRequest>>();
+                    redraw.push(RedrawRequest);
+                }
+                WinitEvent::WindowCreated => {
+                    let mut event = self.world_mut().resource_mut::<Events<WindowCreated>>();
+                    event.push(WindowCreated);
+                }
+            }
+        }
+
         self
     }
 
     pub fn run(&mut self) {
         logger::init();
-        set_panic_hook();
-        self.world.register_event::<AppExit>();
-        self.world.insert_resource(DeltaT(0.0));
 
         while let Some(mut plugin) = self.plugins.pop_front() {
             plugin.build(self);
@@ -103,35 +177,32 @@ impl App {
         self.scheduler.build_schedule();
         self.scheduler.init_systems(&self.world);
 
-        let mut world = &mut self.world;
-        let mut scheduler = &mut self.scheduler;
+        let mut app = App::empty();
+        std::mem::swap(self, &mut app);
+        let mut win_app = WinitApp::new(app);
 
-        // println!("{scheduler:#?}");
+        let mut event_loop = EventLoop::builder();
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::EventLoopBuilderExtWindows;
+            event_loop.with_any_thread(true);
+        }
+        let event_loop = event_loop.build().unwrap();
+        event_loop.set_control_flow(ControlFlow::Poll);
 
-        std::thread::scope(|s| {
-            let h = s.spawn(move || {
-                scheduler.startup(&world);
+        let _ = event_loop.run_app(&mut win_app);
+    }
 
-                let mut start = SystemTime::now();
-                let mut end = SystemTime::now();
-                loop {
-                    let dt = DeltaT(end.duration_since(start).unwrap_or_default().as_secs_f64());
-                    start = SystemTime::now();
-                    if !update_ecs(dt, &mut world, &mut scheduler) {
-                        break;
-                    }
-                    end = SystemTime::now();
+    fn update(&mut self) -> bool {
+        let start = SystemTime::now();
+        if !update_ecs(&mut self.world, &mut self.scheduler) {
+            return false;
+        }
+        let end = SystemTime::now();
+        let dt = DeltaT(end.duration_since(start).unwrap_or_default().as_secs_f64());
+        update_delta_t(&mut self.world, dt);
 
-                    // world.print_size();
-                }
-            });
-
-            if let Some(window_event_loop) = self.window_event_loop.take() {
-                window_event_loop();
-            } else {
-                let _ = h.join();
-            }
-        });
+        true
     }
 }
 
@@ -151,9 +222,7 @@ fn set_panic_hook() {
 #[derive(Debug, WinnyResource)]
 pub struct DeltaT(pub f64);
 
-fn update_ecs(delta_t: DeltaT, world: &mut World, scheduler: &mut Scheduler) -> bool {
-    update_delta_t(world, delta_t);
-
+fn update_ecs(world: &mut World, scheduler: &mut Scheduler) -> bool {
     if world
         .resource_ids
         .contains_key(&std::any::TypeId::of::<PerfCounter>())
@@ -195,191 +264,342 @@ fn update_delta_t(world: &mut World, delta_t: DeltaT) {
 }
 
 fn check_for_exit(world: &mut World, scheduler: &mut Scheduler) -> bool {
-    if world
+    world
         .resource_mut::<Events<AppExit>>()
         .read()
         .next()
         .is_some()
-    {
-        scheduler.run_schedule(ecs::Schedule::Exit, world);
-        true
-    } else {
-        false
-    }
 }
 
-#[derive(Debug, WinnyResource, Clone)]
-struct PerfCounter {
-    begin: Option<SystemTime>,
-    begin_debug_event: Option<SystemTime>,
-    end: Option<SystemTime>,
-    end_debug_event: Option<SystemTime>,
-    last_fram_duration: Option<Duration>,
-    frames: usize,
-    total_frames: usize,
-    lost_frames: usize,
-    lost_frames_sum: usize,
-    highest_lost_frames: usize,
-    frames_sum: f64,
-    iterations: usize,
-    // target_frame_len: Option<f64>,
-    duration: f64,
-    start_of_second: Duration,
-    debug_events: VecDeque<(String, Duration)>,
+#[derive(WinnyEvent)]
+pub struct RedrawRequest;
+
+#[derive(WinnyEvent)]
+pub struct WindowResized(u32, u32);
+
+#[derive(WinnyEvent)]
+pub struct WindowCreated;
+
+#[derive(WinnyEvent)]
+pub enum WinitEvent {
+    KeyboardInput(winit::event::KeyEvent),
+    MouseInput(winit::event::ElementState, winit::event::MouseButton),
+    RedrawRequested,
+    MouseMotion(f64, f64),
+    WindowCreated,
 }
 
-#[allow(unused)]
-impl PerfCounter {
-    pub fn new(target_fps: Option<f64>) -> Self {
-        let _target_frame_len = target_fps.map(|target| 1.0 / target);
+struct WinitApp {
+    app: App,
+    winit_events: Vec<WinitEvent>,
+    window: Option<Arc<Window>>,
+}
+
+impl WinitApp {
+    pub fn new(app: App) -> Self {
+        let winit_events = Vec::new();
+        let created_window = false;
 
         Self {
-            begin: None,
-            begin_debug_event: None,
-            end: None,
-            end_debug_event: None,
-            last_fram_duration: None,
-            frames: 0,
-            total_frames: 0,
-            lost_frames: 0,
-            lost_frames_sum: 0,
-            highest_lost_frames: 0,
-            frames_sum: 0.0,
-            iterations: 0,
-            // target_frame_len,
-            duration: 0.0,
-            start_of_second: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time is a construct"),
-            debug_events: VecDeque::new(),
+            app,
+            winit_events,
+            window: None,
         }
     }
+}
 
-    pub fn last_frame_duration(&self) -> Option<Duration> {
-        self.last_fram_duration
-    }
+impl ApplicationHandler for WinitApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_none() {
+            let window_plugin = self.app.world().resource::<WindowPlugin>();
+            let window_attributes = Window::default_attributes()
+                .with_title(window_plugin.title)
+                .with_inner_size(PhysicalSize::new(
+                    window_plugin.inner_size.0,
+                    window_plugin.inner_size.1,
+                ))
+                .with_position(PhysicalPosition::new(
+                    window_plugin.position.0,
+                    window_plugin.position.1,
+                ));
+            let window = event_loop.create_window(window_attributes).unwrap();
+            // self.app
+            //     .world_mut()
+            //     .insert_resource(WinitWindow(Arc::new(window)));
+            let mut event = self.app.world_mut().resource_mut::<Events<WindowCreated>>();
+            event.push(WindowCreated);
 
-    pub fn start(&mut self) {
-        self.begin = Some(SystemTime::now());
-    }
+            let window = Arc::new(window);
 
-    pub fn start_debug_event(&mut self) {
-        self.begin_debug_event = Some(SystemTime::now());
-    }
-
-    pub fn current_frame_len(&self) -> Result<Duration, std::time::SystemTimeError> {
-        Ok(SystemTime::now().duration_since(self.begin.unwrap())?)
-    }
-
-    pub fn _should_advance(&self) -> bool {
-        // self.target_frame_len.is_none()
-        //     || self
-        //         .current_frame_len()
-        //         .map(|dur| dur.as_secs_f64())
-        //         .unwrap_or_default()
-        //         >= self.target_frame_len.unwrap()
-        true
-    }
-
-    pub fn stop(&mut self) {
-        self.end = Some(SystemTime::now());
-
-        // info!(
-        //     "> Measured Frame Length: {},\tTarget Frame Length: {},\tLoss: {}",
-        //     self.current_frame_len().unwrap_or_default().as_secs_f64(),
-        //     self.target_frame_len.unwrap_or_default(),
-        //     (self.current_frame_len().unwrap_or_default().as_secs_f64()
-        //         - self.target_frame_len.unwrap_or_default())
-        //     .abs()
-        // );
-        self.frames_sum += self.current_frame_len().unwrap_or_default().as_secs_f64();
-
-        self.frames += 1;
-
-        self.last_fram_duration = Some(self.current_frame_len().unwrap_or_default());
-
-        self.duration = self
-            .end
-            .unwrap()
-            .duration_since(UNIX_EPOCH)
-            .expect("time is a construct")
-            .as_secs_f64()
-            - self.start_of_second.as_secs_f64();
-
-        if self.duration >= 1.0 {
-            for (label, duration) in self.debug_events.drain(..) {
-                info!("{} => {}", label, duration.as_secs_f32());
-            }
-
-            self.start_of_second = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time is a construct");
-            self.total_frames += self.frames;
-
-            info!(
-                "# Frames {},\tDuration: {},\tExpected {} Frames: {},\tLost Frames: {}",
-                self.frames, self.duration, self.frames, self.frames_sum, self.lost_frames
+            let renderer = Renderer::new(
+                Arc::clone(&window),
+                window.inner_size().into(),
+                window.inner_size().into(),
             );
+            let renderer_context =
+                RenderContext::new(Arc::clone(&renderer.device), Arc::clone(&renderer.queue));
 
-            if self.lost_frames > self.highest_lost_frames {
-                self.highest_lost_frames = self.lost_frames;
+            self.app
+                .insert_resource(renderer)
+                .insert_resource(renderer_context);
+            self.window = Some(window);
+            self.app.run_schedule(Schedule::StartUp);
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::Resized(size) => resize(&mut self.app, size),
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::KeyboardInput { event, .. } => {
+                self.winit_events.push(WinitEvent::KeyboardInput(event))
             }
-            self.frames = 0;
-            self.lost_frames = 0;
-            self.frames_sum = 0.0;
-            self.iterations += 1;
-        }
-
-        self.debug_events.drain(..);
-    }
-
-    pub fn stop_debug_event(&mut self) {
-        self.end_debug_event = Some(SystemTime::now());
-    }
-
-    pub fn log_last_debug_event(&mut self, label: &str) {
-        if let Some(duration) = self.query_last_debug_event() {
-            self.debug_events.push_back((label.into(), duration));
+            // WindowEvent::CursorMoved { position, .. } => self
+            //     .winit_events
+            //     .push(WinitEvent::CursorMoved((position.x, position.y))),
+            WindowEvent::MouseInput { state, button, .. } => self
+                .winit_events
+                .push(WinitEvent::MouseInput(state, button)),
+            WindowEvent::RedrawRequested => self.winit_events.push(WinitEvent::RedrawRequested),
+            _ => {}
         }
     }
 
-    pub fn query_last_debug_event(&self) -> Option<Duration> {
-        if let Some(start) = self.begin_debug_event {
-            if let Some(end) = self.end_debug_event {
-                let dur = end.duration_since(start);
-                if dur.is_ok() {
-                    return Some(dur.unwrap());
-                } else {
-                    return None;
-                }
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        match event {
+            DeviceEvent::MouseMotion { delta } => self
+                .winit_events
+                .push(WinitEvent::MouseMotion(delta.0, delta.1)),
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.app.insert_winit_events(self.winit_events.drain(..));
+        if self.window.is_some() {
+            if !self.app.update() {
+                event_loop.exit();
             }
         }
-
-        None
     }
 
-    pub fn exit_stats(&self) {
-        info!(
-            ">> Iterations: {},\tFPS: {},\tTotal Lost Frames: {},\tAverage: {},\tHigh:{}",
-            self.iterations,
-            self.total_frames / self.iterations.max(1),
-            self.lost_frames_sum,
-            self.lost_frames_sum / self.iterations.max(1),
-            self.highest_lost_frames
-        );
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.app.run_schedule(Schedule::Exit);
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct PerfPlugin;
-
-impl Plugin for PerfPlugin {
-    fn build(&mut self, app: &mut crate::app::App) {
-        app.insert_resource(PerfCounter::new(None))
-            .add_systems(Schedule::Exit, (exit_stats,));
-    }
+// TODO: handle window resize
+fn resize(app: &mut App, size: PhysicalSize<u32>) {
+    let mut resize = app.world_mut().resource_mut::<Events<WindowResized>>();
+    resize.push(WindowResized(size.width, size.height));
 }
 
-fn exit_stats(perf: Res<PerfCounter>) {
-    perf.exit_stats();
-}
+// #[cfg(feature = "controller")]
+// fn spawn_controller_thread(
+//     controller_input_sender: Sender<(ControllerInput, ControllerAxisState)>,
+// ) {
+//     use logger::error;
+//
+//     std::thread::spawn(move || {
+//         let mut gilrs = Gilrs::new().unwrap();
+//         let mut controller_axis_state = ControllerAxisState::new();
+//
+//         loop {
+//             while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
+//                 let input = ControllerInputState::from(event);
+//
+//                 if let Some(new_axis_state) = input.axis_state() {
+//                     controller_axis_state.apply_new_state(new_axis_state);
+//                 }
+//
+//                 if controller_input_sender
+//                     .send((ControllerInput::new(input), controller_axis_state))
+//                     .is_err()
+//                 {
+//                     error!("Error sending controller input");
+//                 }
+//             }
+//         }
+//     });
+// }
+//
+// #[cfg(feature = "controller")]
+// fn pipe_controller_input(
+//     channels: Res<WindowChannels>,
+//     mut controller_event: EventWriter<ControllerInput>,
+//     mut controller_axis_state: ResMut<ControllerAxisState>,
+// ) {
+//     for (input, axis_state) in channels.cirx.try_iter() {
+//         controller_event.send(input);
+//         *controller_axis_state = axis_state;
+//     }
+// }
+//
+// fn run(app: &mut App) {
+//     logger::init();
+//     set_panic_hook();
+//     app.register_event::<AppExit>();
+//     app.insert_resource(DeltaT(0.0));
+//
+//     app.register_event::<KeyInput>();
+//     app.register_event::<MouseInput>();
+//     // #[cfg(feature = "controller")]
+//     // app.register_event::<ControllerInput>();
+//     // #[cfg(feature = "controller")]
+//     // app.insert_resource(ControllerAxisState::new());
+//     app.insert_resource(MouseState::default());
+//
+//     let window_plugin = app.world().resource::<WindowPlugin>();
+//     let event_loop = EventLoop::new().unwrap();
+//     let window = WindowBuilder::new()
+//         .with_inner_size(PhysicalSize::new(
+//             window_plugin.inner_size.0,
+//             window_plugin.inner_size.1,
+//         ))
+//         .with_position(PhysicalPosition::new(
+//             window_plugin.position.0,
+//             window_plugin.position.1,
+//         ))
+//         .build(&event_loop)
+//         .unwrap();
+//     event_loop.set_control_flow(ControlFlow::Poll);
+//
+//     // #[cfg(feature = "controller")]
+//     // let (controller_input_sender, controller_input_reciever) =
+//     //     channel::<(ControllerInput, ControllerAxisState)>();
+//     // #[cfg(feature = "controller")]
+//     // spawn_controller_thread(controller_input_sender);
+//
+//     // let (wwetx, wwerx) = channel();
+//     // let (wdetx, wderx) = channel::<DeviceEvent>();
+//     // let (wetx, werx) = channel::<()>();
+//
+//     // #[cfg(feature = "controller")]
+//     // let channels = WindowChannels::new(controller_input_reciever, wwerx, wderx, wetx);
+//     // #[cfg(not(feature = "controller"))]
+//     // let channels = WindowChannels::new(wwerx, wderx, wetx);
+//
+//     while let Some(mut plugin) = app.plugins.pop_front() {
+//         plugin.build(app);
+//     }
+//
+//     app.scheduler.build_schedule();
+//     app.scheduler.init_systems(&app.world);
+//
+//     let mut world = &mut app.world;
+//     let mut scheduler = &mut app.scheduler;
+//
+//     // println!("{scheduler:#?}");
+//
+//     std::thread::scope(|s| {
+//         let h = s.spawn(move || {
+//             scheduler.startup(&world);
+//
+//             let mut start = SystemTime::now();
+//             let mut end = SystemTime::now();
+//             loop {
+//                 let dt = DeltaT(end.duration_since(start).unwrap_or_default().as_secs_f64());
+//                 start = SystemTime::now();
+//                 if !update_ecs(dt, &mut world, &mut scheduler) {
+//                     break;
+//                 }
+//                 end = SystemTime::now();
+//
+//                 // world.print_size();
+//             }
+//         });
+//
+//         if let Some(window_event_loop) = self.window_event_loop.take() {
+//             window_event_loop();
+//         } else {
+//             let _ = h.join();
+//         }
+//     });
+//
+//     let _ = event_loop.run(move |event, elwt| match event {
+//         winit::event::Event::WindowEvent { window_id, event } => match event {
+//             WindowEvent::CursorMoved { position, .. } => {
+//                 user_mouse_input.send(MouseInput::new(
+//                     0.0,
+//                     0.0,
+//                     position.x,
+//                     position.y,
+//                     None,
+//                     mouse_state.last_held_key,
+//                 ));
+//                 mouse_state.last_mouse_position = (position.x, position.y);
+//             }
+//             WindowEvent::MouseInput { state, button, .. } => {
+//                 let mut held = None;
+//
+//                 mouse_state.last_held_key = if state == ElementState::Pressed {
+//                     let button = match button {
+//                         winit::event::MouseButton::Left => Some(MouseButton::Left),
+//                         winit::event::MouseButton::Right => Some(MouseButton::Right),
+//                         _ => None,
+//                     };
+//
+//                     if button == mouse_state.last_held_key {
+//                         held = button;
+//                         None
+//                     } else {
+//                         button
+//                     }
+//                 } else {
+//                     None
+//                 };
+//
+//                 user_mouse_input.send(MouseInput::new(
+//                     0.0,
+//                     0.0,
+//                     mouse_state.last_mouse_position.0,
+//                     mouse_state.last_mouse_position.1,
+//                     mouse_state.last_held_key,
+//                     held,
+//                 ));
+//             }
+//             WindowEvent::Resized(new_size) => {
+//                 renderer.resize(new_size.into());
+//             }
+//             WindowEvent::CloseRequested => {
+//                 exit_event_loop.send(()).unwrap();
+//                 app_exit.send(AppExit);
+//                 return false;
+//             }
+//             WindowEvent::KeyboardInput {
+//                 event: key_event, ..
+//             } => {
+//                 if window_plugin.close_on_escape {
+//                     if key_event.physical_key == PhysicalKey::Code(winit::keyboard::KeyCode::Escape)
+//                     {
+//                         exit_event_loop.send(()).unwrap();
+//                         app_exit.send(AppExit);
+//                         return false;
+//                     }
+//                 }
+//
+//                 if let PhysicalKey::Code(key_code) = key_event.physical_key {
+//                     user_key_input.send(KeyInput::new(
+//                         KeyCode::new(key_code),
+//                         match key_event.state {
+//                             ElementState::Pressed => KeyState::Pressed,
+//                             ElementState::Released => KeyState::Released,
+//                         },
+//                     ));
+//                 }
+//             }
+//             _ => {}
+//         },
+//         _ => {}
+//     });
+// }

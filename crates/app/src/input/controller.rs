@@ -1,4 +1,3 @@
-#![allow(unused)]
 use ecs::{WinnyEvent, WinnyResource};
 use gilrs::EventType;
 use logger::error;

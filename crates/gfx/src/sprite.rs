@@ -1,11 +1,10 @@
 use app::plugins::Plugin;
 use asset::{Asset, AssetApp, AssetLoader, Assets, Handle};
 use ecs::{Commands, Entity, IntoSystemStorage, Query, Res, ResMut, WinnyResource, With};
-use renderer::RenderContext;
 use texture::Sprites;
 use wgpu::util::DeviceExt;
 
-use self::renderer::Renderer;
+use app::renderer::{Renderer, RenderContext};
 
 use super::*;
 
@@ -79,7 +78,7 @@ fn create_sprite_render_pipeline(
         source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sprite_shader.wgsl").into()),
     };
 
-    crate::renderer::create_render_pipeline(
+    app::renderer::create_render_pipeline(
         &device,
         &render_pipeline_layout,
         config.format,
@@ -93,62 +92,62 @@ const VERTICES: u32 = 3;
 
 #[derive(Debug, WinnyResource)]
 pub struct SpriteRenderer {
-    vertex_buffer: wgpu::Buffer,
-    sprite_buffer: wgpu::Buffer,
+    vertex_buffer: Option<wgpu::Buffer>,
+    sprite_buffer: Option<wgpu::Buffer>,
     num_sprites: u32,
-    render_pipeline: wgpu::RenderPipeline,
+    render_pipeline: Option<wgpu::RenderPipeline>,
 }
 
 impl SpriteRenderer {
-    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
-        let render_pipeline = create_sprite_render_pipeline(device, config);
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("sprite vertex buffer"),
-            contents: &[],
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let sprite_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Sprite Buffer"),
-            contents: bytemuck::cast_slice::<SpriteInstance, u8>(&[]),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
-
+    pub fn new() -> Self {
         Self {
-            vertex_buffer,
-            sprite_buffer,
+            vertex_buffer: None,
+            sprite_buffer: None,
             num_sprites: 0,
-            render_pipeline,
+            render_pipeline: None,
         }
+    }
+
+    pub fn get_or_initialize(
+        &mut self,
+        renderer: &Renderer,
+    ) -> (&mut wgpu::Buffer, &mut wgpu::Buffer, &wgpu::RenderPipeline) {
+        let pipeline = self.render_pipeline.get_or_insert_with(|| {
+            create_sprite_render_pipeline(&renderer.device, &renderer.config)
+        });
+
+        let vertex_buffer = self.vertex_buffer.get_or_insert_with(|| {
+            renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite vertex buffer"),
+                    contents: bytemuck::cast_slice::<SpriteVertex, u8>(&[]),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                })
+        });
+
+        let sprite_buffer = self.sprite_buffer.get_or_insert_with(|| {
+            renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite buffer"),
+                    contents: &[],
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                })
+        });
+
+        (vertex_buffer, sprite_buffer, pipeline)
     }
 }
 
 pub fn update_sprite_data(
     sprites: Query<(Sprite, Handle<SpriteData>), With<SpriteIsBinded>>,
-    renderer: ResMut<Renderer>,
+    renderer: Option<ResMut<Renderer>>,
     mut sprite_renderer: ResMut<SpriteRenderer>,
 ) {
-    let sprite_data = sprites
-        .iter()
-        .map(|(s, _)| s.to_raw(&renderer))
-        .collect::<Vec<_>>();
-    let sprite_data = bytemuck::cast_slice(&sprite_data);
-
-    if sprite_data.len() == sprite_renderer.sprite_buffer.size() as usize {
-        renderer
-            .queue
-            .write_buffer(&sprite_renderer.sprite_buffer, 0, sprite_data);
-    } else {
-        sprite_renderer.sprite_buffer =
-            renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("sprite instance"),
-                    contents: sprite_data,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
-    }
+    let Some(renderer) = renderer else {
+        return;
+    };
 
     let vertex_data: Vec<_> = sprites
         .iter()
@@ -158,28 +157,47 @@ pub fn update_sprite_data(
     sprite_renderer.num_sprites = vertex_data.len() as u32 / VERTICES;
     let vertex_data = bytemuck::cast_slice(&vertex_data);
 
-    if vertex_data.len() == sprite_renderer.vertex_buffer.size() as usize {
-        renderer
-            .queue
-            .write_buffer(&sprite_renderer.vertex_buffer, 0, vertex_data);
+    let (vertex_buffer, sprite_buffer, _) = sprite_renderer.get_or_initialize(&renderer);
+
+    if vertex_data.len() == vertex_buffer.size() as usize {
+        renderer.queue.write_buffer(&vertex_buffer, 0, vertex_data);
     } else {
-        sprite_renderer.vertex_buffer =
-            renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("sprite vertex"),
-                    contents: vertex_data,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
+        *vertex_buffer = renderer
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("sprite vertex"),
+                contents: vertex_data,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+    }
+
+    let sprite_data = sprites
+        .iter()
+        .map(|(s, _)| s.to_raw(&renderer))
+        .collect::<Vec<_>>();
+    let sprite_data = bytemuck::cast_slice(&sprite_data);
+
+    if sprite_data.len() == sprite_buffer.size() as usize {
+        renderer.queue.write_buffer(&sprite_buffer, 0, sprite_data);
+    } else {
+        *sprite_buffer = renderer
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("sprite instance"),
+                contents: sprite_data,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
     }
 }
 
 fn render_sprites(
     mut renderer: ResMut<Renderer>,
     mut context: ResMut<RenderContext>,
-    sprite_renderer: Res<SpriteRenderer>,
+    mut sprite_renderer: ResMut<SpriteRenderer>,
     textures: Res<Sprites>,
 ) {
+    let (vertex_buffer, sprite_buffer, pipeline) = sprite_renderer.get_or_initialize(&renderer);
+
     let view = renderer.view();
     let mut render_pass = context
         .encoder()
@@ -205,10 +223,10 @@ fn render_sprites(
 
     let mut offset = 0;
     for binding in textures.iter_bindings() {
-        render_pass.set_pipeline(&sprite_renderer.render_pipeline);
+        render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, &binding.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, sprite_renderer.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, sprite_renderer.sprite_buffer.slice(..));
+        render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, sprite_buffer.slice(..));
         render_pass.draw(
             offset * VERTICES..offset * VERTICES + VERTICES,
             offset..offset + 1,
@@ -233,9 +251,13 @@ pub fn bind_new_sprite_bundles(
     sprites: Query<(Entity, Handle<SpriteData>), With<Sprite>>,
     assets: ResMut<Assets<SpriteData>>,
     mut textures: ResMut<Sprites>,
-    renderer: ResMut<Renderer>,
+    renderer: Option<ResMut<Renderer>>,
     mut commands: Commands,
 ) {
+    let Some(renderer) = renderer else {
+        return;
+    };
+
     for (entity, handle) in sprites.iter_mut() {
         if !textures.contains_key(&handle.id()) {
             if let Some(asset) = assets.get(&handle) {
@@ -512,8 +534,7 @@ impl Plugin for SpritePlugin {
         let loader = SpriteAssetLoader {};
         app.register_asset_loader::<SpriteData>(loader);
 
-        let renderer = app.world_mut().resource_mut::<Renderer>();
-        let sprite_renderer = SpriteRenderer::new(&renderer.device, &renderer.config);
+        let sprite_renderer = SpriteRenderer::new();
 
         app.insert_resource(Sprites::new())
             .insert_resource(sprite_renderer)

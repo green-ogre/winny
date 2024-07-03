@@ -201,7 +201,10 @@ impl SystemSet {
 
             handles.into_iter().all(|h| {
                 h.join()
-                    .map_err(|err| logger::error!("could not join system handles: {:?}", err))
+                    .map_err(|err| {
+                        logger::error!("could not join system handles: {:?}", err);
+                        panic!();
+                    })
                     .is_ok()
             });
         });

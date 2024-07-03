@@ -7,3 +7,11 @@ edition = "2021"
 [dependencies]
 ecs = { path = "../ecs" }
 logger = { path = "../logger" }
+
+pollster = "0.3.0"
+wgpu = "0.20.1"
+winit = "0.30.3"
+gilrs = { version = "0.10.3", optional = true }
+
+[features]
+controller = ["gilrs"]

@@ -1,36 +1,18 @@
 use std::sync::Arc;
 
-use app::{app::App, plugins::Plugin};
+use crate::{
+    app::App ,
+    plugins::Plugin,
+};
 use ecs::{ResMut, WinnyResource};
 
-use wgpu::SurfaceTargetUnsafe;
+use wgpu::PipelineCompilationOptions;
 use winit::window::Window;
 
-pub struct RendererPlugin {
-    renderer: Option<Renderer>,
-}
-
-impl RendererPlugin {
-    pub fn new(window: Window, dimensions: (u32, u32), virutal_dimensions: (u32, u32)) -> Self {
-        RendererPlugin {
-            renderer: Some(pollster::block_on(Renderer::new(
-                window,
-                [dimensions.0, dimensions.1],
-                [virutal_dimensions.0, virutal_dimensions.1],
-            ))),
-        }
-    }
-}
+pub struct RendererPlugin;
 
 impl Plugin for RendererPlugin {
     fn build(&mut self, app: &mut App) {
-        let renderer = self.renderer.take().unwrap();
-        let renderer_context =
-            RenderContext::new(Arc::clone(&renderer.device), Arc::clone(&renderer.queue));
-
-        app.insert_resource(renderer)
-            .insert_resource(renderer_context);
-
         // HACK: need to add RendererPlugin before all other renderers, but
         // need to call render after all others...
         app.add_systems(ecs::Schedule::FlushEvents, render);
@@ -88,7 +70,6 @@ impl RenderContext {
 
 #[derive(WinnyResource)]
 pub struct Renderer {
-    pub window: Window,
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     pub config: wgpu::SurfaceConfiguration,
@@ -96,44 +77,33 @@ pub struct Renderer {
     pub virtual_size: [u32; 2],
     view: Option<(wgpu::SurfaceTexture, wgpu::TextureView)>,
     surface: wgpu::Surface<'static>,
+    pub window: Arc<Window>
 }
 
 unsafe impl Send for Renderer {}
 unsafe impl Sync for Renderer {}
 
 impl Renderer {
-    pub async fn new(window: Window, size: [u32; 2], virtual_size: [u32; 2]) -> Self {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
+    pub fn new(window: Arc<Window>, size: [u32; 2], virtual_size: [u32; 2]) -> Self {
+        let instance = wgpu::Instance::default();
+        let surface = instance.create_surface(Arc::clone(&window)).unwrap();
 
-        let surface = unsafe {
-            instance
-                .create_surface_unsafe(SurfaceTargetUnsafe::from_window(&window).unwrap())
-                .unwrap()
-        };
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        }))
+        .unwrap();
 
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .unwrap();
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    label: None,
-                },
-                None, // Trace path
-            )
-            .await
-            .unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                label: None,
+            },
+            None, // Trace path
+        ))
+        .unwrap();
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
@@ -162,7 +132,6 @@ impl Renderer {
         let view = None;
 
         Renderer {
-            window,
             surface,
             device,
             queue,
@@ -170,6 +139,7 @@ impl Renderer {
             size,
             view,
             virtual_size,
+            window,
         }
     }
 
@@ -229,6 +199,7 @@ pub fn create_render_pipeline(
             module: &shader,
             entry_point: "vs_main",
             buffers: vertex_layouts,
+            compilation_options: PipelineCompilationOptions::default(),
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
@@ -241,6 +212,7 @@ pub fn create_render_pipeline(
                 }),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
+            compilation_options: PipelineCompilationOptions::default(),
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,

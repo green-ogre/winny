@@ -427,14 +427,14 @@ impl World {
         }
     }
 
-    pub fn get_resource_id<R: Resource>(&self) -> ResourceId {
+    pub fn get_resource_id<R: Resource>(&mut self) -> ResourceId {
         let type_id = std::any::TypeId::of::<R>();
-        let type_name = std::any::type_name::<R>();
 
-        *self.resource_ids.get(&type_id).unwrap_or_else(|| {
-            error!("Queried resource is not registered: {}", type_name);
-            panic!();
-        })
+        if let Some(id) = self.resource_ids.get(&type_id) {
+            *id
+        } else {
+            self.register_resource(type_id)
+        }
     }
 
     pub fn print_size(&self) {

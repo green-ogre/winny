@@ -8,7 +8,6 @@ use self::texture::Texture;
 pub mod gui;
 pub mod png;
 pub mod prelude;
-pub mod renderer;
 pub mod sprite;
 pub mod texture;
 
