@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-logger = { path = "../logger" }
+util = { path = "../util" }
 ecs = { path = "../ecs" }
 winny_math = { path = "../winny_math" }
 app = { path = "../app" }
@@ -12,6 +12,9 @@ asset = { path = "../asset" }
 
 wgpu = "0.20.1"
 winit = "0.30.3"
+cgmath = "0.18"
+tobj = { version = "4.0.2", features = ["async"] }
+image = "0.25.1"
 
 pollster = "0.3.0"
 bytemuck = { version = "1.12", features = ["derive"] }

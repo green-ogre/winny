@@ -1,7 +1,7 @@
 use std::{fs::File, io::Cursor};
 
 use asset::reader::ByteReader;
-use logger::warn;
+use util::tracing::{error, warn};
 
 impl From<asset::reader::Error> for Error {
     fn from(_value: asset::reader::Error) -> Self {
@@ -216,7 +216,7 @@ impl Chunk {
             "fmt " => ChunkId::fmt,
             "data" => ChunkId::data,
             _ => {
-                logger::error!("Could not determine chunk id: {}", chunk_id);
+                error!("Could not determine chunk id: {}", chunk_id);
                 println!("Could not determine chunk id: {}", chunk_id);
                 return Err(Error::UnknownChunkId);
             }

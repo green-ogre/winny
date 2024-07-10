@@ -8,7 +8,7 @@ use std::{
 use app::app::App;
 use app::plugins::Plugin;
 use ecs::{ResMut, WinnyResource};
-use logger::{error, info, trace};
+use util::tracing::{error, info, trace};
 
 pub mod prelude;
 
@@ -24,7 +24,7 @@ impl Lib {
     ) -> Result<Self, libloading::Error> {
         if std::fs::metadata(path_to_write).is_err() {
             std::fs::write(path_to_write, "").unwrap();
-            info!("File does not exist, writing new : {:?}", path_to_write);
+            trace!("File does not exist, writing new : {:?}", path_to_write);
         }
 
         if let Err(e) = std::fs::copy(path_to_lib, path_to_write) {
@@ -66,14 +66,20 @@ impl Lib {
 #[derive(Debug, WinnyResource)]
 pub struct LinkedLib {
     pub linked_lib: Lib,
+    lib_name: String,
     last_refresh: Duration,
     path_to_lib: OsString,
     path_to_write: OsString,
 }
 
 impl LinkedLib {
-    pub fn new(path_to_lib: OsString, path_to_write: OsString) -> Result<Self, libloading::Error> {
+    pub fn new(
+        lib_name: String,
+        path_to_lib: OsString,
+        path_to_write: OsString,
+    ) -> Result<Self, libloading::Error> {
         Ok(Self {
+            lib_name,
             linked_lib: Lib::new(&path_to_lib, &path_to_write)?,
             last_refresh: SystemTime::now().duration_since(UNIX_EPOCH).unwrap(),
             path_to_write,
@@ -96,12 +102,12 @@ impl LinkedLib {
             return;
         }
 
-        info!("Reloading App...");
-
         self.linked_lib
             .refresh(&self.path_to_lib, &self.path_to_write)
             .unwrap();
         self.last_refresh = last_mod;
+
+        info!("Reloaded [\"{}\"]", self.lib_name);
     }
 }
 
@@ -139,16 +145,16 @@ impl Plugin for HotReloadPlugin {
             .collect();
 
             info!(
-                "Path to lib: {}, Path to write: {}",
+                "Hot reloading initialized - Watching {} ...",
                 lib_path.to_str().unwrap(),
-                write_path.to_str().unwrap()
             );
 
             let linked_lib =
-                LinkedLib::new(lib_path.into(), write_path.into()).expect("Could not find library");
+                LinkedLib::new(self.crate_name.clone(), lib_path.into(), write_path.into())
+                    .expect("Could not find library");
 
             app.insert_resource(linked_lib);
-            app.add_systems(ecs::Schedule::PreUpdate, (reload_if_changed,));
+            app.add_systems(ecs::Schedule::PreUpdate, reload_if_changed);
         }
     }
 }

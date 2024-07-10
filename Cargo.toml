@@ -13,7 +13,8 @@ exclude = ["crates/deprecated", "crates/audio"]
 
 [dependencies]
 ecs = { path = "crates/ecs" }
-logger = { path = "crates/logger" }
+log = { path = "crates/log" }
+util = { path = "crates/util" }
 app = { path = "crates/app" }
 winny_math = { path = "crates/winny_math" }
 asset = { path = "crates/asset" }

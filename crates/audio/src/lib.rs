@@ -15,7 +15,7 @@ use ecs::{
     Commands, Entity, Query, Res, ResMut, SparseArrayIndex, WinnyBundle, WinnyComponent,
     WinnyResource, Without,
 };
-use logger::error;
+use util::tracing::{error, info};
 use wav::WavFormat;
 
 pub mod prelude;
@@ -33,7 +33,7 @@ pub enum Error {
 macro_rules! map_stream_err {
     ($err:expr, $f:expr) => {
         $f.map_err(|err| {
-            logger::error!("{:?}", err);
+            error!("{:?}", err);
             $err
         })
     };
@@ -65,6 +65,14 @@ pub struct GlobalAudio {
     pub volume: f32,
     device: Option<Device>,
     config: Option<StreamConfig>,
+}
+
+impl Debug for GlobalAudio {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GlobalAudio")
+            .field("audio", &self.volume)
+            .finish()
+    }
 }
 
 impl GlobalAudio {
@@ -203,7 +211,7 @@ impl AudioSource {
             }
 
             // TODO: streams don't seem to exit
-            logger::info!("Exiting audio stream");
+            info!("Exiting audio stream");
         });
 
         Ok(())
@@ -265,21 +273,21 @@ impl AudioPlayback {
         let _ = self
             .commands
             .send(StreamCommand::Play)
-            .map_err(|err| logger::error!("Could not play audio playback: {:?}", err));
+            .map_err(|err| error!("Could not play audio playback: {:?}", err));
     }
 
     pub fn pause(&self) {
         let _ = self
             .commands
             .send(StreamCommand::Pause)
-            .map_err(|err| logger::error!("Could not pause audio playback: {:?}", err));
+            .map_err(|err| error!("Could not pause audio playback: {:?}", err));
     }
 
     pub fn stop(&self) {
         let _ = self
             .commands
             .send(StreamCommand::Stop)
-            .map_err(|err| logger::error!("Could not stop audio playback: {:?}", err));
+            .map_err(|err| error!("Could not stop audio playback: {:?}", err));
     }
 }
 
@@ -301,7 +309,7 @@ fn init_audio_bundle_streams(
             {
                 commands.get_entity(entity).insert(playback);
             } else {
-                logger::error!("Could not create playback for audio bundle");
+                error!("Could not create playback for audio bundle");
             }
         }
     }

@@ -1,0 +1,11 @@
+[package]
+name = "util"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tracing-error = "0.2.0"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-tracy = { version = "0.10.4", features = ["enable"] }
+tracing-log = "0.2.0"
+tracing = "0.1.40"

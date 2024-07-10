@@ -1,10 +1,8 @@
 [package]
-name = "ecs"
+name = "log"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+app = { path = "../app" }
 util = { path = "../util" }
-ecs_macro = { path = "macro" }
-
-# fxhash = "0.2.1"

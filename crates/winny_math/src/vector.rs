@@ -13,6 +13,14 @@ impl Vec2 {
         Vec2 { x: 0, y: 0 }
     }
 
+    pub fn x(dist: i32) -> Self {
+        Vec2 { x: dist, y: 0 }
+    }
+
+    pub fn y(dist: i32) -> Self {
+        Vec2 { x: 0, y: dist }
+    }
+
     pub fn distance(&self, other: &Vec2) -> f32 {
         let x = (self.x - other.x) as f32;
         let y = (self.y - other.y) as f32;

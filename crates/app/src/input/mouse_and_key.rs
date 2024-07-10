@@ -43,6 +43,7 @@ pub enum KeyCode {
     Z,
     Space,
     Shift,
+    Escape,
 }
 
 impl KeyCode {
@@ -77,6 +78,7 @@ impl KeyCode {
             winit::keyboard::KeyCode::Space => KeyCode::Space,
             winit::keyboard::KeyCode::ShiftLeft => KeyCode::Shift,
             winit::keyboard::KeyCode::ShiftRight => KeyCode::Shift,
+            winit::keyboard::KeyCode::Escape => KeyCode::Escape,
             _ => KeyCode::Unknown,
         }
     }
