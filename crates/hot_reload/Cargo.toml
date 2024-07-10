@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies]
 hot_reload_macro = { path = "macro" }
-logger = { path = "../logger" }
+util = { path = "../util" }
 ecs = { path = "../ecs" }
 app = { path = "../app" }
 

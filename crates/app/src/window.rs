@@ -1,7 +1,9 @@
-use std::sync::Arc;
+use std::{
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
 use super::*;
-use app::{RedrawRequest, WindowCreated, WindowResized, WinitEvent};
 use ecs::WinnyResource;
 use plugins::Plugin;
 use prelude::{KeyInput, MouseInput};
@@ -12,7 +14,6 @@ pub struct WindowPlugin {
     pub inner_size: (u32, u32),
     pub virtual_size: (u32, u32),
     pub position: (u32, u32),
-    pub close_on_escape: bool,
 }
 
 impl Default for WindowPlugin {
@@ -22,7 +23,6 @@ impl Default for WindowPlugin {
             inner_size: (1920, 1080),
             virtual_size: (1920, 1080),
             position: (10, 10),
-            close_on_escape: false,
         }
     }
 }
@@ -30,14 +30,24 @@ impl Default for WindowPlugin {
 impl Plugin for WindowPlugin {
     fn build(&mut self, app: &mut crate::app::App) {
         app.insert_resource(self.clone())
-            .register_event::<RedrawRequest>()
-            .register_event::<WindowResized>()
             .register_event::<MouseInput>()
-            .register_event::<KeyInput>()
-            .register_event::<WindowCreated>()
-            .register_event::<WinitEvent>();
+            .register_event::<KeyInput>();
     }
 }
 
 #[derive(WinnyResource)]
 pub struct WinitWindow(pub Arc<winit::window::Window>);
+
+impl Deref for WinitWindow {
+    type Target = Arc<winit::window::Window>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for WinitWindow {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}

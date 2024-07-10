@@ -226,7 +226,7 @@ impl DumbVec {
     }
 
     pub fn into_vec<T>(&mut self) -> Vec<T> {
-        let mut new_vec = vec![];
+        let mut new_vec = Vec::with_capacity(self.len);
 
         while let Some(val) = self.pop::<T>() {
             new_vec.push(val);

@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies]
 ecs = { path = "../ecs" }
-logger = { path = "../logger" }
+util = { path = "../util" }
 
 pollster = "0.3.0"
 wgpu = "0.20.1"

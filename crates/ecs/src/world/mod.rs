@@ -4,7 +4,7 @@ pub mod unsafe_world;
 
 pub use commands::*;
 pub use entity::*;
-use logger::error;
+use util::tracing::{error, info};
 
 use core::panic;
 use std::any::TypeId;
@@ -168,7 +168,7 @@ impl World {
 
     pub fn despawn(&mut self, entity: Entity) {
         let Some(meta) = self.get_entity_mut(entity) else {
-            logger::error!("Tried to despawn invalid entity");
+            error!("Tried to despawn invalid entity");
             return;
         };
 
@@ -378,10 +378,15 @@ impl World {
         self.insert_resource(Events::<E>::new());
     }
 
+    pub fn push_event<E: Event>(&mut self, event: E) {
+        let mut events = self.resource_mut::<Events<E>>();
+        events.push(event);
+    }
+
     pub fn resource<R: Resource>(&self) -> Res<'_, R> {
         let type_id = std::any::TypeId::of::<R>();
         let id = self.resource_ids.get(&type_id).unwrap_or_else(|| {
-            logger::error!(
+            error!(
                 "Plugin: Resource [{}] is not registered",
                 std::any::type_name::<R>().to_string()
             );
@@ -393,7 +398,7 @@ impl World {
     pub fn resource_mut<R: Resource>(&self) -> ResMut<'_, R> {
         let type_id = std::any::TypeId::of::<R>();
         let id = self.resource_ids.get(&type_id).unwrap_or_else(|| {
-            logger::error!(
+            error!(
                 "Plugin: Resource [{}] is not registered",
                 std::any::type_name::<R>().to_string()
             );
@@ -445,7 +450,7 @@ impl World {
         let resource_ids = self.resource_ids.len();
         let entities = self.entities.len();
 
-        logger::info!("archetypes: {archetypes}, tables: {tables}, resources: {resources}, component_ids: {component_ids}, resource_ids: {resource_ids}, entities: {entities}");
+        info!("archetypes: {archetypes}, tables: {tables}, resources: {resources}, component_ids: {component_ids}, resource_ids: {resource_ids}, entities: {entities}");
     }
 }
 

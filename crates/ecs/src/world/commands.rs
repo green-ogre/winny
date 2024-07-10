@@ -1,4 +1,5 @@
 use super::*;
+use util::tracing::error;
 
 #[derive(Debug)]
 pub struct NewEntityCommands {
@@ -77,7 +78,7 @@ impl EntityCommands {
         }
 
         let Some(entity) = world.get_entity(self.entity) else {
-            logger::error!("[EntityCommands] points to invalid [EntityMeta]");
+            error!("[EntityCommands] points to invalid [EntityMeta]");
             return;
         };
 

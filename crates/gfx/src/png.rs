@@ -4,7 +4,7 @@ use std::{fs::File, io::Read};
 
 use asset::reader::ByteReader;
 use libflate::zlib::Decoder;
-use logger::{error, warn};
+use util::tracing::{error, warn};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -571,7 +571,7 @@ impl Chunk {
             "tEXt" => ChunkType::tEXt,
             "zTXt" => ChunkType::zTXt,
             _ => {
-                logger::error!(
+                error!(
                     "Could not determine chunk type: {}",
                     chunk_type.iter().map(|n| *n as char).collect::<String>()
                 );
@@ -798,7 +798,7 @@ pub fn to_bytes(mut reader: ByteReader<File>) -> Result<(Vec<u8>, (u32, u32)), E
     let read_signature = reader.read_bytes(8).map_err(|_| Error::Reader)?;
 
     if png_signature != *read_signature {
-        logger::error!("Provided file is not a png");
+        error!("Provided file is not a png");
         return Err(Error::InvalidFile);
     }
 

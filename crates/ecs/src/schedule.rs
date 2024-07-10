@@ -7,7 +7,6 @@ struct SchedulerBuilder {
     pub pre_update: Option<ScheduleBuilder>,
     pub update: Option<ScheduleBuilder>,
     pub post_update: Option<ScheduleBuilder>,
-    pub render: Option<ScheduleBuilder>,
     pub flush_events: Option<ScheduleBuilder>,
     pub exit: Option<ScheduleBuilder>,
 }
@@ -20,7 +19,6 @@ impl SchedulerBuilder {
             pre_update: Some(ScheduleBuilder::new()),
             update: Some(ScheduleBuilder::new()),
             post_update: Some(ScheduleBuilder::new()),
-            render: Some(ScheduleBuilder::new()),
             flush_events: Some(ScheduleBuilder::new()),
             exit: Some(ScheduleBuilder::new()),
         }
@@ -37,7 +35,6 @@ pub struct Scheduler {
     pre_update: Vec<SystemSet>,
     update: Vec<SystemSet>,
     post_update: Vec<SystemSet>,
-    render: Vec<SystemSet>,
     flush_events: Vec<SystemSet>,
     exit: Vec<SystemSet>,
 }
@@ -51,7 +48,6 @@ impl Scheduler {
             pre_update: Vec::new(),
             update: Vec::new(),
             post_update: Vec::new(),
-            render: Vec::new(),
             flush_events: Vec::new(),
             exit: Vec::new(),
         }
@@ -64,7 +60,6 @@ impl Scheduler {
             Schedule::PreUpdate => &mut self.builder.pre_update,
             Schedule::Update => &mut self.builder.update,
             Schedule::PostUpdate => &mut self.builder.post_update,
-            Schedule::Render => &mut self.builder.render,
             Schedule::FlushEvents => &mut self.builder.flush_events,
             Schedule::Exit => &mut self.builder.exit,
         };
@@ -80,7 +75,6 @@ impl Scheduler {
         self.pre_update = self.builder.pre_update.take().unwrap().build_schedule();
         self.update = self.builder.update.take().unwrap().build_schedule();
         self.post_update = self.builder.post_update.take().unwrap().build_schedule();
-        self.render = self.builder.render.take().unwrap().build_schedule();
         self.flush_events = self.builder.flush_events.take().unwrap().build_schedule();
         self.exit = self.builder.exit.take().unwrap().build_schedule();
     }
@@ -102,7 +96,6 @@ impl Scheduler {
         apply(&mut self.pre_update);
         apply(&mut self.update);
         apply(&mut self.post_update);
-        apply(&mut self.render);
         apply(&mut self.flush_events);
         apply(&mut self.exit);
     }
@@ -114,7 +107,6 @@ impl Scheduler {
             Schedule::PreUpdate => &mut self.pre_update,
             Schedule::Update => &mut self.update,
             Schedule::PostUpdate => &mut self.post_update,
-            Schedule::Render => &mut self.render,
             Schedule::FlushEvents => &mut self.flush_events,
             Schedule::Exit => &mut self.exit,
         };
@@ -125,7 +117,7 @@ impl Scheduler {
     }
 
     pub fn startup(&mut self, world: &World) {
-        self.run_schedule(Schedule::StartUp, &world);
+        self.run_schedule(Schedule::StartUp, world);
     }
 
     pub fn run(&mut self, world: &World) {
@@ -133,7 +125,9 @@ impl Scheduler {
         self.run_schedule(Schedule::PreUpdate, world);
         self.run_schedule(Schedule::Update, world);
         self.run_schedule(Schedule::PostUpdate, world);
-        self.run_schedule(Schedule::Render, world);
+    }
+
+    pub fn flush_events(&mut self, world: &World) {
         self.run_schedule(Schedule::FlushEvents, world);
     }
 
@@ -149,7 +143,6 @@ pub enum Schedule {
     PreUpdate,
     Update,
     PostUpdate,
-    Render,
     FlushEvents,
     Exit,
 }

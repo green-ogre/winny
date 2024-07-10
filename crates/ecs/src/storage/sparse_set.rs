@@ -1,4 +1,4 @@
-use logger::warn;
+use util::tracing::warn;
 
 use super::*;
 
@@ -183,7 +183,7 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
     where
         F: FnOnce() -> V,
     {
-        if let None = self.get(&index) {
+        if self.get(&index).is_none() {
             self.insert(index, f());
         }
 

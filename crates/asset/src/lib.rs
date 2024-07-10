@@ -10,10 +10,12 @@ use std::{
 
 use app::{app::App, plugins::Plugin};
 use ecs::{
-    new_dumb_drop, DumbVec, Events, ResMut, SparseArrayIndex, SparseSet, UnsafeWorldCell,
-    WinnyComponent, WinnyEvent, WinnyResource,
+    new_dumb_drop, DumbVec, EventWriter, Events, ResMut, SparseArrayIndex, SparseSet,
+    UnsafeWorldCell, WinnyComponent, WinnyEvent, WinnyResource,
 };
 use reader::ByteReader;
+
+use util::tracing::{error, info};
 
 pub mod prelude;
 pub mod reader;
@@ -71,7 +73,7 @@ impl<A: Asset> Into<Handle<A>> for ErasedHandle {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AssetId(u64);
 
 impl AssetId {
@@ -172,6 +174,12 @@ where
     storage: SparseSet<AssetId, LoadedAsset<A>>,
 }
 
+impl<A: Asset> Debug for Assets<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Assets").finish()
+    }
+}
+
 impl<A> Assets<A>
 where
     A: Asset,
@@ -195,6 +203,12 @@ struct InternalAssetLoader {
     loader: Box<dyn ErasedAssetLoader>,
     async_dispatch: Arc<Mutex<AsyncAssetSender>>,
     handler: AssetHandleCreator,
+}
+
+impl Debug for InternalAssetLoader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ItnernalAssetLoader").finish()
+    }
 }
 
 impl InternalAssetLoader {
@@ -234,6 +248,7 @@ impl AssetHandleCreator {
     }
 }
 
+#[derive(Debug)]
 struct AssetLoaders {
     loaders: Vec<InternalAssetLoader>,
     ext_to_loader: Vec<(Vec<String>, usize)>,
@@ -252,7 +267,7 @@ impl AssetLoaders {
     pub fn register_loader(
         &mut self,
         loader: impl ErasedAssetLoader,
-        result: Box<dyn FnMut(Result<ErasedLoadedAsset, ()>)>,
+        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, ()>)>,
     ) {
         self.ext_to_loader
             .push((loader.extensions(), self.loaders.len()));
@@ -298,7 +313,7 @@ impl AssetLoaders {
     }
 }
 
-#[derive(WinnyResource)]
+#[derive(Debug, WinnyResource)]
 pub struct AssetServer {
     asset_folder: String,
     loaders: AssetLoaders,
@@ -315,7 +330,7 @@ impl AssetServer {
     pub fn register_loader(
         &mut self,
         loader: impl ErasedAssetLoader,
-        result: Box<dyn FnMut(Result<ErasedLoadedAsset, ()>)>,
+        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, ()>)>,
     ) {
         self.loaders.register_loader(loader, result);
     }
@@ -332,32 +347,39 @@ pub trait AssetApp {
 impl AssetApp for App {
     fn register_asset_loader<A: Asset>(&mut self, loader: impl AssetLoader) -> &mut Self {
         let assets: Assets<A> = Assets::new();
-        self.insert_resource(assets);
-        self.world_mut().insert_resource(AssetEvents::<A>::new());
+        self.insert_resource(assets)
+            .insert_resource(AssetEvents::<A>::new())
+            .register_event::<AssetLoaderEvent<A>>();
 
         let (asset_result_tx, asset_result_rx) = std::sync::mpsc::channel();
         let arrx = ecs::threads::ChannelReciever::new(asset_result_rx);
 
         self.add_systems(
-            ecs::Schedule::PreUpdate,
-            move |asset_events: ResMut<AssetEvents<A>>, mut assets: ResMut<Assets<A>>| {
+            ecs::Schedule::Platform,
+            move |asset_events: ResMut<AssetEvents<A>>,
+                  mut assets: ResMut<Assets<A>>,
+                  mut asset_loader_events: EventWriter<AssetLoaderEvent<A>>| {
                 if let Ok(()) = arrx.try_recv() {
                     for event in asset_events.events.lock().unwrap().read() {
                         match event {
-                            AssetEvent::Err => {
+                            AssetEvent::Err { handle } => {
                                 // TODO: Handle asset errors
-                                logger::error!(
+                                error!(
                                     "Failed to load asset [{}] => {:?}",
                                     std::any::type_name::<A>(),
                                     "unknown"
                                 );
+                                asset_loader_events.send(AssetLoaderEvent::Err { handle })
                             }
                             AssetEvent::Loaded { asset } => {
-                                logger::info!(
+                                info!(
                                     "Loaded asset [{}] => {:?}",
                                     std::any::type_name::<A>(),
                                     asset.path
                                 );
+                                asset_loader_events.send(AssetLoaderEvent::Loaded {
+                                    handle: asset.handle.into(),
+                                });
                                 let id = asset.handle.id();
                                 assets.insert(asset, id);
                             }
@@ -370,12 +392,14 @@ impl AssetApp for App {
         let mut asset_event_writer =
             AssetEventWriter::<A>::new(unsafe { self.world().as_unsafe_world() });
 
-        let result = move |result: Result<ErasedLoadedAsset, ()>| {
+        let result = move |handle: ErasedHandle, result: Result<ErasedLoadedAsset, ()>| {
             asset_event_writer.send(if let Ok(asset) = result {
                 let asset = asset.into();
                 AssetEvent::Loaded { asset }
             } else {
-                AssetEvent::Err
+                AssetEvent::Err {
+                    handle: handle.into(),
+                }
             });
             // TODO: will this fail sometimes?
             let _ = asset_result_tx.send(());
@@ -388,14 +412,32 @@ impl AssetApp for App {
     }
 }
 
-#[derive(Debug, WinnyEvent)]
-pub enum AssetEvent<A: Asset> {
+#[derive(WinnyEvent)]
+pub enum AssetLoaderEvent<A: Asset> {
+    Loaded { handle: Handle<A> },
+    Err { handle: Handle<A> },
+}
+
+impl<A: Asset> Debug for AssetLoaderEvent<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssetLoaderEvent").finish()
+    }
+}
+
+#[derive(WinnyEvent)]
+enum AssetEvent<A: Asset> {
     Loaded { asset: LoadedAsset<A> },
-    Err,
+    Err { handle: Handle<A> },
+}
+
+impl<A: Asset> Debug for AssetEvent<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssetEvent").finish()
+    }
 }
 
 #[derive(Debug, WinnyResource)]
-pub struct AssetEvents<A: Asset> {
+struct AssetEvents<A: Asset> {
     pub events: Mutex<Events<AssetEvent<A>>>,
 }
 
@@ -407,7 +449,7 @@ impl<A: Asset> AssetEvents<A> {
     }
 }
 
-pub struct AssetEventWriter<'w, A: Asset> {
+struct AssetEventWriter<'w, A: Asset> {
     // This is safe if and only if there is only one world with one asset loader
     // for any given asset.
     //
@@ -453,16 +495,20 @@ pub trait ErasedAssetLoader: Send + Sync + 'static {
 }
 
 pub struct AsyncAssetSender {
-    result: Box<dyn FnMut(Result<ErasedLoadedAsset, ()>)>,
+    result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, ()>)>,
 }
 
 impl AsyncAssetSender {
-    pub fn new(result: Box<dyn FnMut(Result<ErasedLoadedAsset, ()>)>) -> Self {
+    pub fn new(result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, ()>)>) -> Self {
         Self { result }
     }
 
-    pub fn send_result<A: Asset>(&mut self, result: Result<LoadedAsset<A>, ()>) {
-        (self.result)(result.map(|a| a.into()))
+    pub fn send_result<A: Asset>(
+        &mut self,
+        handle: ErasedHandle,
+        result: Result<LoadedAsset<A>, ()>,
+    ) {
+        (self.result)(handle, result.map(|a| a.into()))
     }
 }
 
@@ -486,7 +532,7 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
             } else {
                 Err(())
             };
-            sender.lock().unwrap().send_result(asset);
+            sender.lock().unwrap().send_result(handle, asset);
         });
 
         handle

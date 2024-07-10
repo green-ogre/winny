@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-logger = { path = "../logger" }
+util = { path = "../util" }
 app = { path = "../app" }
 ecs = { path = "../ecs" }

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Debug, marker::PhantomData};
+use std::{borrow::Cow, fmt::Debug, marker::PhantomData, process::exit};
 
 use ecs_macro::all_tuples;
 
@@ -201,9 +201,8 @@ impl SystemSet {
 
             handles.into_iter().all(|h| {
                 h.join()
-                    .map_err(|err| {
-                        logger::error!("could not join system handles: {:?}", err);
-                        panic!();
+                    .map_err(|_| {
+                        exit(1);
                     })
                     .is_ok()
             });
@@ -393,6 +392,7 @@ where
         let state = self
             .param_state
             .get_or_insert(<F::Param as SystemParam>::init_state(world));
+        // let _span = util::tracing::trace_span!("system", %self.name).entered();
         self.f.run(F::Param::to_param(state, world))
     }
 }

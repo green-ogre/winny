@@ -1,6 +1,6 @@
 use std::any::TypeId;
 
-use logger::error;
+use util::tracing::error;
 
 use crate::EntityMeta;
 

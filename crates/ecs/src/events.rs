@@ -1,9 +1,9 @@
 use self::unsafe_world::UnsafeWorldCell;
-use std::marker::PhantomData;
+use std::{fmt::Debug, marker::PhantomData};
 
 use super::*;
 
-pub trait Event: Send + Sync + 'static {}
+pub trait Event: Send + Sync + 'static + Debug {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct EventId(usize);
@@ -65,6 +65,10 @@ impl<E: Event> Events<E> {
         for val in vals {
             self.storage.push(val).unwrap()
         }
+    }
+
+    pub fn peak_read(&self) -> impl Iterator<Item = &E> {
+        self.storage.as_slice::<E>().iter()
     }
 
     pub fn read(&mut self) -> impl Iterator<Item = E> {
@@ -138,7 +142,15 @@ impl<'w, E: Event> EventReader<'w, E> {
         self.events.len()
     }
 
+    pub fn peak_read(&self) -> impl Iterator<Item = &E> {
+        self.events.peak_read()
+    }
+
     pub fn read(mut self) -> impl Iterator<Item = E> {
         self.events.read()
+    }
+
+    pub fn flush(mut self) {
+        self.events.flush();
     }
 }

@@ -1,6 +1,6 @@
 use std::{hash::Hash, ptr::NonNull};
 
-use logger::{error, info};
+use util::tracing::{error, info};
 
 use crate::unsafe_world::UnsafeWorldCell;
 

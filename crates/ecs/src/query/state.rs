@@ -1,4 +1,4 @@
-use logger::error;
+use util::tracing::error;
 
 use super::*;
 
