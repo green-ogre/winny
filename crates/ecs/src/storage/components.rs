@@ -2,19 +2,115 @@ use std::any::TypeId;
 
 use super::*;
 
+use util::tracing::{error, trace};
+
+// https://github.com/bevyengine/bevy/blob/main/crates/bevy_ecs/src/component.rs#L189C1-L193C3
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a `Component`",
+    label = "invalid `Component`",
+    note = "consider annotating `{Self}` with `#[derive(Component)]`"
+)]
 pub trait Component: 'static + Send + Sync {}
 
-pub trait ComponentStorageType {
-    fn storage_type(&self) -> StorageType;
+#[derive(Default)]
+pub struct Components {
+    next_id: usize,
+    id_table: fxhash::FxHashMap<std::any::TypeId, ComponentMeta>,
 }
 
-pub trait Storage {
-    fn storage_type() -> StorageType;
+impl Components {
+    pub fn register<T: Component>(&mut self) -> ComponentId {
+        let type_id = std::any::TypeId::of::<T>();
+        if let Some(meta) = self.id_table.get(&type_id) {
+            meta.id
+        } else {
+            let id = self.new_id();
+            let meta = ComponentMeta::new::<T>(id);
+            self.id_table.insert(type_id, meta);
+
+            trace!(
+                "Registering component: {} => {:?}",
+                std::any::type_name::<T>(),
+                id
+            );
+
+            id
+        }
+    }
+
+    pub fn register_by_id(&mut self, type_id: std::any::TypeId, name: &'static str) -> ComponentId {
+        if let Some(meta) = self.id_table.get(&type_id) {
+            meta.id
+        } else {
+            let id = self.new_id();
+            let meta = ComponentMeta { id, name };
+            self.id_table.insert(type_id, meta);
+
+            trace!("Registering component: {} => {:?}", name, id);
+
+            id
+        }
+    }
+
+    pub fn meta<T: Component>(&self) -> &ComponentMeta {
+        self.id_table.get(&std::any::TypeId::of::<T>()).unwrap()
+    }
+
+    pub fn id(&self, type_id: &std::any::TypeId) -> ComponentId {
+        let Some(meta) = self.id_table.get(type_id) else {
+            error!("Failed to get component meta: {:?}", type_id);
+            panic!();
+        };
+
+        meta.id
+    }
+
+    pub fn ids(&self, type_ids: &[std::any::TypeId]) -> Vec<ComponentId> {
+        let mut component_ids = Vec::with_capacity(type_ids.len());
+        for t in type_ids.iter() {
+            component_ids.push(self.id(t));
+        }
+
+        component_ids
+    }
+
+    fn new_id(&mut self) -> ComponentId {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        ComponentId::new(id)
+    }
 }
 
-impl<T: Storage + 'static> ComponentStorageType for T {
-    fn storage_type(&self) -> StorageType {
-        T::storage_type()
+pub struct ComponentMeta {
+    pub id: ComponentId,
+    pub name: &'static str,
+}
+
+impl ComponentMeta {
+    pub fn new<T: Component>(id: ComponentId) -> Self {
+        let name = std::any::type_name::<T>();
+
+        Self { id, name }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct ComponentId(usize);
+
+impl ComponentId {
+    pub fn new(id: usize) -> Self {
+        Self(id)
+    }
+
+    pub fn id(&self) -> usize {
+        self.0
+    }
+}
+
+impl SparseArrayIndex for ComponentId {
+    fn index(&self) -> usize {
+        self.id()
     }
 }
 
@@ -40,24 +136,5 @@ impl ComponentSet {
 
     pub fn equivalent(&self, components: &[TypeId]) -> bool {
         self.ids.eq(components)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct ComponentId(usize);
-
-impl ComponentId {
-    pub fn new(id: usize) -> Self {
-        Self(id)
-    }
-
-    pub fn id(&self) -> usize {
-        self.0
-    }
-}
-
-impl SparseArrayIndex for ComponentId {
-    fn to_index(&self) -> usize {
-        self.id()
     }
 }

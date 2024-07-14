@@ -24,11 +24,14 @@ impl app::plugins::Plugin for LogPlugin {
         let subscriber = util::tracing_subscriber::Registry::default();
         let subscriber = subscriber.with(
             util::tracing_subscriber::filter::EnvFilter::builder()
-                .parse_lossy("trace,wgpu=warn,naga=warn"),
+                .parse_lossy("info,wgpu=warn,naga=warn,polling=error,winit=warn,calloop=warn"),
         );
         // let subscriber = subscriber.with(util::tracing_error::ErrorLayer::default());
-        let subscriber = subscriber
-            .with(util::tracing_subscriber::fmt::Layer::default().with_writer(std::io::stderr));
+        let subscriber = subscriber.with(
+            util::tracing_subscriber::fmt::Layer::default()
+                .without_time()
+                .with_writer(std::io::stderr),
+        );
         // let subscriber = subscriber.with(util::tracing_tracy::TracyLayer::default());
 
         use util::tracing_subscriber::layer::SubscriberExt;

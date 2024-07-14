@@ -20,34 +20,41 @@ pub fn new_dumb_drop<T>() -> Option<DumbDrop> {
 pub struct DumbVec {
     capacity: usize,
     len: usize,
-    item_layout: Layout,
+    item_layout: Option<Layout>,
     data: NonNull<u8>,
     drop: Option<DumbDrop>,
 }
 
 impl DumbVec {
-    pub fn new(layout: Layout, capacity: usize, drop: Option<DumbDrop>) -> Self {
-        let alloc_layout =
-            unsafe { Layout::from_size_align_unchecked(layout.size() * capacity, layout.align()) };
-        let ptr = unsafe { std::alloc::alloc(alloc_layout) };
-        let Some(data) = NonNull::new(ptr) else {
-            panic!("Failed to allocate memory of capaity {}!", capacity);
-        };
+    pub fn new<T>() -> Self {
+        let drop = new_dumb_drop::<T>();
+        let capacity = if std::mem::size_of::<T>() == 0 { usize::MAX } else { 0 };
+        let item_layout = if std::mem::size_of::<T>() == 0 { None } else { std::alloc::Layout::new::<T>() };
 
         Self {
             len: 0,
-            item_layout: layout,
+            data: NonNull::dangling(),
+            item_layout,
             capacity,
-            data,
             drop,
         }
     }
 
     pub fn to_new_with_capacity(&self, capacity: usize) -> DumbVec {
+        if self.capacity == usize::MAX {
+        Self {
+            len: 0,
+            data: NonNull::dangling(),
+            item_layout: None,
+            capacity: usize::MAX,
+            drop: None,
+        }
+        } else {
+
         let alloc_layout = unsafe {
             Layout::from_size_align_unchecked(
-                self.item_layout.size() * capacity,
-                self.item_layout.align(),
+                self.item_layout.unwrap().size() * capacity,
+                self.item_layout.unwrap().align(),
             )
         };
         let ptr = unsafe { std::alloc::alloc(alloc_layout) };
@@ -59,8 +66,9 @@ impl DumbVec {
             capacity,
             data,
             len: 0,
-            item_layout: self.item_layout.clone(),
+            item_layout: self.item_layout.unwrap().clone(),
             drop: self.drop.clone(),
+        }
         }
     }
 
@@ -99,13 +107,13 @@ impl DumbVec {
     }
 
     pub fn get_unchecked(&self, index: usize) -> NonNull<u8> {
-        let size = self.item_layout.size();
+        let size = self.item_layout.unwrap().size();
 
         unsafe { NonNull::new_unchecked(self.get_ptr().byte_add(size * index)) }
     }
 
     pub fn get_mut_unchecked(&self, index: usize) -> NonNull<u8> {
-        let size = self.item_layout.size();
+        let size = self.item_layout.unwrap().size();
 
         unsafe { NonNull::new_unchecked(self.get_ptr().byte_add(size * index)) }
     }
@@ -119,8 +127,8 @@ impl DumbVec {
     fn resize_exact(&mut self, exact_count: usize) {
         let new_layout = unsafe {
             Layout::from_size_align_unchecked(
-                self.item_layout.size() * exact_count,
-                self.item_layout.align(),
+                self.item_layout.unwrap().size() * exact_count,
+                self.item_layout.unwrap().align(),
             )
         };
 
@@ -135,7 +143,14 @@ impl DumbVec {
     }
 
     pub fn push<T>(&mut self, val: T) -> Result<(), IntoStorageError> {
-        if std::alloc::Layout::new::<T>() != self.item_layout {
+
+        if self.item_layout.is_none() {
+
+        self.len += 1;
+            return Ok(());
+        }
+
+        if std::alloc::Layout::new::<T>() != self.item_layout.unwrap() {
             return Err(IntoStorageError::LayoutMisMatch);
         }
 
@@ -150,6 +165,12 @@ impl DumbVec {
     }
 
     pub fn push_unchecked<T>(&mut self, val: T) -> Result<(), ()> {
+        if self.item_layout.is_none() {
+
+        self.len += 1;
+            return Ok(());
+        }
+
         if self.len >= self.capacity || self.capacity == 0 {
             self.reserve(1);
         }
@@ -165,7 +186,7 @@ impl DumbVec {
             self.reserve(1);
         }
 
-        let size = self.item_layout.size();
+        let size = self.item_layout.unwrap().size();
 
         unsafe { self.get_ptr().add(self.len * size).copy_from(val, size) }
     }
@@ -185,7 +206,7 @@ impl DumbVec {
     }
 
     pub fn push_dyn<T>(&mut self, val: T) -> Result<(), ()> {
-        if std::alloc::Layout::new::<T>() != self.item_layout {
+        if std::alloc::Layout::new::<T>() != self.item_layout.unwrap() {
             return Err(());
         }
 
@@ -207,7 +228,7 @@ impl DumbVec {
         let remove = self.get_mut_unchecked(index);
 
         unsafe {
-            std::ptr::copy_nonoverlapping(last.as_ptr(), remove.as_ptr(), self.item_layout.size())
+            std::ptr::copy_nonoverlapping(last.as_ptr(), remove.as_ptr(), self.item_layout.unwrap().size())
         }
 
         self.len -= 1;
@@ -242,7 +263,7 @@ impl DumbVec {
             for _ in 0..self.len {
                 unsafe {
                     drop(ptr);
-                    ptr = ptr.byte_add(self.item_layout.size());
+                    ptr = ptr.byte_add(self.item_layout.unwrap().size());
                 }
             }
         }
@@ -259,7 +280,7 @@ impl Drop for DumbVec {
             for _ in 0..self.len {
                 unsafe {
                     drop(ptr);
-                    ptr = ptr.byte_add(self.item_layout.size());
+                    ptr = ptr.byte_add(self.item_layout.unwrap().size());
                 }
             }
         }

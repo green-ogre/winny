@@ -2,147 +2,170 @@ use super::*;
 
 #[derive(Debug)]
 struct SchedulerBuilder {
-    pub startup: Option<ScheduleBuilder>,
-    pub platform: Option<ScheduleBuilder>,
-    pub pre_update: Option<ScheduleBuilder>,
-    pub update: Option<ScheduleBuilder>,
-    pub post_update: Option<ScheduleBuilder>,
-    pub flush_events: Option<ScheduleBuilder>,
-    pub exit: Option<ScheduleBuilder>,
+    schedules: Vec<ScheduleBuilder>,
+}
+
+impl Default for SchedulerBuilder {
+    fn default() -> Self {
+        Self {
+            schedules: vec![
+                ScheduleBuilder::new(Schedule::StartUp),
+                ScheduleBuilder::new(Schedule::Platform),
+                ScheduleBuilder::new(Schedule::Exit),
+                ScheduleBuilder::new(Schedule::FlushEvents),
+                ScheduleBuilder::new(Schedule::PreUpdate),
+                ScheduleBuilder::new(Schedule::Update),
+                ScheduleBuilder::new(Schedule::PostUpdate),
+            ],
+        }
+    }
 }
 
 impl SchedulerBuilder {
     pub fn new() -> Self {
         Self {
-            startup: Some(ScheduleBuilder::new()),
-            platform: Some(ScheduleBuilder::new()),
-            pre_update: Some(ScheduleBuilder::new()),
-            update: Some(ScheduleBuilder::new()),
-            post_update: Some(ScheduleBuilder::new()),
-            flush_events: Some(ScheduleBuilder::new()),
-            exit: Some(ScheduleBuilder::new()),
-        }
-    }
-}
-
-// TODO: fix system tree
-#[derive(Debug)]
-pub struct Scheduler {
-    builder: SchedulerBuilder,
-
-    startup: Vec<SystemSet>,
-    platform: Vec<SystemSet>,
-    pre_update: Vec<SystemSet>,
-    update: Vec<SystemSet>,
-    post_update: Vec<SystemSet>,
-    flush_events: Vec<SystemSet>,
-    exit: Vec<SystemSet>,
-}
-
-impl Scheduler {
-    pub fn new() -> Self {
-        Self {
-            builder: SchedulerBuilder::new(),
-            startup: Vec::new(),
-            platform: Vec::new(),
-            pre_update: Vec::new(),
-            update: Vec::new(),
-            post_update: Vec::new(),
-            flush_events: Vec::new(),
-            exit: Vec::new(),
+            schedules: Vec::new(),
         }
     }
 
     pub fn add_systems<M, S: IntoSystemStorage<M>>(&mut self, schedule: Schedule, systems: S) {
-        let builder = match schedule {
-            Schedule::StartUp => &mut self.builder.startup,
-            Schedule::Platform => &mut self.builder.platform,
-            Schedule::PreUpdate => &mut self.builder.pre_update,
-            Schedule::Update => &mut self.builder.update,
-            Schedule::PostUpdate => &mut self.builder.post_update,
-            Schedule::FlushEvents => &mut self.builder.flush_events,
-            Schedule::Exit => &mut self.builder.exit,
-        };
-        let builder = builder.as_mut().unwrap();
-
-        let set = systems.into_set();
-        builder.push_set(set);
+        self.schedules[schedule as usize].push_set(systems.into_set());
     }
 
-    pub fn build_schedule(&mut self) {
-        self.startup = self.builder.startup.take().unwrap().build_schedule();
-        self.platform = self.builder.platform.take().unwrap().build_schedule();
-        self.pre_update = self.builder.pre_update.take().unwrap().build_schedule();
-        self.update = self.builder.update.take().unwrap().build_schedule();
-        self.post_update = self.builder.post_update.take().unwrap().build_schedule();
-        self.flush_events = self.builder.flush_events.take().unwrap().build_schedule();
-        self.exit = self.builder.exit.take().unwrap().build_schedule();
-    }
-
-    pub fn init_systems(&mut self, world: &World) {
-        let init = |storage: &mut Vec<SystemSet>| {
-            for set in storage.iter_mut() {
-                set.init(unsafe { world.as_unsafe_world() });
-            }
-        };
-        self.apply_to_all_schedules(init)
-    }
-
-    fn apply_to_all_schedules(&mut self, mut f: impl FnMut(&mut Vec<SystemSet>)) {
-        let mut apply = |storage: &mut Vec<SystemSet>| f(storage);
-
-        apply(&mut self.startup);
-        apply(&mut self.platform);
-        apply(&mut self.pre_update);
-        apply(&mut self.update);
-        apply(&mut self.post_update);
-        apply(&mut self.flush_events);
-        apply(&mut self.exit);
-    }
-
-    pub fn run_schedule(&mut self, schedule: Schedule, world: &World) {
-        let schedule = match schedule {
-            Schedule::StartUp => &mut self.startup,
-            Schedule::Platform => &mut self.platform,
-            Schedule::PreUpdate => &mut self.pre_update,
-            Schedule::Update => &mut self.update,
-            Schedule::PostUpdate => &mut self.post_update,
-            Schedule::FlushEvents => &mut self.flush_events,
-            Schedule::Exit => &mut self.exit,
-        };
-
-        for set in schedule.iter_mut() {
-            unsafe { set.run(world.as_unsafe_world()) };
+    pub fn build_schedules(&mut self, world: &mut World) -> Vec<ScheduleExecuter> {
+        let mut executers = Vec::new();
+        for schedule in self.schedules.drain(..) {
+            executers.push(ScheduleExecuter::new(
+                schedule.tag,
+                schedule.build_schedule(world),
+            ));
         }
-    }
 
-    pub fn startup(&mut self, world: &World) {
-        self.run_schedule(Schedule::StartUp, world);
-    }
-
-    pub fn run(&mut self, world: &World) {
-        self.run_schedule(Schedule::Platform, world);
-        self.run_schedule(Schedule::PreUpdate, world);
-        self.run_schedule(Schedule::Update, world);
-        self.run_schedule(Schedule::PostUpdate, world);
-    }
-
-    pub fn flush_events(&mut self, world: &World) {
-        self.run_schedule(Schedule::FlushEvents, world);
-    }
-
-    pub fn exit(&mut self, world: &World) {
-        self.run_schedule(Schedule::Exit, world);
+        executers
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+// TODO: fix system tree
+#[derive(Debug, Default)]
+pub struct Scheduler {
+    builder: SchedulerBuilder,
+    executers: Vec<ScheduleExecuter>,
+}
+
+impl Scheduler {
+    pub fn add_systems<M, S: IntoSystemStorage<M>>(&mut self, schedule: Schedule, systems: S) {
+        self.builder.add_systems::<M, S>(schedule, systems);
+    }
+
+    pub fn build_schedule(&mut self, world: &mut World) {
+        self.executers
+            .append(&mut self.builder.build_schedules(world));
+
+        self.executers
+            .iter_mut()
+            .for_each(|e| e.init_systems(world));
+    }
+
+    pub fn init_systems(&mut self, world: &mut World) {
+        for executer in self.executers.iter_mut() {
+            executer.init_systems(world);
+        }
+    }
+
+    pub fn run(&mut self, world: &mut World) {
+        for executer in self.executers.iter_mut().skip(4) {
+            let _span = util::tracing::trace_span!("schedule", name = ?executer.tag).entered();
+            executer.run(world);
+            executer.apply_deffered(world);
+        }
+    }
+
+    pub fn startup(&mut self, world: &mut World) {
+        let startup = &mut self.executers[Schedule::StartUp as usize];
+        let _span = util::tracing::trace_span!("schedule", name = ?startup.tag).entered();
+        startup.run(world);
+        startup.apply_deffered(world);
+    }
+
+    pub fn flush_events(&mut self, world: &mut World) {
+        let flush_events = &mut self.executers[Schedule::FlushEvents as usize];
+        let _span = util::tracing::trace_span!("schedule", name = ?flush_events.tag).entered();
+        flush_events.run(world);
+        // NOTE: flush_events is a platform driven schedule that cannot be added to, meaning
+        // that there is no need to apply deffered commands
+    }
+
+    pub fn exit(&mut self, world: &mut World) {
+        let exit = &mut self.executers[Schedule::Exit as usize];
+        let _span = util::tracing::trace_span!("schedule", name = ?exit.tag).entered();
+        exit.run(world);
+        exit.apply_deffered(world);
+    }
+}
+
+// TODO: pull out backend schedules
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Schedule {
-    StartUp,
-    Platform,
-    PreUpdate,
-    Update,
-    PostUpdate,
-    FlushEvents,
-    Exit,
+    StartUp = 0,
+    Platform = 1,
+    Exit = 2,
+    FlushEvents = 3,
+    PreUpdate = 4,
+    Update = 5,
+    PostUpdate = 6,
+}
+
+#[derive(Debug)]
+struct ScheduleExecuter {
+    tag: Schedule,
+    systems: Vec<StoredSystem>,
+    conditions: Vec<Option<StoredCondition>>,
+}
+
+impl ScheduleExecuter {
+    pub fn new(tag: Schedule, sets: Vec<SystemSet>) -> Self {
+        let mut systems = Vec::new();
+        let mut conditions = Vec::new();
+
+        for mut set in sets.into_iter() {
+            for node in set.nodes.into_iter() {
+                match node {
+                    Node::Leaf(system) => {
+                        systems.push(system);
+                        conditions.push(set.condition.take());
+                    }
+                    _ => panic!(),
+                }
+            }
+        }
+
+        Self {
+            tag,
+            systems,
+            conditions,
+        }
+    }
+
+    pub fn init_systems(&mut self, world: &mut World) {
+        for system in self.systems.iter_mut() {
+            system.init_state(world);
+        }
+    }
+
+    pub fn apply_deffered(&mut self, world: &mut World) {
+        for system in self.systems.iter_mut() {
+            system.apply_deffered(world);
+        }
+    }
+
+    pub fn run(&mut self, world: &mut World) {
+        let world = unsafe { world.as_unsafe_world() };
+        for (sys, cond) in self.systems.iter_mut().zip(self.conditions.iter_mut()) {
+            if let Some(cond) = cond {
+                cond.run_unsafe(world).then(|| sys.run_unsafe(world));
+            } else {
+                sys.run_unsafe(world);
+            }
+        }
+    }
 }

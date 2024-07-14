@@ -7,4 +7,5 @@ edition = "2021"
 util = { path = "../util" }
 ecs_macro = { path = "macro" }
 
-# fxhash = "0.2.1"
+any_vec = "0.14.0"
+fxhash = "0.2.1"

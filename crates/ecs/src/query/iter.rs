@@ -1,177 +1,85 @@
+use crate::{Archetypes, Tables};
+
 use super::*;
 
-pub struct QueryIterStorage<'s> {
-    storage: Vec<(&'s Archetype, &'s Table)>,
-    table: &'s Table,
-    archetype: &'s Archetype,
-}
-
-impl<'s> QueryIterStorage<'s> {
-    pub fn new(storage: Vec<(&'s Archetype, &'s Table)>) -> Self {
-        let (archetype, table) = storage.first().expect("cannot be empty");
-
-        Self {
-            table,
-            archetype,
-            storage,
-        }
-    }
-}
-
-pub struct QueryIter<'s, T, F> {
-    cursor: std::slice::Iter<'s, ArchEntity>,
-    storage: Option<QueryIterStorage<'s>>,
+pub struct QueryIter<'w, 's, T: QueryData, F: Filter> {
+    world: UnsafeWorldCell<'w>,
+    tables: &'w Tables,
+    archetypes: &'w Archetypes,
+    cursor: Cursor<'w, 's, T>,
     query_state: &'s QueryState<T, F>,
-    next_storage: usize,
-    query: PhantomData<T>,
     filter: PhantomData<F>,
 }
 
-impl<'s, T, F> QueryIter<'s, T, F> {
-    pub fn new(
-        query_state: &'s QueryState<T, F>,
-        storage: Vec<(&'s Archetype, &'s Table)>,
-    ) -> Self {
-        if storage.first().is_none() {
-            return Self::empty(query_state);
-        }
-
-        let storage = QueryIterStorage::new(storage);
+impl<'w, 's, T: QueryData, F: Filter> QueryIter<'w, 's, T, F> {
+    pub fn new(world: UnsafeWorldCell<'w>, query_state: &'s QueryState<T, F>) -> Self {
+        let cursor = Cursor::new(world, query_state);
+        let tables = &unsafe { world.tables() };
+        let archetypes = &unsafe { world.archetypes() };
 
         Self {
             query_state,
-            cursor: storage.archetype.entities.values().iter(),
-            next_storage: 1,
-            storage: Some(storage),
-            query: PhantomData,
-            filter: PhantomData,
-        }
-    }
-
-    fn empty(query_state: &'s QueryState<T, F>) -> Self {
-        Self {
-            query_state,
-            cursor: [].iter(),
-            next_storage: 0,
-            storage: None,
-            query: PhantomData,
+            world,
+            tables,
+            archetypes,
+            cursor,
             filter: PhantomData,
         }
     }
 }
 
-impl<'s, T: QueryData, F: Filter> Iterator for QueryIter<'s, T, F> {
-    type Item = T::ReadOnly<'s>;
+impl<'w, 's, T: QueryData, F: Filter> Iterator for QueryIter<'w, 's, T, F> {
+    type Item = T::Item<'w>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.storage.is_none() {
-            return None;
-        }
-
-        let Some(arch_entity) = self.cursor.next().or_else(|| {
-            let storage = self.storage.as_mut().unwrap();
-
-            let Some(next_storage) = storage.storage.get(self.next_storage) else {
-                return None;
-            };
-
-            self.next_storage += 1;
-            storage.archetype = &next_storage.0;
-            storage.table = &next_storage.1;
-
-            self.cursor = storage.archetype.entities.values().iter();
-            let Some(next) = self.cursor.next() else {
-                return None;
-            };
-
-            Some(next)
-        }) else {
-            return None;
-        };
-
-        Some(T::read_only(
-            self.storage.as_ref().unwrap().table,
-            arch_entity,
-            self.query_state.iter_component_ids(),
-        ))
+        self.cursor
+            .next(self.tables, self.archetypes, self.query_state)
     }
 }
 
-pub struct QueryIterMut<'s, T, F> {
-    cursor: std::slice::Iter<'s, ArchEntity>,
-    storage: Option<QueryIterStorage<'s>>,
-    query_state: &'s QueryState<T, F>,
-    next_storage: usize,
-    query: PhantomData<T>,
-    filter: PhantomData<F>,
+struct Cursor<'w, 's, T: QueryData> {
+    entities: &'w [ArchEntity],
+    storage_ids: std::slice::Iter<'s, StorageId>,
+    fetch: T::Fetch<'w>,
+    current_row: usize,
+    table_len: usize,
 }
 
-impl<'s, T, F> QueryIterMut<'s, T, F> {
-    pub fn new(
+impl<'w, 's, T: QueryData> Cursor<'w, 's, T> {
+    pub fn new<F: Filter>(world: UnsafeWorldCell<'w>, query_state: &'s QueryState<T, F>) -> Self {
+        let fetch = T::init_fetch(world, &query_state.state);
+
+        Cursor {
+            fetch,
+            storage_ids: query_state.storage_locations.iter(),
+            entities: &[],
+            current_row: 0,
+            table_len: 0,
+        }
+    }
+
+    pub fn next<F: Filter>(
+        &mut self,
+        tables: &'w Tables,
+        archetypes: &'w Archetypes,
         query_state: &'s QueryState<T, F>,
-        storage: Vec<(&'s Archetype, &'s Table)>,
-    ) -> Self {
-        if storage.first().is_none() {
-            return Self::empty(query_state);
+    ) -> Option<T::Item<'w>> {
+        loop {
+            if self.current_row == self.table_len {
+                let storage_id = self.storage_ids.next()?;
+                let table = tables.get(storage_id.table_id);
+                let archetype = archetypes.get(&storage_id.archetype_id).unwrap();
+                self.entities = archetype.entities.values();
+                self.current_row = 0;
+                self.table_len = table.depth();
+
+                T::set_table(&mut self.fetch, &query_state.state, table);
+                continue;
+            }
+
+            let res = T::fetch(&mut self.fetch, &self.entities[self.current_row]);
+            self.current_row += 1;
+            return Some(res);
         }
-
-        let storage = QueryIterStorage::new(storage);
-
-        Self {
-            query_state,
-            cursor: storage.archetype.entities.values().iter(),
-            next_storage: 1,
-            storage: Some(storage),
-            query: PhantomData,
-            filter: PhantomData,
-        }
-    }
-
-    fn empty(query_state: &'s QueryState<T, F>) -> Self {
-        Self {
-            query_state,
-            cursor: [].iter(),
-            next_storage: 0,
-            storage: None,
-            query: PhantomData,
-            filter: PhantomData,
-        }
-    }
-}
-
-impl<'s, T: QueryData, F: Filter> Iterator for QueryIterMut<'s, T, F> {
-    type Item = T::Item<'s>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.storage.is_none() {
-            return None;
-        }
-
-        let Some(arch_entity) = self.cursor.next().or_else(|| {
-            let storage = self.storage.as_mut().unwrap();
-
-            let Some(next_storage) = storage.storage.get(self.next_storage) else {
-                return None;
-            };
-
-            self.next_storage += 1;
-            storage.archetype = &next_storage.0;
-            storage.table = &next_storage.1;
-
-            self.cursor = storage.archetype.entities.values().iter();
-            let Some(next) = self.cursor.next() else {
-                return None;
-            };
-
-            Some(next)
-        }) else {
-            return None;
-        };
-
-        Some(T::fetch(
-            self.storage.as_ref().unwrap().table,
-            arch_entity,
-            self.query_state.iter_component_ids(),
-        ))
     }
 }

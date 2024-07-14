@@ -1,3 +1,4 @@
+use app::renderer::RenderDevice;
 use ecs::WinnyComponent;
 use winny_math::vector::Vec2f;
 
@@ -34,7 +35,7 @@ impl Transform2D {
 
 pub fn create_texture_bind_group(
     label: Option<&str>,
-    device: &wgpu::Device,
+    device: &RenderDevice,
     view: &wgpu::TextureView,
     sampler: &wgpu::Sampler,
 ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
@@ -80,7 +81,7 @@ pub fn create_texture_bind_group(
 
 pub fn create_uniform_bind_group(
     label: Option<&str>,
-    device: &wgpu::Device,
+    device: &RenderDevice,
     buffer: &wgpu::Buffer,
 ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -236,7 +237,7 @@ pub const FULLSCREEN_QUAD_VERTEX_UV: [VertexUv; 6] = [
 
 pub fn create_render_pipeline(
     label: &str,
-    device: &wgpu::Device,
+    device: &RenderDevice,
     layout: &wgpu::PipelineLayout,
     color_format: wgpu::TextureFormat,
     depth_format: Option<wgpu::TextureFormat>,

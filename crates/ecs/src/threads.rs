@@ -1,6 +1,7 @@
 use std::{
     fmt::Debug,
-    sync::mpsc::{Receiver, SendError, Sender, TryIter},
+    ops::Deref,
+    sync::mpsc::{Receiver, SendError, Sender},
 };
 
 use ecs_macro::InternalResource;
@@ -29,30 +30,29 @@ where
     }
 }
 
-#[derive(Debug, InternalResource)]
+#[derive(InternalResource)]
 pub struct ChannelReciever<T>
 where
-    T: 'static + Send + Sync + Debug,
+    T: 'static + Send + Sync,
 {
     reciever: Receiver<T>,
 }
 
-unsafe impl<T> Send for ChannelReciever<T> where T: 'static + Send + Sync + Debug {}
-unsafe impl<T> Sync for ChannelReciever<T> where T: 'static + Send + Sync + Debug {}
+unsafe impl<T> Send for ChannelReciever<T> where T: 'static + Send + Sync {}
+unsafe impl<T> Sync for ChannelReciever<T> where T: 'static + Send + Sync {}
 
 impl<T> ChannelReciever<T>
 where
-    T: 'static + Send + Sync + Debug,
+    T: 'static + Send + Sync,
 {
     pub fn new(reciever: Receiver<T>) -> Self {
         Self { reciever }
     }
+}
 
-    pub fn try_recv(&self) -> Result<T, ()> {
-        self.reciever.try_recv().map_err(|_| ())
-    }
-
-    pub fn try_iter(&self) -> TryIter<'_, T> {
-        self.reciever.try_iter()
+impl<T: 'static + Send + Sync> Deref for ChannelReciever<T> {
+    type Target = Receiver<T>;
+    fn deref(&self) -> &Self::Target {
+        &self.reciever
     }
 }

@@ -1,16 +1,17 @@
 #![allow(unused)]
 use std::{
     collections::VecDeque,
-    sync::Arc,
+    sync::{mpsc::channel, Arc},
+    thread::JoinHandle,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ecs::{prelude::*, Events, Scheduler, WinnyEvent, WinnyResource, World};
+use ecs::{prelude::*, Events, Scheduler, UnsafeWorldCell, WinnyEvent, WinnyResource, World};
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
     event::{self, DeviceEvent, DeviceId, ElementState, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{self, ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::PhysicalKey,
     window::{Window, WindowId},
 };
@@ -18,6 +19,7 @@ use winit::{
 use crate::{
     plugins::{Plugin, PluginSet},
     prelude::KeyState,
+    renderer::{RenderConfig, RenderDevice, RenderPasses, RenderQueue},
 };
 use crate::{
     prelude::{KeyCode, KeyInput, MouseInput, WindowPlugin},
@@ -44,14 +46,10 @@ impl Default for App {
         App {
             world,
             render_passes: Vec::new(),
-            scheduler: Scheduler::new(),
+            scheduler: Scheduler::default(),
             plugins: VecDeque::new(),
         }
     }
-}
-
-fn run_schedule(schedule: Schedule, scheduler: &mut Scheduler, world: &mut World) {
-    scheduler.run_schedule(schedule, world);
 }
 
 impl App {
@@ -59,7 +57,7 @@ impl App {
         Self {
             world: World::default(),
             render_passes: Vec::new(),
-            scheduler: Scheduler::new(),
+            scheduler: Scheduler::default(),
             plugins: VecDeque::new(),
         }
     }
@@ -72,11 +70,7 @@ impl App {
         self.plugins.push_front(plugin);
     }
 
-    pub(crate) fn run_schedule(&mut self, schedule: Schedule) {
-        run_schedule(schedule, &mut self.scheduler, &mut self.world);
-    }
-
-    pub fn world(&mut self) -> &World {
+    pub fn world(&self) -> &World {
         &self.world
     }
 
@@ -152,8 +146,13 @@ impl App {
             plugin.build(self);
         }
 
-        self.scheduler.build_schedule();
-        self.scheduler.init_systems(&self.world);
+        // NOTE: see 'resumed' for rationale
+        self.world.register_resource::<RenderPasses>();
+        self.world.register_resource::<RenderQueue>();
+        self.world.register_resource::<RenderDevice>();
+        self.world.register_resource::<RenderConfig>();
+
+        self.scheduler.build_schedule(&mut self.world);
 
         let mut app = App::empty();
         std::mem::swap(self, &mut app);
@@ -162,26 +161,23 @@ impl App {
         let mut event_loop = EventLoop::builder();
         let event_loop = event_loop.build().unwrap();
         event_loop.set_control_flow(ControlFlow::Poll);
-
-        let _span = util::tracing::info_span!("event_loop").entered();
         let _ = event_loop.run_app(&mut win_app);
     }
 
-    fn startup(&mut self) {
-        self.run_schedule(Schedule::StartUp);
+    fn update(&mut self) -> Result<(), ExitCode> {
+        update_ecs(&mut self.world, &mut self.scheduler)
     }
 
-    fn update(&mut self) -> bool {
-        if !update_ecs(&mut self.world, &mut self.scheduler) {
-            return false;
-        }
-        let end = SystemTime::now();
+    fn startup(&mut self) {
+        self.scheduler.startup(&mut self.world);
+    }
 
-        true
+    fn flush_events(&mut self) {
+        self.scheduler.flush_events(&mut self.world);
     }
 
     fn exit(&mut self) {
-        self.run_schedule(Schedule::Exit);
+        self.scheduler.exit(&mut self.world);
     }
 }
 
@@ -189,7 +185,7 @@ fn flush_event_queue<E: Event>(queue: EventReader<E>) {
     queue.flush();
 }
 
-pub trait RenderPass: 'static {
+pub trait RenderPass: 'static + Send + Sync {
     fn render_pass(
         &self,
         output: &wgpu::SurfaceTexture,
@@ -197,19 +193,35 @@ pub trait RenderPass: 'static {
         encoder: &mut wgpu::CommandEncoder,
         world: &World,
     );
-    fn update_for_render_pass(&self, queue: &wgpu::Queue, world: &World) {}
-    fn resized(&self, world: &World) {}
+    fn update_for_render_pass(&self, world: &mut World) {}
+    fn resized(&self, renderer: &Renderer, world: &mut World) {}
 }
 
 #[derive(Debug, WinnyResource)]
 pub struct DeltaT(pub f64);
 
-fn update_ecs(world: &mut World, scheduler: &mut Scheduler) -> bool {
-    scheduler.run(world);
-    let exit = !check_for_exit(world, scheduler);
-    scheduler.flush_events(world);
+fn update_ecs(world: &mut World, scheduler: &mut Scheduler) -> Result<(), ExitCode> {
+    let mut exit = false;
+    let mut panicking = false;
+    std::thread::scope(|s| {
+        let h = s.spawn(|| {
+            scheduler.run(world);
+            exit = check_for_exit(world, scheduler);
+            scheduler.flush_events(world);
+        });
 
-    exit
+        if let Err(_) = h.join() {
+            panicking = true;
+        }
+    });
+
+    if panicking {
+        Err(ExitCode::Panicking)
+    } else if exit {
+        Err(ExitCode::ExitApp)
+    } else {
+        Ok(())
+    }
 }
 
 fn check_for_exit(world: &mut World, scheduler: &mut Scheduler) -> bool {
@@ -229,16 +241,25 @@ pub enum WinitEvent {
 
 struct WinitApp {
     app: App,
+    renderer: Option<Renderer>,
+    render_handle: Option<JoinHandle<Duration>>,
     exit_requested: bool,
     startup: bool,
     presented_frames: u32,
     clock: SystemTime,
 }
 
+enum ExitCode {
+    ExitApp,
+    Panicking,
+}
+
 impl WinitApp {
     pub fn new(app: App) -> Self {
         Self {
             app,
+            renderer: None,
+            render_handle: None,
             exit_requested: false,
             startup: false,
             presented_frames: 0,
@@ -246,13 +267,13 @@ impl WinitApp {
         }
     }
 
-    pub fn update(&mut self) {
-        self.exit_requested = !self.app.update();
+    pub fn update(&mut self) -> Result<(), ExitCode> {
+        self.app.update()
     }
 
-    pub fn render(&mut self) {
-        let world = unsafe { self.app.world().as_unsafe_world().read_only() };
-        self.app.world().resource_mut::<Renderer>().render(world);
+    pub fn render(&mut self) -> JoinHandle<Duration> {
+        let world = unsafe { self.app.world().as_unsafe_world().read_and_write() };
+        self.renderer.as_mut().unwrap().render(world)
     }
 }
 
@@ -272,13 +293,24 @@ impl ApplicationHandler for WinitApp {
             ));
         let window = event_loop.create_window(window_attributes).unwrap();
         let window = WinitWindow(Arc::new(window));
-        let renderer = Renderer::new(
+
+        let (rp_tx, rp_rx) = channel::<Box<dyn RenderPass>>();
+        let (device, queue, renderer) = Renderer::new(
             Arc::clone(&window),
             self.app.render_passes.drain(..).collect(),
+            rp_rx,
         );
 
-        self.app.insert_resource(renderer).insert_resource(window);
-        self.app.run_schedule(Schedule::StartUp);
+        self.app
+            // NOTE: these are registered before the schedule is built such that systems can query
+            // these as it is ecpexted that the renderer is initialized by startup
+            .insert_resource(RenderQueue(queue))
+            .insert_resource(RenderDevice(device))
+            .insert_resource(RenderPasses::new(rp_tx))
+            .insert_resource(renderer.config())
+            .insert_resource(window);
+        self.app.startup();
+        self.renderer = Some(renderer);
         self.startup = true;
     }
 
@@ -293,9 +325,12 @@ impl ApplicationHandler for WinitApp {
                 self.exit_requested = true;
             }
             winit::event::WindowEvent::Resized(size) => {
-                let world = unsafe { self.app.world().as_unsafe_world().read_only() };
-                let mut renderer = self.app.world().resource_mut::<Renderer>();
-                renderer.resize(world, size.width, size.height);
+                let world = self.app.world_mut();
+                self.renderer
+                    .as_mut()
+                    .unwrap()
+                    .resize(world, size.width, size.height);
+                world.insert_resource(self.renderer.as_ref().unwrap().config());
             }
             winit::event::WindowEvent::KeyboardInput { event, .. } => self
                 .app
@@ -308,20 +343,31 @@ impl ApplicationHandler for WinitApp {
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        if self.exit_requested {
-            event_loop.exit();
-        }
-
         if !self.startup {
             return;
         }
 
+        let app = &mut self.app;
         let start = SystemTime::now();
-        self.update();
+        if let Err(e) = self.update() {
+            match e {
+                ExitCode::ExitApp => self.exit_requested = true,
+                ExitCode::Panicking => {
+                    drop(self.renderer.take());
+                    event_loop.exit();
+                    return;
+                }
+            }
+        }
         let update_end = SystemTime::now().duration_since(start).unwrap_or_default();
-        let start = SystemTime::now();
-        self.render();
-        let render_end = SystemTime::now().duration_since(start).unwrap_or_default();
+
+        let mut render_end = Duration::default();
+        if let Some(handle) = self.render_handle.take() {
+            if let Ok(duration) = handle.join() {
+                render_end = duration;
+            }
+        }
+        self.render_handle = Some(self.render());
         self.presented_frames += 1;
 
         if SystemTime::now()
@@ -345,10 +391,11 @@ impl ApplicationHandler for WinitApp {
             self.presented_frames = 0;
             self.clock = SystemTime::now();
         }
-    }
 
-    fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.app.exit();
+        if self.exit_requested {
+            self.app.exit();
+            event_loop.exit();
+        }
     }
 }
 

@@ -1,18 +1,21 @@
 use std::{
     env::current_dir,
     io::{BufReader, Cursor},
+    path::Path,
 };
 
 use std::ops::Range;
 
+use app::renderer::{RenderConfig, RenderDevice, RenderQueue};
 use image::GenericImageView;
 use wgpu::util::DeviceExt;
 
-use util::tracing::info;
+use util::tracing::{info, trace};
 
 use crate::texture::Texture;
 use crate::VertexLayout;
 
+#[derive(Debug, Clone, Copy)]
 pub struct Instance {
     pub position: cgmath::Vector3<f32>,
     pub rotation: cgmath::Quaternion<f32>,
@@ -185,6 +188,7 @@ impl Material {
     }
 }
 
+#[derive(Debug)]
 pub struct Mesh {
     pub name: String,
     pub vertex_buffer: wgpu::Buffer,
@@ -222,8 +226,8 @@ pub struct PointLightStorage {
 
 pub fn load_normal(
     file_name: &str,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &RenderDevice,
+    queue: &RenderQueue,
 ) -> Result<NormalTexture, ()> {
     info!("Loading texture: {:?}", file_name);
     let data = load_binary(file_name).unwrap();
@@ -233,8 +237,8 @@ pub fn load_normal(
 
 pub fn load_model(
     path: &str,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &RenderDevice,
+    queue: &RenderQueue,
     layout: &wgpu::BindGroupLayout,
 ) -> Result<Model, ()> {
     info!("Loading model: {}", path);
@@ -250,6 +254,7 @@ pub fn load_model(
             ..Default::default()
         },
         move |p| {
+            trace!("{:?}", &p);
             let mat_text = load_string(&p.to_str().unwrap()).unwrap();
             tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
         },
@@ -258,14 +263,32 @@ pub fn load_model(
 
     let mut materials = Vec::new();
     for m in obj_materials.unwrap() {
+        trace!("{:?}", &m);
+
+        if m.diffuse_texture.is_none() | m.normal_texture.is_none() | m.diffuse_texture.is_none() {
+            continue;
+        }
+
         let diffuse_texture = crate::texture::Texture::load_texture(
-            &m.diffuse_texture.unwrap().as_str(),
+            Path::new::<String>(&m.diffuse_texture.unwrap())
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
             device,
             queue,
         )
         .unwrap();
-        let normal_texture =
-            load_normal(&m.normal_texture.unwrap().as_str(), device, queue).unwrap();
+        let normal_texture = load_normal(
+            Path::new::<String>(&m.normal_texture.unwrap())
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            device,
+            queue,
+        )
+        .unwrap();
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout,
@@ -399,13 +422,15 @@ pub fn load_model(
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-            Mesh {
+            let mesh = Mesh {
                 name: path.to_string(),
                 vertex_buffer,
                 index_buffer,
                 num_elements: m.mesh.indices.len() as u32,
-                material: m.mesh.material_id.unwrap_or(0),
-            }
+                material: m.mesh.material_id.unwrap_or(usize::MAX),
+            };
+            trace!("{:?}", mesh);
+            mesh
         })
         .collect::<Vec<_>>();
 
@@ -637,8 +662,8 @@ pub struct NormalTexture {
 impl NormalTexture {
     pub fn from_image(
         img: &image::DynamicImage,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &RenderDevice,
+        queue: &RenderQueue,
     ) -> Self {
         let rgba = img.to_rgba8();
         let dimensions = img.dimensions();
@@ -703,10 +728,10 @@ pub struct DepthTexture {
 impl DepthTexture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, label: &str) -> Self {
+    pub fn new(device: &RenderDevice, config: &RenderConfig, label: &str) -> Self {
         let size = wgpu::Extent3d {
-            width: config.width,
-            height: config.height,
+            width: config.width(),
+            height: config.height(),
             depth_or_array_layers: 1,
         };
         let desc = wgpu::TextureDescriptor {

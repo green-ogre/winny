@@ -82,14 +82,12 @@ impl Default for DefaultPlugins {
 impl Plugin for DefaultPlugins {
     fn build(&mut self, app: &mut app::app::App) {
         app.add_plugins((
+            self.log.clone(),
             self.window.clone(),
-            // self.perf.clone(),
             self.asset_loader.clone(),
             gfx::texture::TexturePlugin,
             CloseOnEscape,
-            self.log.clone(),
             // self.sprites.clone(),
-            // app::renderer::RendererPlugin,
         ));
     }
 }

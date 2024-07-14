@@ -1,7 +1,7 @@
 use std::{fs::File, io::Cursor};
 
 use asset::reader::ByteReader;
-use util::tracing::{error, warn};
+use util::tracing::warn;
 
 impl From<asset::reader::Error> for Error {
     fn from(_value: asset::reader::Error) -> Self {
@@ -20,7 +20,7 @@ pub enum Error {
 
 pub fn load_from_bytes(mut reader: ByteReader<File>) -> Result<(Vec<u8>, WavFormat), Error> {
     let parser = WavParser::new(&mut reader)?;
-    Ok(parser.parse_to_bytes()?)
+    parser.parse_to_bytes()
 }
 
 #[derive(Debug)]
@@ -82,7 +82,7 @@ impl WavParser {
 
                             let bytes_per_sample =
                                 self.format.block_align as u32 / self.format.channels as u32;
-                            let total_samples = data_len / bytes_per_sample as u32;
+                            let total_samples = data_len / bytes_per_sample;
                             bytes.reserve_exact((bytes_per_sample * total_samples) as usize);
 
                             for _ in 0..total_samples {
@@ -156,7 +156,7 @@ impl WavFormat {
         let bits_per_sample = chunk.reader.read_u16_le()?;
         let extended_format = if chunk.length == 18 || chunk.length == 40 {
             let ext_size = chunk.reader.read_u16_le()?;
-            let extended_format = if ext_size == 22 {
+            if ext_size == 22 {
                 let valid_bits_per_sample = chunk.reader.read_u16_le()?;
                 let channel_mask = chunk.reader.read_u32_le()?;
                 let sub_format = chunk.reader.read_bytes(16)?;
@@ -167,9 +167,7 @@ impl WavFormat {
                 })
             } else {
                 None
-            };
-
-            extended_format
+            }
         } else {
             None
         };
@@ -187,7 +185,7 @@ impl WavFormat {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, clippy::upper_case_acronyms)]
 enum ChunkId {
     // Master chunk
     RIFF,
@@ -216,8 +214,7 @@ impl Chunk {
             "fmt " => ChunkId::fmt,
             "data" => ChunkId::data,
             _ => {
-                error!("Could not determine chunk id: {}", chunk_id);
-                println!("Could not determine chunk id: {}", chunk_id);
+                warn!("Did no parse chunk id: {}", chunk_id);
                 return Err(Error::UnknownChunkId);
             }
         };

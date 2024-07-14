@@ -1,176 +1,101 @@
-use util::tracing::error;
-
 use super::*;
 
-pub struct QueryState<T, F> {
-    storages: Vec<StorageId>,
-    component_access: Vec<ComponentAccess>,
-    component_ids: Vec<ComponentId>,
-    query: PhantomData<T>,
+pub struct QueryState<T: QueryData, F = ()> {
+    pub storage_locations: Vec<StorageId>,
+    system_access: SystemAccess,
+    pub state: T::State,
     filter: PhantomData<F>,
 }
 
-impl<T, F> Debug for QueryState<T, F> {
+unsafe impl<T: QueryData, F: Filter> Send for QueryState<T, F> {}
+unsafe impl<T: QueryData, F: Filter> Sync for QueryState<T, F> {}
+
+impl<T: QueryData, F: Filter> Debug for QueryState<T, F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QueryState")
-            .field("query", &self.query)
             .field("filter", &self.filter)
-            .field("storages", &self.storages)
-            .field("component_access", &self.component_access)
             .finish()
     }
 }
 
 impl<T: QueryData, F: Filter> QueryState<T, F> {
-    pub fn from_world_unsafe<'w>(world: UnsafeWorldCell<'w>) -> Self {
+    pub fn from_world_unsafe(world: UnsafeWorldCell<'_>) -> Self {
         let storages = unsafe {
             world
-                .read_only()
-                .archetypes
+                .archetypes()
                 .iter()
-                .filter(|arch| arch.contains_query::<T>())
-                .filter(|arch| F::condition(arch))
-                .map(|arch| StorageId {
+                .filter(|(_, arch)| arch.contains_query::<T>())
+                .filter(|(_, arch)| F::condition(arch))
+                .map(|(id, arch)| StorageId {
                     table_id: arch.table_id,
-                    archetype_id: arch.id,
+                    archetype_id: *id,
                 })
                 .collect()
         };
-
-        let component_ids = unsafe { world.read_only() }.get_component_ids(&T::set_ids());
-
-        Self::new(storages, component_ids)
+        Self::new(world, storages)
     }
 
-    pub fn new(storages: Vec<StorageId>, component_ids: Vec<ComponentId>) -> Self {
+    pub fn new(world: UnsafeWorldCell<'_>, storage_locations: Vec<StorageId>) -> Self {
+        let state = T::init_state(world);
+
         Self {
-            storages,
-            component_ids,
-            component_access: T::set_access(),
-            query: PhantomData,
+            storage_locations,
+            system_access: T::system_access(unsafe { world.components_mut() }),
+            state,
             filter: PhantomData,
         }
     }
 
-    pub fn component_access(&self) -> Vec<ComponentAccess> {
-        self.component_access.clone()
+    pub fn system_access(&self) -> SystemAccess {
+        todo!();
     }
 
-    pub fn iter_component_ids(&self) -> impl Iterator<Item = ComponentId> {
-        self.component_ids.clone().into_iter()
+    // From https://github.com/bevyengine/bevy/blob/d7080369a7471e6aa9747bad41a4469092f9967b/crates/bevy_ecs/src/query/state.rs#L124
+    fn as_transmuted_state<NewD: QueryData, NewF: Filter>(&self) -> &QueryState<NewD, NewF> {
+        unsafe { &*std::ptr::from_ref(self).cast::<QueryState<NewD, NewF>>() }
     }
 
-    pub fn new_iter(&self, world: &UnsafeWorldCell<'_>) -> QueryIter<'_, T, F> {
-        let storage: Vec<_> = self
-            .storages
-            .iter()
-            .map(|id| unsafe {
-                (
-                    world
-                        .read_only()
-                        .archetypes
-                        .get(id.archetype_id)
-                        .expect("correct index"),
-                    world
-                        .read_only()
-                        .tables
-                        .get(id.table_id)
-                        .expect("correct index"),
-                )
-            })
-            .collect();
-
-        QueryIter::new(self, storage)
+    pub fn read_only(&self) -> &QueryState<T::ReadOnly, F> {
+        self.as_transmuted_state::<T::ReadOnly, F>()
     }
 
-    pub fn new_iter_mut<'w>(&self, world: &'w UnsafeWorldCell<'w>) -> QueryIterMut<'_, T, F> {
-        let storage: Vec<_> = self
-            .storages
-            .iter()
-            .map(|id| unsafe {
-                (
-                    world
-                        .read_only()
-                        .archetypes
-                        .get(id.archetype_id)
-                        .expect("correct index"),
-                    world
-                        .read_only()
-                        .tables
-                        .get(id.table_id)
-                        .expect("correct index"),
-                )
-            })
-            .collect();
-
-        QueryIterMut::new(self, storage)
+    pub fn new_iter<'w>(&self, world: UnsafeWorldCell<'w>) -> QueryIter<'w, '_, T, F> {
+        QueryIter::new(world, self)
     }
 
-    pub fn get_single<'w>(&self, world: &'w UnsafeWorldCell) -> Result<T::ReadOnly<'_>, ()> {
-        Ok(T::read_only(
-            unsafe { world.read_only() }
-                .tables
-                .get(
-                    self.storages
-                        .first()
-                        .ok_or_else(|| {
-                            error!("Query could not find a table for single");
-                        })?
-                        .table_id,
-                )
-                .expect("correct table id"),
-            unsafe { world.read_only() }
-                .archetypes
-                .get(
-                    self.storages
-                        .first()
-                        .ok_or_else(|| {
-                            error!("Query could not find an archetype for single");
-                        })?
-                        .archetype_id,
-                )
-                .expect("correct archetype id")
-                .entities
-                .get_single()
-                .ok_or_else(|| {
-                    error!("Query could not produce any entities for single");
-                    ()
-                })?,
-            self.iter_component_ids(),
-        ))
-    }
-
-    // TODO: error handling
-    pub fn get_single_mut<'w>(&self, world: &'w UnsafeWorldCell) -> Result<T::Item<'_>, ()> {
-        Ok(T::fetch(
-            unsafe { world.read_only() }
-                .tables
-                .get(
-                    self.storages
-                        .first()
-                        .ok_or_else(|| {
-                            error!("Query could not find a table for single mut");
-                        })?
-                        .table_id,
-                )
-                .expect("correct table id"),
-            unsafe { world.read_and_write() }
-                .archetypes
-                .get_mut(
-                    self.storages
-                        .first()
-                        .ok_or_else(|| {
-                            error!("Query could not find an archetype for single mut");
-                        })?
-                        .archetype_id,
-                )
-                .entities
-                .get_single_mut()
-                .ok_or_else(|| {
-                    error!("Query could not produce any entities for single mut");
-                    ()
-                })?,
-            self.iter_component_ids(),
-        ))
+    pub fn get_single<'w>(
+        &self,
+        world: UnsafeWorldCell<'w>,
+    ) -> Result<T::Item<'w>, SingleQueryError> {
+        let mut iter = self.new_iter(world);
+        let Some(first) = iter.next() else {
+            return Err(SingleQueryError::None);
+        };
+        if iter.next().is_some() {
+            Err(SingleQueryError::Many)
+        } else {
+            Ok(first)
+        }
     }
 }
+
+#[derive(Debug)]
+pub enum SingleQueryError {
+    None,
+    Many,
+}
+
+impl std::fmt::Display for SingleQueryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SingleQueryError::None => {
+                write!(f, "get single query produced no result")
+            }
+            SingleQueryError::Many => {
+                write!(f, "get single query produced more than one result")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SingleQueryError {}

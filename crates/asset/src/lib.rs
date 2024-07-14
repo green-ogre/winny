@@ -1,17 +1,17 @@
 use std::{
     collections::HashMap,
-    fmt::Debug,
+    fmt::{Debug, Display},
     fs::File,
     io::BufReader,
     marker::PhantomData,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{mpsc::TryRecvError, Arc, Mutex},
 };
 
+use any_vec::{any_value::AnyValueSizeless, AnyVec};
 use app::{app::App, plugins::Plugin};
 use ecs::{
-    new_dumb_drop, DumbVec, EventWriter, Events, ResMut, SparseArrayIndex, SparseSet,
-    UnsafeWorldCell, WinnyComponent, WinnyEvent, WinnyResource,
+    EventWriter, ResMut, SparseArrayIndex, SparseSet, WinnyComponent, WinnyEvent, WinnyResource,
 };
 use reader::ByteReader;
 
@@ -22,7 +22,7 @@ pub mod reader;
 
 // TODO: could become enum with strong and weak variants which determine
 // dynamic loading behaviour
-#[derive(WinnyComponent)]
+#[derive(WinnyComponent, Copy)]
 pub struct Handle<A: Asset>(AssetId, PhantomData<A>);
 
 impl<A: Asset> Debug for Handle<A> {
@@ -92,7 +92,7 @@ impl AssetId {
 }
 
 impl SparseArrayIndex for AssetId {
-    fn to_index(&self) -> usize {
+    fn index(&self) -> usize {
         self.index() as usize
     }
 }
@@ -140,17 +140,16 @@ impl<A: Asset> Into<ErasedLoadedAsset> for LoadedAsset<A> {
 
 #[derive(Debug)]
 pub struct ErasedLoadedAsset {
-    loaded_asset: DumbVec,
+    loaded_asset: AnyVec,
 }
 
 impl ErasedLoadedAsset {
     pub fn new<A: Asset>(asset: LoadedAsset<A>) -> Self {
-        let mut loaded_asset = DumbVec::new(
-            std::alloc::Layout::new::<LoadedAsset<A>>(),
-            1,
-            new_dumb_drop::<LoadedAsset<A>>(),
-        );
-        let _ = loaded_asset.push(asset);
+        let mut loaded_asset = AnyVec::with_capacity::<A>(1);
+        {
+            let mut vec = unsafe { loaded_asset.downcast_mut_unchecked::<LoadedAsset<A>>() };
+            vec.push(asset);
+        }
 
         Self { loaded_asset }
     }
@@ -162,7 +161,12 @@ unsafe impl Send for ErasedLoadedAsset {}
 
 impl<A: Asset> Into<LoadedAsset<A>> for ErasedLoadedAsset {
     fn into(mut self) -> LoadedAsset<A> {
-        self.loaded_asset.pop_unchecked()
+        unsafe {
+            self.loaded_asset
+                .pop()
+                .unwrap()
+                .downcast_unchecked::<LoadedAsset<A>>()
+        }
     }
 }
 
@@ -251,7 +255,7 @@ impl AssetHandleCreator {
 #[derive(Debug)]
 struct AssetLoaders {
     loaders: Vec<InternalAssetLoader>,
-    ext_to_loader: Vec<(Vec<String>, usize)>,
+    ext_to_loader: Vec<(Vec<&'static str>, usize)>,
     loaded_assets: HashMap<String, ErasedHandle>,
 }
 
@@ -267,7 +271,7 @@ impl AssetLoaders {
     pub fn register_loader(
         &mut self,
         loader: impl ErasedAssetLoader,
-        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, ()>)>,
+        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
     ) {
         self.ext_to_loader
             .push((loader.extensions(), self.loaders.len()));
@@ -292,7 +296,7 @@ impl AssetLoaders {
         let loader_index = self
             .ext_to_loader
             .iter()
-            .find(|(ext, _)| ext.contains(&file_ext.to_str().unwrap().to_string()))
+            .find(|(ext, _)| ext.contains(&file_ext.to_str().unwrap()))
             .map(|(_, i)| i)
             .expect("valid file");
         let f =
@@ -330,7 +334,7 @@ impl AssetServer {
     pub fn register_loader(
         &mut self,
         loader: impl ErasedAssetLoader,
-        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, ()>)>,
+        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
     ) {
         self.loaders.register_loader(loader, result);
     }
@@ -348,65 +352,70 @@ impl AssetApp for App {
     fn register_asset_loader<A: Asset>(&mut self, loader: impl AssetLoader) -> &mut Self {
         let assets: Assets<A> = Assets::new();
         self.insert_resource(assets)
-            .insert_resource(AssetEvents::<A>::new())
             .register_event::<AssetLoaderEvent<A>>();
 
         let (asset_result_tx, asset_result_rx) = std::sync::mpsc::channel();
-        let arrx = ecs::threads::ChannelReciever::new(asset_result_rx);
+        let asset_result_rx = ecs::threads::ChannelReciever::new(asset_result_rx);
 
         self.add_systems(
             ecs::Schedule::Platform,
-            move |asset_events: ResMut<AssetEvents<A>>,
-                  mut assets: ResMut<Assets<A>>,
+            move |mut assets: ResMut<Assets<A>>,
                   mut asset_loader_events: EventWriter<AssetLoaderEvent<A>>| {
-                if let Ok(()) = arrx.try_recv() {
-                    for event in asset_events.events.lock().unwrap().read() {
-                        match event {
-                            AssetEvent::Err { handle } => {
-                                // TODO: Handle asset errors
-                                error!(
-                                    "Failed to load asset [{}] => {:?}",
-                                    std::any::type_name::<A>(),
-                                    "unknown"
-                                );
-                                asset_loader_events.send(AssetLoaderEvent::Err { handle })
-                            }
-                            AssetEvent::Loaded { asset } => {
-                                info!(
-                                    "Loaded asset [{}] => {:?}",
-                                    std::any::type_name::<A>(),
-                                    asset.path
-                                );
-                                asset_loader_events.send(AssetLoaderEvent::Loaded {
-                                    handle: asset.handle.into(),
-                                });
-                                let id = asset.handle.id();
-                                assets.insert(asset, id);
-                            }
+                match asset_result_rx.try_recv() {
+                    Ok(event) => match event {
+                        AssetEvent::Err { handle } => {
+                            asset_loader_events.send(AssetLoaderEvent::Err { handle })
                         }
-                    }
+                        AssetEvent::Loaded { asset } => {
+                            info!(
+                                "Loaded asset [{}]: {:?}",
+                                std::any::type_name::<A>(),
+                                asset.path
+                            );
+
+                            asset_loader_events.send(AssetLoaderEvent::Loaded {
+                                handle: asset.handle.into(),
+                            });
+
+                            let id = asset.handle.id();
+                            assets.insert(asset, id);
+                        }
+                    },
+                    Err(e) => match e {
+                        TryRecvError::Empty => (),
+                        TryRecvError::Disconnected => {
+                            error!("Asset sender channel closed");
+                            panic!();
+                        }
+                    },
                 }
             },
         );
 
-        let mut asset_event_writer =
-            AssetEventWriter::<A>::new(unsafe { self.world().as_unsafe_world() });
+        let result =
+            move |handle: ErasedHandle,
+                  result: Result<ErasedLoadedAsset, (String, AssetLoaderError)>| {
+                if let Err(e) = asset_result_tx.send(match result {
+                    Ok(asset) => {
+                        let asset = asset.into();
+                        AssetEvent::Loaded { asset }
+                    }
+                    Err((path, e)) => {
+                        error!("{}: {:?}", e, path);
 
-        let result = move |handle: ErasedHandle, result: Result<ErasedLoadedAsset, ()>| {
-            asset_event_writer.send(if let Ok(asset) = result {
-                let asset = asset.into();
-                AssetEvent::Loaded { asset }
-            } else {
-                AssetEvent::Err {
-                    handle: handle.into(),
+                        AssetEvent::Err {
+                            handle: handle.into(),
+                        }
+                    }
+                }) {
+                    error!("Asset reciever channel closed: {}", e);
+                    panic!();
                 }
-            });
-            // TODO: will this fail sometimes?
-            let _ = asset_result_tx.send(());
-        };
+            };
 
         let mut server = self.world_mut().resource_mut::<AssetServer>();
         server.register_loader(loader, Box::new(result));
+        drop(server);
 
         self
     }
@@ -424,8 +433,7 @@ impl<A: Asset> Debug for AssetLoaderEvent<A> {
     }
 }
 
-#[derive(WinnyEvent)]
-enum AssetEvent<A: Asset> {
+enum AssetEvent<A: Asset + Send + Sync> {
     Loaded { asset: LoadedAsset<A> },
     Err { handle: Handle<A> },
 }
@@ -436,50 +444,36 @@ impl<A: Asset> Debug for AssetEvent<A> {
     }
 }
 
-#[derive(Debug, WinnyResource)]
-struct AssetEvents<A: Asset> {
-    pub events: Mutex<Events<AssetEvent<A>>>,
+#[derive(Debug)]
+pub enum AssetLoaderError {
+    UnsupportedFileExtension,
+    FileNotFound,
+    FailedToParse,
 }
 
-impl<A: Asset> AssetEvents<A> {
-    pub fn new() -> Self {
-        Self {
-            events: Mutex::new(Events::new()),
+impl Display for AssetLoaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedFileExtension => {
+                write!(f, "File extension is not supported")
+            }
+            Self::FileNotFound => {
+                write!(f, "File could not be found")
+            }
+            Self::FailedToParse => {
+                write!(f, "File parser failed")
+            }
         }
     }
 }
 
-struct AssetEventWriter<'w, A: Asset> {
-    // This is safe if and only if there is only one world with one asset loader
-    // for any given asset.
-    //
-    // This event writer will be captured in a closure and passed to the
-    // asset loader for loading.
-    events: ResMut<'w, AssetEvents<A>>,
-}
-
-impl<'w, A: Asset> AssetEventWriter<'w, A> {
-    pub fn new(world: UnsafeWorldCell<'w>) -> Self {
-        let id = unsafe { world.read_and_write() }.get_resource_id::<AssetEvents<A>>();
-        Self {
-            events: ResMut::new(world, id),
-        }
-    }
-
-    pub fn send(&mut self, event: AssetEvent<A>) {
-        let _ = self.events.events.lock().unwrap().push(event);
-    }
-}
-
-pub trait ErasedAssetEventWriter {}
-
-impl<A: Asset> ErasedAssetEventWriter for AssetEventWriter<'_, A> {}
+impl std::error::Error for AssetLoaderError {}
 
 pub trait AssetLoader: Send + Sync + 'static {
     type Asset: Asset;
 
-    fn load(reader: ByteReader<File>, ext: &str) -> Result<Self::Asset, ()>;
-    fn extensions(&self) -> Vec<String>;
+    fn load(reader: ByteReader<File>, ext: &str) -> Result<Self::Asset, AssetLoaderError>;
+    fn extensions(&self) -> Vec<&'static str>;
 }
 
 pub trait ErasedAssetLoader: Send + Sync + 'static {
@@ -491,22 +485,24 @@ pub trait ErasedAssetLoader: Send + Sync + 'static {
         path: String,
         ext: String,
     ) -> ErasedHandle;
-    fn extensions(&self) -> Vec<String>;
+    fn extensions(&self) -> Vec<&'static str>;
 }
 
 pub struct AsyncAssetSender {
-    result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, ()>)>,
+    result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
 }
 
 impl AsyncAssetSender {
-    pub fn new(result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, ()>)>) -> Self {
+    pub fn new(
+        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
+    ) -> Self {
         Self { result }
     }
 
     pub fn send_result<A: Asset>(
         &mut self,
         handle: ErasedHandle,
-        result: Result<LoadedAsset<A>, ()>,
+        result: Result<LoadedAsset<A>, (String, AssetLoaderError)>,
     ) {
         (self.result)(handle, result.map(|a| a.into()))
     }
@@ -527,18 +523,18 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
         let handle = handler.new_id();
 
         std::thread::spawn(move || {
-            let asset = if let Ok(asset) = L::load(reader, ext.as_str()) {
-                Ok(LoadedAsset::new(asset, path, handle.clone()))
-            } else {
-                Err(())
-            };
-            sender.lock().unwrap().send_result(handle, asset);
+            let result = L::load(reader, ext.as_str())
+                .map(|asset| LoadedAsset::new(asset, path.clone(), handle.clone()));
+            sender
+                .lock()
+                .unwrap()
+                .send_result(handle, result.map_err(|e| (path, e)));
         });
 
         handle
     }
 
-    fn extensions(&self) -> Vec<String> {
+    fn extensions(&self) -> Vec<&'static str> {
         self.extensions()
     }
 }
