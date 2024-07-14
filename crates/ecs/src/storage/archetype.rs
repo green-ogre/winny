@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::{any::TypeId, marker::PhantomData};
 
 use util::tracing::error;
 
@@ -11,47 +11,32 @@ pub struct Archetypes {
     archetypes: SparseSet<ArchId, Archetype>,
 }
 
-impl Archetypes {
-    pub fn new() -> Self {
+impl Default for Archetypes {
+    fn default() -> Self {
         Self {
             archetypes: SparseSet::new(),
         }
     }
+}
 
-    pub fn len(&self) -> usize {
-        self.archetypes.len()
+impl Archetypes {
+    pub fn push(&mut self, archetype: Archetype) -> ArchId {
+        ArchId(self.archetypes.insert_in_first_empty(archetype))
     }
 
-    pub fn get_from_type_ids(&mut self, ids: &mut [TypeId]) -> Option<&mut Archetype> {
-        // type_ids sorted on creation
-        ids.sort();
-        self.archetypes
-            .values_mut()
-            .iter_mut()
-            .find(|arch| arch.type_ids.as_slice() == ids)
-    }
-
-    pub fn get(&self, id: ArchId) -> Option<&Archetype> {
+    pub fn get(&self, id: &ArchId) -> Option<&Archetype> {
         self.archetypes.get(&id)
     }
 
-    pub fn get_mut(&mut self, id: ArchId) -> &mut Archetype {
+    pub fn get_mut(&mut self, id: &ArchId) -> &mut Archetype {
         self.archetypes.get_mut(&id).unwrap_or_else(|| {
             error!("Could not index Archetypes at {:?}", id);
             panic!()
         })
     }
 
-    pub fn new_archetype(&mut self, id: ArchId, arch: Archetype) {
-        self.archetypes.insert(id, arch);
-    }
-
-    pub fn new_id(&self) -> ArchId {
-        ArchId::new(self.archetypes.len())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Archetype> {
-        self.archetypes.values().iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&ArchId, &Archetype)> {
+        self.archetypes.iter()
     }
 }
 
@@ -69,7 +54,7 @@ impl ArchId {
 }
 
 impl SparseArrayIndex for ArchId {
-    fn to_index(&self) -> usize {
+    fn index(&self) -> usize {
         self.id()
     }
 }
@@ -84,20 +69,9 @@ impl ArchIndex {
 }
 
 impl SparseArrayIndex for ArchIndex {
-    fn to_index(&self) -> usize {
+    fn index(&self) -> usize {
         self.0
     }
-}
-
-#[derive(Debug)]
-pub struct Archetype {
-    pub id: ArchId,
-    pub table_id: TableId,
-
-    pub type_ids: Vec<TypeId>,
-    pub component_desc: SparseSet<ComponentId, StorageType>,
-
-    pub entities: SparseSet<ArchIndex, ArchEntity>,
 }
 
 #[derive(Debug)]
@@ -112,19 +86,28 @@ impl ArchEntity {
     }
 }
 
+#[derive(Debug)]
+pub struct Archetype {
+    pub table_id: TableId,
+    pub type_ids: Vec<TypeId>,
+    pub entities: SparseSet<ArchIndex, ArchEntity>,
+}
+
+#[derive(Clone, Copy)]
+pub struct ReservedArchIndex<'r>(ArchIndex, PhantomData<&'r ArchIndex>);
+
+impl<'r> Into<ArchIndex> for ReservedArchIndex<'r> {
+    fn into(self) -> ArchIndex {
+        self.0
+    }
+}
+
 impl Archetype {
-    pub fn new(
-        id: ArchId,
-        table_id: TableId,
-        mut type_ids: Vec<TypeId>,
-        component_desc: SparseSet<ComponentId, StorageType>,
-    ) -> Self {
+    pub fn new(table_id: TableId, mut type_ids: Vec<TypeId>) -> Self {
         type_ids.sort();
         Self {
-            id,
             table_id,
             type_ids,
-            component_desc,
             entities: SparseSet::new(),
         }
     }
@@ -136,6 +119,37 @@ impl Archetype {
 
     pub fn remove_entity(&mut self, index: ArchIndex) {
         self.entities.remove(&index);
+    }
+
+    pub fn new_entity_with<F>(&mut self, table_row: TableRow, f: F) -> Entity
+    where
+        F: FnOnce(ArchIndex) -> Entity,
+    {
+        let index = self.reserve_entity();
+        let entity = f(index.into());
+        self.new_entity_reserved(ArchEntity::new(entity, table_row), index.into());
+        entity
+    }
+
+    pub fn new_entity_from<F>(&mut self, entity: Entity, table_row: TableRow, f: F)
+    where
+        F: FnOnce(ArchIndex),
+    {
+        let index = self.reserve_entity();
+        f(index.into());
+        self.new_entity_reserved(ArchEntity::new(entity, table_row), index.into());
+    }
+
+    // prevents having to call new_entity without first inserting entity into reserved index
+    pub fn reserve_entity(&self) -> ReservedArchIndex<'_> {
+        ReservedArchIndex(ArchIndex::new(self.entities.sparse_len()), PhantomData)
+    }
+
+    pub fn new_entity_reserved(&mut self, arch_entity: ArchEntity, index: ArchIndex) -> ArchIndex {
+        let index = index.into();
+        self.entities.insert(index, arch_entity);
+
+        index
     }
 
     pub fn get_entity_table_row(&self, entity: EntityMeta) -> TableRow {

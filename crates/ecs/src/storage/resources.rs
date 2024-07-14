@@ -1,9 +1,16 @@
-use util::tracing::error;
+use std::ptr::NonNull;
 
-use crate::unsafe_world::UnsafeWorldCell;
+use any_vec::AnyVec;
+use util::tracing::trace;
 
 use super::*;
 
+// https://github.com/bevyengine/bevy/blob/main/crates/bevy_ecs/src/system/system_param.rs#L483
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a `Resource`",
+    label = "invalid `Resource`",
+    note = "consider annotating `{Self}` with `#[derive(Resource)]`"
+)]
 pub trait Resource: Send + Sync + 'static {}
 
 #[derive(Debug)]
@@ -19,21 +26,9 @@ impl<R> Deref for Res<'_, R> {
     }
 }
 
-impl<R: Resource> Res<'_, R> {
-    pub fn new<'w>(world: UnsafeWorldCell<'w>, id: ResourceId) -> Self {
-        Self {
-            value: unsafe { &*world.resource_ptr(id) },
-        }
-    }
-
-    pub fn try_new<'w>(world: UnsafeWorldCell<'w>, id: ResourceId) -> Option<Self> {
-        unsafe {
-            if let Some(ptr) = world.read_only().resources.try_resource_by_id(id) {
-                Some(Self { value: &*ptr })
-            } else {
-                None
-            }
-        }
+impl<'w, R: Resource> Res<'w, R> {
+    pub fn new(value: &'w R) -> Self {
+        Self { value }
     }
 }
 
@@ -56,37 +51,25 @@ impl<R> DerefMut for ResMut<'_, R> {
     }
 }
 
-impl<R: Resource> ResMut<'_, R> {
-    pub fn new<'w>(world: UnsafeWorldCell<'w>, id: ResourceId) -> Self {
-        Self {
-            value: unsafe { &mut *world.resource_ptr_mut(id) },
-        }
-    }
-
-    pub fn try_new<'w>(world: UnsafeWorldCell<'w>, id: ResourceId) -> Option<Self> {
-        unsafe {
-            if let Some(ptr) = world.read_and_write().resources.try_resource_mut_by_id(id) {
-                Some(Self { value: &mut *ptr })
-            } else {
-                None
-            }
-        }
+impl<'w, R: Resource> ResMut<'w, R> {
+    pub fn new(value: &'w mut R) -> Self {
+        Self { value }
     }
 }
 
 impl<R: Resource> AsRef<R> for Res<'_, R> {
     fn as_ref(&self) -> &R {
-        &self.value
+        self.value
     }
 }
 
 impl<R: Resource> AsMut<R> for ResMut<'_, R> {
     fn as_mut(&mut self) -> &mut R {
-        &mut self.value
+        self.value
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceId(usize);
 
 impl ResourceId {
@@ -100,86 +83,81 @@ impl ResourceId {
 }
 
 impl SparseArrayIndex for ResourceId {
-    fn to_index(&self) -> usize {
+    fn index(&self) -> usize {
         self.id()
     }
 }
 
 #[derive(Debug)]
 pub struct Resources {
-    resources: SparseSet<ResourceId, DumbVec>,
+    resources: SparseSet<ResourceId, AnyVec<dyn Send + Sync>>,
+    next_id: usize,
+    id_table: fxhash::FxHashMap<std::any::TypeId, ResourceId>,
 }
 
-unsafe impl Sync for Resources {}
-unsafe impl Send for Resources {}
-
-impl Resources {
-    pub fn new() -> Self {
+impl Default for Resources {
+    fn default() -> Self {
         Self {
             resources: SparseSet::new(),
+            next_id: 0,
+            id_table: fxhash::FxHashMap::default(),
         }
     }
+}
 
-    pub fn len(&self) -> usize {
-        self.resources.len()
+impl Resources {
+    pub fn register<R: Resource>(&mut self) -> ResourceId {
+        let type_id = std::any::TypeId::of::<R>();
+        if let Some(id) = self.id_table.get(&type_id) {
+            *id
+        } else {
+            let id = self.new_id();
+            self.id_table.insert(type_id, id);
+
+            trace!(
+                "Registering resource: {} => {:?}",
+                std::any::type_name::<R>(),
+                id
+            );
+
+            id
+        }
     }
 
     pub fn insert<R: Resource>(&mut self, res: R, id: ResourceId) {
-        let mut storage = DumbVec::new(std::alloc::Layout::new::<R>(), 1, new_dumb_drop::<R>());
-        storage.push(res).unwrap();
-
-        self.resources.insert(id, storage);
-    }
-
-    pub fn insert_storage(&mut self, storage: DumbVec, id: ResourceId) {
-        self.resources.insert(id, storage);
-    }
-
-    pub unsafe fn get_resource_by_id<R: Resource>(&self, id: ResourceId) -> &R {
-        if let Some(res) = self.resources.get(&id) {
-            return res.get_unchecked(0).cast::<R>().as_ref();
+        if let Some(storage) = self.resources.get_mut(&id) {
+            storage.clear();
+            let mut vec = unsafe { storage.downcast_mut_unchecked::<R>() };
+            vec.push(res);
         } else {
-            error!(
-                "Resource [{}] does not exist: Remeber to 'app.insert_resource::<...>()' your resource!",
-                std::any::type_name::<R>()
-            );
-            panic!();
+            let mut storage: AnyVec<dyn Send + Sync> = AnyVec::with_capacity::<R>(1);
+            {
+                let mut vec = unsafe { storage.downcast_mut_unchecked::<R>() };
+                vec.push(res);
+            }
+
+            self.resources.insert(id, storage);
         }
     }
 
-    pub fn get_resource_mut_by_id<R: Resource>(&mut self, id: ResourceId) -> &mut R {
-        if let Some(res) = self.resources.get_mut(&id) {
-            return unsafe { res.get_unchecked(0).cast::<R>().as_mut() };
-        } else {
-            error!(
-            "Resource [{}] does not exist: Remeber to 'app.insert_resource::<...>()' your resource!",
-                std::any::type_name::<R>()
-        );
-            panic!();
-        }
+    pub fn id<R: Resource>(&self) -> Option<ResourceId> {
+        let id = std::any::TypeId::of::<R>();
+        self.id_table.get(&id).cloned()
     }
 
-    pub unsafe fn try_resource_by_id<R: Resource>(&self, id: ResourceId) -> Option<&R> {
-        if let Some(res) = self.resources.get(&id) {
-            Some(res.get_unchecked(0).cast::<R>().as_ref())
-        } else {
-            None
-        }
+    pub fn get_ptr<R: Resource>(&self, id: ResourceId) -> Option<NonNull<R>> {
+        self.resources.get(&id).map(|res| {
+            (res.len() == 1).then(|| unsafe {
+                let ptr = res.downcast_ref_unchecked::<R>().as_ptr();
+                NonNull::new(ptr as *mut R)
+            })?
+        })?
     }
 
-    pub unsafe fn try_resource_mut_by_id<R: Resource>(&self, id: ResourceId) -> Option<&mut R> {
-        if let Some(res) = self.resources.get(&id) {
-            Some(res.get_mut_unchecked(0).cast::<R>().as_mut())
-        } else {
-            None
-        }
-    }
+    fn new_id(&mut self) -> ResourceId {
+        let id = self.next_id;
+        self.next_id += 1;
 
-    pub fn new_id(&self) -> ResourceId {
-        ResourceId::new(self.resources.len())
-    }
-
-    pub fn contains(&self, id: ResourceId) -> bool {
-        self.resources.get(&id).is_some()
+        ResourceId(id)
     }
 }

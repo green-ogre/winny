@@ -1,17 +1,28 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    fmt::Debug,
+    ops::Deref,
+    sync::{
+        mpsc::{Receiver, Sender},
+        Arc,
+    },
+    thread::JoinHandle,
+    time::{Duration, SystemTime},
+};
+
+use util::tracing::{error, info};
 
 use ecs::{WinnyResource, World};
+use wgpu::TextureFormat;
 use winit::window::Window;
 
-use crate::{app::RenderPass, window::WinitWindow};
+use crate::app::RenderPass;
 
 #[derive(WinnyResource)]
 pub struct Renderer {
     passes: Vec<Box<dyn RenderPass>>,
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    rp_rx: Receiver<Box<dyn RenderPass>>,
 }
 
 impl Debug for Renderer {
@@ -24,7 +35,11 @@ unsafe impl Send for Renderer {}
 unsafe impl Sync for Renderer {}
 
 impl Renderer {
-    pub fn new(window: Arc<Window>, passes: Vec<Box<dyn RenderPass>>) -> Self {
+    pub fn new(
+        window: Arc<Window>,
+        passes: Vec<Box<dyn RenderPass>>,
+        rp_rx: Receiver<Box<dyn RenderPass>>,
+    ) -> (wgpu::Device, wgpu::Queue, Self) {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window).unwrap();
@@ -34,7 +49,8 @@ impl Renderer {
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 // For compute shaders
-                required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                //required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                required_features: wgpu::Features::default(),
                 required_limits: wgpu::Limits::default(),
                 label: None,
             },
@@ -56,21 +72,25 @@ impl Renderer {
             desired_maximum_frame_latency: 2,
         };
 
-        Self {
-            passes,
-            surface,
+        (
             device,
             queue,
-            config,
-        }
+            Self {
+                passes,
+                surface,
+                config,
+                rp_rx,
+            },
+        )
     }
 
-    pub fn resize(&mut self, world: &World, width: u32, height: u32) {
+    pub fn resize(&mut self, world: &mut World, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
-            self.passes.iter().for_each(|p| p.resized(world));
+            self.surface
+                .configure(&world.resource::<RenderDevice>(), &self.config);
+            self.passes.iter().for_each(|p| p.resized(self, world));
         }
     }
 
@@ -78,39 +98,125 @@ impl Renderer {
         self.passes.push(Box::new(pass));
     }
 
-    pub fn render(&mut self, world: &World) {
+    pub fn add_render_pass_boxed(&mut self, pass: Box<dyn RenderPass>) {
+        self.passes.push(pass);
+    }
+
+    pub fn render(&mut self, world: &mut World) -> JoinHandle<Duration> {
+        let start = SystemTime::now();
+        if let Ok(pass) = self.rp_rx.try_recv() {
+            self.add_render_pass_boxed(pass);
+        }
+
         let output = self.surface.get_current_texture().unwrap();
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         {
             let view = output
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
             for pass in self.passes.iter() {
-                pass.update_for_render_pass(&self.queue, world);
+                let mut encoder = world
+                    .resource::<RenderDevice>()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+                pass.update_for_render_pass(world);
                 pass.render_pass(&output, &view, &mut encoder, world);
+
+                world
+                    .resource::<RenderQueue>()
+                    .submit(std::iter::once(encoder.finish()));
             }
         }
-        self.queue.submit(std::iter::once(encoder.finish()));
 
-        let window = world.resource::<WinitWindow>();
-        window.pre_present_notify();
-        output.present();
+        // NOTE: present() does not submit the window, it buffers the submit to be executed
+        // let window = world.resource::<WinitWindow>();
+        // window.pre_present_notify();
+        std::thread::spawn(move || {
+            output.present();
+            SystemTime::now().duration_since(start).unwrap_or_default()
+        })
     }
 
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
+    pub fn config(&self) -> RenderConfig {
+        RenderConfig::from_config(&self.config)
     }
 
-    pub fn config(&self) -> &wgpu::SurfaceConfiguration {
+    pub fn surface_config(&self) -> &wgpu::SurfaceConfiguration {
         &self.config
     }
 
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
+    pub fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
     }
 }
+
+#[derive(Debug, WinnyResource)]
+pub struct RenderPasses(Sender<Box<dyn RenderPass>>);
+
+impl RenderPasses {
+    pub fn new(sender: Sender<Box<dyn RenderPass>>) -> Self {
+        Self(sender)
+    }
+
+    pub fn add_render_pass(&self, pass: impl RenderPass) {
+        if let Err(e) = self.0.send(Box::new(pass)) {
+            error!("Render pass reciever closed: {}", e);
+            panic!();
+        }
+    }
+}
+
+#[derive(Debug, WinnyResource)]
+pub struct RenderQueue(pub wgpu::Queue);
+
+impl Deref for RenderQueue {
+    type Target = wgpu::Queue;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, WinnyResource)]
+pub struct RenderDevice(pub wgpu::Device);
+
+impl Deref for RenderDevice {
+    type Target = wgpu::Device;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, WinnyResource)]
+pub struct RenderConfig(pub Dimensions, pub wgpu::TextureFormat);
+
+impl Deref for RenderConfig {
+    type Target = Dimensions;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl RenderConfig {
+    fn from_config(value: &wgpu::SurfaceConfiguration) -> Self {
+        Self(Dimensions(value.width, value.height), value.format)
+    }
+}
+
+impl RenderConfig {
+    pub fn width(&self) -> u32 {
+        self.0 .0
+    }
+
+    pub fn height(&self) -> u32 {
+        self.0 .1
+    }
+
+    pub fn format(&self) -> TextureFormat {
+        self.1
+    }
+}
+
+#[derive(Debug)]
+pub struct Dimensions(pub u32, pub u32);
 
 // use std::sync::Arc;
 //

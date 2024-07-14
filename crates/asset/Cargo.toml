@@ -7,3 +7,5 @@ edition = "2021"
 util = { path = "../util" }
 app = { path = "../app" }
 ecs = { path = "../ecs" }
+
+any_vec = "0.14.0"

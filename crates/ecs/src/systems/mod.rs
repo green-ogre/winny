@@ -1,8 +1,15 @@
-use std::{borrow::Cow, fmt::Debug, marker::PhantomData, process::exit};
+use std::{fmt::Debug, marker::PhantomData, process::exit};
 
+use util::tracing::trace;
+
+use access::SystemAccess;
 use ecs_macro::all_tuples;
+use system_param::SystemParam;
 
-use crate::{unsafe_world::UnsafeWorldCell, ComponentAccess, ComponentAccessFilter, SystemParam};
+use crate::{unsafe_world::UnsafeWorldCell, Schedule, World};
+
+pub mod access;
+pub mod system_param;
 
 pub type StoredSystem = Box<dyn System<Out = ()>>;
 pub type StoredCondition = Box<dyn System<Out = bool>>;
@@ -11,36 +18,42 @@ impl<O: 'static> Debug for dyn System<Out = O> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("System")
             .field("name", &self.name())
-            .field("access", &self.access())
             .finish()
     }
 }
 
 #[derive(Debug)]
 pub struct ScheduleBuilder {
-    sets: Vec<SystemSet>,
+    pub sets: Vec<SystemSet>,
+    pub tag: Schedule,
 }
 
 impl ScheduleBuilder {
-    pub fn new() -> Self {
-        Self { sets: Vec::new() }
+    pub fn new(tag: Schedule) -> Self {
+        Self {
+            sets: Vec::new(),
+            tag,
+        }
     }
 
     pub fn push_set(&mut self, set: SystemSet) {
-        set.validate_nodes_or_panic();
         self.sets.push(set);
     }
 
-    pub fn build_schedule(self) -> Vec<SystemSet> {
-        optimize_schedule(self.sets)
+    pub fn build_schedule(self, world: &mut World) -> Vec<SystemSet> {
+        optimize_schedule(world, self.sets)
     }
 }
 
-fn optimize_schedule(sets: Vec<SystemSet>) -> Vec<SystemSet> {
+fn optimize_schedule(world: &mut World, sets: Vec<SystemSet>) -> Vec<SystemSet> {
     let mut schedule = Vec::new();
 
+    for set in sets.iter() {
+        set.validate_nodes_or_panic(world);
+    }
+
     for set in sets.into_iter() {
-        if set.is_invalid() {
+        if set.is_invalid(world) {
             // TODO: pull apart sets?
             // TODO: not fullproof yet, platform for instance does not correctly see nested
             // invalid accesses
@@ -61,26 +74,26 @@ pub enum Node {
 }
 
 impl Node {
-    pub fn access(&self) -> Vec<SystemAccess> {
+    pub fn access(&self, world: &mut World) -> Vec<SystemAccess> {
         match self {
-            Self::Leaf(system) => vec![system.access()],
-            Self::Branch(set) => set.access(),
+            Self::Leaf(system) => vec![system.access(world)],
+            Self::Branch(set) => set.access(world),
         }
     }
 
-    pub fn init(&mut self, world: UnsafeWorldCell<'_>) {
+    pub fn init_state(&mut self, world: &mut World) {
         match self {
-            Self::Leaf(system) => system.init(world),
-            Self::Branch(set) => set.init(world),
+            Self::Leaf(system) => system.init_state(world),
+            Self::Branch(set) => set.init_state(world),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct SystemSet {
-    nodes: Vec<Node>,
-    condition: Option<StoredCondition>,
-    chain: bool,
+    pub nodes: Vec<Node>,
+    pub condition: Option<StoredCondition>,
+    pub chain: bool,
 }
 
 impl SystemSet {
@@ -121,10 +134,10 @@ impl SystemSet {
         }
     }
 
-    fn access(&self) -> Vec<SystemAccess> {
+    fn access(&self, world: &mut World) -> Vec<SystemAccess> {
         self.nodes
             .iter()
-            .map(|s| s.access())
+            .map(|s| s.access(world))
             .flatten()
             .collect::<Vec<_>>()
     }
@@ -139,18 +152,18 @@ impl SystemSet {
         self
     }
 
-    pub fn validate_nodes_or_panic(&self) {
-        for system in self.access().iter() {
+    pub fn validate_nodes_or_panic(&self, world: &mut World) {
+        for system in self.access(world).iter() {
             system.validate_or_panic();
         }
     }
 
-    pub fn is_invalid(&self) -> bool {
+    pub fn is_invalid(&self, world: &mut World) -> bool {
         if self.chain {
             return false;
         }
 
-        let access = self.access();
+        let access = self.access(world);
 
         for i in 0..access.len() - 1 {
             for j in i + 1..access.len() {
@@ -163,9 +176,9 @@ impl SystemSet {
         false
     }
 
-    pub fn init(&mut self, world: UnsafeWorldCell<'_>) {
+    pub fn init_state(&mut self, world: &mut World) {
         for node in self.nodes.iter_mut() {
-            node.init(world);
+            node.init_state(world);
         }
     }
 
@@ -207,26 +220,42 @@ impl SystemSet {
                     .is_ok()
             });
         });
+
+        for node in self.nodes.iter_mut() {
+            match node {
+                Node::Leaf(system) => system.apply_deffered(unsafe { world.read_and_write() }),
+                Node::Branch(set) => set.apply_deffered(unsafe { world.read_and_write() }),
+            }
+        }
+    }
+
+    pub fn apply_deffered(&mut self, world: &mut World) {
+        for node in self.nodes.iter_mut() {
+            match node {
+                Node::Leaf(system) => system.apply_deffered(world),
+                Node::Branch(set) => set.apply_deffered(world),
+            }
+        }
     }
 }
 
 pub trait System: Send + Sync + 'static {
     type Out;
 
-    fn access(&self) -> SystemAccess;
+    fn access(&self, world: &mut World) -> SystemAccess;
     fn name(&self) -> &str;
-    fn init<'w>(&self, world: UnsafeWorldCell<'w>);
-    fn run_unsafe<'w>(&mut self, world: UnsafeWorldCell<'w>) -> Self::Out;
+    fn init_state(&mut self, world: &mut World);
+    fn run_unsafe(&mut self, world: UnsafeWorldCell<'_>) -> Self::Out;
+    fn apply_deffered(&mut self, world: &mut World);
 }
 
 pub trait SystemParamFunc<Marker, Out>: 'static + Send + Sync {
     type Param: SystemParam;
 
-    fn access() -> Vec<Access> {
-        Self::Param::access()
+    fn access(world: &mut World) -> SystemAccess {
+        Self::Param::access(world)
     }
-
-    fn run<'w, 's>(&mut self, params: <Self::Param as SystemParam>::Item<'w, 's>) -> Out;
+    fn run(&mut self, params: <Self::Param as SystemParam>::Item<'_, '_>) -> Out;
 }
 
 pub struct SystemFunc<Marker, F, Out>
@@ -234,7 +263,7 @@ where
     F: SystemParamFunc<Marker, Out>,
 {
     f: F,
-    name: Cow<'static, str>,
+    name: &'static str,
     param_state: Option<<F::Param as SystemParam>::State>,
     _phantom: PhantomData<fn() -> Out>,
 }
@@ -251,120 +280,10 @@ where
 
         SystemFunc {
             f: self,
-            name: name.into(),
+            name,
             param_state: None,
             _phantom: PhantomData,
         }
-    }
-}
-
-pub struct Access {
-    data: Vec<ComponentAccess>,
-    filter: Vec<ComponentAccessFilter>,
-    filtered_set: Vec<ComponentAccess>,
-}
-
-impl Access {
-    pub fn empty() -> Self {
-        Self {
-            data: vec![],
-            filter: vec![],
-            filtered_set: vec![],
-        }
-    }
-
-    pub fn new(data: Vec<ComponentAccess>, filter: Vec<ComponentAccessFilter>) -> Self {
-        // TODO: what is filter doing here exactly?
-
-        Self {
-            filtered_set: data.clone(),
-            data,
-            filter,
-        }
-    }
-
-    pub fn conflicts_with(&self, other: Access) -> bool {
-        let mutable_access: Vec<_> = self.filtered_set.iter().filter(|a| a.is_mut()).collect();
-        let other_mutable_access: Vec<_> =
-            other.filtered_set.iter().filter(|a| a.is_mut()).collect();
-
-        mutable_access
-            .iter()
-            .any(|a| other_mutable_access.iter().any(|o| a == o))
-    }
-}
-
-#[derive(Debug)]
-pub struct SystemAccess {
-    filtered_set: Vec<ComponentAccess>,
-}
-
-impl SystemAccess {
-    pub fn new(access: Vec<Access>) -> Self {
-        let mut filtered_set = vec![];
-        for mut a in access.into_iter() {
-            filtered_set.append(&mut a.filtered_set);
-        }
-
-        Self { filtered_set }
-    }
-
-    pub fn validate_or_panic(&self) {
-        let mutable_access: Vec<_> = self.filtered_set.iter().filter(|a| a.is_mut()).collect();
-        let immutable_access: Vec<_> = self
-            .filtered_set
-            .iter()
-            .filter(|a| a.is_read_only())
-            .collect();
-
-        for m in mutable_access.iter() {
-            for i in immutable_access.iter() {
-                if i.id() == m.id() {
-                    panic!(
-                        "Query attemps to access the same memory mutably and immutably: {:#?}, {:#?}",
-                        i, m
-                    );
-                }
-            }
-        }
-    }
-
-    pub fn is_read_only(&self) -> bool {
-        !self.filtered_set.iter().any(|a| a.is_mut())
-    }
-
-    pub fn is_read_and_write(&self) -> bool {
-        self.filtered_set.iter().any(|a| a.is_mut())
-    }
-
-    pub fn conflicts_with(&self, other: &SystemAccess) -> bool {
-        let mutable_access: Vec<_> = self.filtered_set.iter().filter(|a| a.is_mut()).collect();
-        let immutable_access: Vec<_> = self
-            .filtered_set
-            .iter()
-            .filter(|a| a.is_read_only())
-            .collect();
-
-        let other_mutable_access: Vec<_> =
-            other.filtered_set.iter().filter(|a| a.is_mut()).collect();
-        let other_immutable_access: Vec<_> = other
-            .filtered_set
-            .iter()
-            .filter(|a| a.is_read_only())
-            .collect();
-
-        let res = mutable_access
-            .iter()
-            .any(|s| other_immutable_access.iter().any(|o| s.id() == o.id()))
-            || other_mutable_access
-                .iter()
-                .any(|o| immutable_access.iter().any(|s| s.id() == o.id()))
-            || other_mutable_access
-                .iter()
-                .any(|o| mutable_access.iter().any(|s| s.id() == o.id()));
-
-        // println!("{:#?} && {:#?} => {}", self, other, res);
-        res
     }
 }
 
@@ -376,24 +295,35 @@ where
 {
     type Out = Out;
 
-    fn access(&self) -> SystemAccess {
-        SystemAccess::new(F::access())
+    fn access(&self, world: &mut World) -> SystemAccess {
+        SystemAccess::default().with(F::access(world))
     }
 
     fn name(&self) -> &str {
-        &self.name
+        self.name
     }
 
-    fn init(&self, world: UnsafeWorldCell<'_>) {
-        <F::Param as SystemParam>::init(world);
+    fn init_state(&mut self, world: &mut World) {
+        let state = <F::Param as SystemParam>::init_state(world);
+        trace!("Initializing ['System'] state: {}", self.name);
+        let _ = self.param_state.insert(state);
     }
 
-    fn run_unsafe<'w>(&mut self, world: UnsafeWorldCell<'w>) -> Self::Out {
-        let state = self
-            .param_state
-            .get_or_insert(<F::Param as SystemParam>::init_state(world));
-        // let _span = util::tracing::trace_span!("system", %self.name).entered();
-        self.f.run(F::Param::to_param(state, world))
+    // TODO: the state of the world will change over time, meaning that QueryState will not account
+    // for new archetypes with satisfied constraints if state is only set once
+    fn run_unsafe(&mut self, world: UnsafeWorldCell<'_>) -> Self::Out {
+        let state = self.param_state.as_mut().unwrap();
+        let _span = util::tracing::trace_span!("system", name = %self.name).entered();
+        let out = self.f.run(F::Param::to_param(state, world));
+        trace!("exiting");
+
+        out
+    }
+
+    fn apply_deffered(&mut self, world: &mut World) {
+        let _span = util::tracing::trace_span!("apply_deffered", name = %self.name).entered();
+        F::Param::apply_deffered(world, self.param_state.as_mut().unwrap());
+        trace!("exiting");
     }
 }
 
@@ -416,7 +346,8 @@ macro_rules! impl_system {
         {
             type Param = ($($params,)*);
 
-            fn run<'w, 's>(&mut self, params: <($($params,)*) as SystemParam>::Item<'w, 's>) -> Out {
+#[allow(clippy::too_many_arguments)]
+            fn run(&mut self, params: <($($params,)*) as SystemParam>::Item<'_, '_>) -> Out {
                 fn call_inner<$($params),*, Out>(
                     mut f: impl FnMut($($params),*) -> Out,
                     $($params: $params),*
@@ -451,7 +382,7 @@ where
 
         SystemFunc {
             f: self,
-            name: name.into(),
+            name,
             param_state: None,
             _phantom: PhantomData,
         }
@@ -477,23 +408,19 @@ macro_rules! impl_system_param {
             type State = ($($params::State,)*);
             type Item<'w, 's> = ($($params::Item<'w, 's>,)*);
 
-            fn access() -> Vec<Access> {
-                let mut vec = vec![];
+            fn access(world: &mut World) -> SystemAccess {
+        let mut access = SystemAccess::default();
                 $(
-                    vec.append(&mut $params::access());
+                    access = access.with($params::access(world));
                 )*
 
-                vec
+        access
             }
 
-            fn init_state<'w>(world: UnsafeWorldCell<'w>) -> Self::State {
+            fn init_state(world: &mut World) -> Self::State {
                 (
                     $($params::init_state(world),)*
                 )
-            }
-
-            fn init<'w>(world: UnsafeWorldCell<'w>) {
-                $($params::init(world);)*
             }
 
             fn to_param<'w, 's>(state: &'s mut Self::State, world: UnsafeWorldCell<'w>) -> Self::Item<'w, 's> {
@@ -501,6 +428,12 @@ macro_rules! impl_system_param {
                     $($params::to_param(&mut tuple_index!(state, $idx), world),)*
                 )
             }
+
+    fn apply_deffered(world: &'_ mut World, state: &'_ mut Self::State) {
+                    $(
+        $params::apply_deffered(world, &mut tuple_index!(state, $idx));
+        )*
+        }
         }
     }
 }

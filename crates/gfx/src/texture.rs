@@ -1,10 +1,10 @@
-use app::renderer::Renderer;
+use app::renderer::{RenderDevice, RenderQueue};
 // use crate::sprite::{SpriteBinding, SpriteData};
-use asset::{AssetApp, AssetId, AssetLoaderEvent, Assets, Handle};
+use asset::{AssetApp, AssetId, AssetLoaderError, AssetLoaderEvent, Assets, Handle};
 use ecs::{EventReader, EventWriter, Res, ResMut, SparseSet, WinnyEvent, WinnyResource};
 
 use image::GenericImageView;
-use util::tracing::error;
+use util::tracing::{error, info};
 
 use crate::model::load_binary;
 
@@ -13,20 +13,17 @@ struct TextureAssetLoader;
 impl asset::AssetLoader for TextureAssetLoader {
     type Asset = TextureSource;
 
-    fn extensions(&self) -> Vec<String> {
-        vec!["png".into()]
+    fn extensions(&self) -> Vec<&'static str> {
+        vec!["png"]
     }
 
     fn load(
         reader: asset::reader::ByteReader<std::fs::File>,
         ext: &str,
-    ) -> Result<Self::Asset, ()> {
+    ) -> Result<Self::Asset, AssetLoaderError> {
         match ext {
             "png" => TextureSource::new(reader),
-            _ => {
-                error!("Cannot load texture from extension: {}", ext);
-                Err(())
-            }
+            _ => Err(AssetLoaderError::UnsupportedFileExtension),
         }
     }
 }
@@ -64,18 +61,15 @@ fn insert_new_textures(
     mut texture_created: EventWriter<TextureCreated>,
     assets: Res<Assets<TextureSource>>,
     events: EventReader<AssetLoaderEvent<TextureSource>>,
-    renderer: Res<Renderer>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
 ) {
     for event in events.read() {
         match event {
             AssetLoaderEvent::Loaded { handle } => {
                 let tex_source = assets.get(&handle).unwrap();
-                let texture = Texture::from_bytes(
-                    &tex_source.bytes,
-                    tex_source.dimensions,
-                    &renderer.device(),
-                    &renderer.queue(),
-                );
+                let texture =
+                    Texture::from_bytes(&tex_source.bytes, tex_source.dimensions, &device, &queue);
                 textures.insert(handle.clone(), texture);
                 texture_created.send(TextureCreated {
                     handle: handle.clone(),
@@ -106,10 +100,23 @@ pub struct TextureSource {
 impl asset::Asset for TextureSource {}
 
 impl TextureSource {
-    pub fn new(reader: asset::reader::ByteReader<std::fs::File>) -> Result<Self, ()> {
-        let (bytes, dimensions) = crate::png::to_bytes(reader).map_err(|_| ())?;
+    pub fn new(reader: asset::reader::ByteReader<std::fs::File>) -> Result<Self, AssetLoaderError> {
+        let (bytes, dimensions) = crate::png::to_bytes(reader).map_err(|e| {
+            error!("{}", e);
+            AssetLoaderError::from(e)
+        })?;
 
         Ok(Self { bytes, dimensions })
+    }
+}
+
+impl From<crate::png::Error> for AssetLoaderError {
+    fn from(value: crate::png::Error) -> Self {
+        if value == crate::png::Error::InvalidPath {
+            AssetLoaderError::FileNotFound
+        } else {
+            AssetLoaderError::FailedToParse
+        }
     }
 }
 
@@ -123,16 +130,17 @@ pub struct Texture {
 impl Texture {
     pub fn load_texture(
         file_name: &str,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &RenderDevice,
+        queue: &RenderQueue,
     ) -> Result<Texture, ()> {
+        info!("Loading texture: {:?}", file_name);
         let data = load_binary(file_name).map_err(|_| ())?;
         Texture::from_image_bytes(device, queue, &data, file_name)
     }
 
     pub fn from_image_bytes(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &RenderDevice,
+        queue: &RenderQueue,
         bytes: &[u8],
         label: &str,
     ) -> Result<Self, ()> {
@@ -141,8 +149,8 @@ impl Texture {
     }
 
     pub fn from_image(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &RenderDevice,
+        queue: &RenderQueue,
         img: &image::DynamicImage,
         label: Option<&str>,
     ) -> Result<Self, ()> {
@@ -260,7 +268,7 @@ impl Texture {
 
     pub fn empty(
         dimensions: (u32, u32),
-        device: &wgpu::Device,
+        device: &RenderDevice,
         format: wgpu::TextureFormat,
         override_usage: Option<wgpu::TextureUsages>,
     ) -> Self {

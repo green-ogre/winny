@@ -1,75 +1,75 @@
 use core::panic;
-use proc_macro2::{Ident, Span};
+use proc_macro2::Ident;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse::{Parse, ParseStream}, parse_macro_input, token::Comma, DeriveInput, Fields, LitInt, LitStr, Result};
+use syn::{
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    token::Comma,
+    DeriveInput, Fields, LitInt, Result,
+};
 
-enum StorageType {
-    Table,
-    SparseSet,
-}
+// enum StorageType {
+//     Table,
+//     SparseSet,
+// }
 
-const TABLE: &str = "Table";
-const SPARSE_SET: &str = "SparceSet";
+// const TABLE: &str = "Table";
+// const SPARSE_SET: &str = "SparceSet";
 
 #[proc_macro_derive(Component, attributes(component))]
 pub fn component_impl(input: TokenStream) -> TokenStream {
-    parse_component(input, quote! { winny::ecs }.into())
+    parse_component(input, quote! { winny::ecs })
 }
 
 #[proc_macro_derive(WinnyComponent, attributes(component))]
 pub fn winny_component_impl(input: TokenStream) -> TokenStream {
-    parse_component(input, quote! { ::ecs }.into())
+    parse_component(input, quote! { ::ecs })
 }
 
 #[proc_macro_derive(InternalComponent, attributes(component))]
 pub fn internal_component_impl(input: TokenStream) -> TokenStream {
-    parse_component(input, quote! { crate }.into())
+    parse_component(input, quote! { crate })
 }
 
 fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
-    
-    let mut storage = StorageType::Table;
 
-    for meta in input.attrs.iter().filter(|a| a.path().is_ident("component")) {
-        meta.parse_nested_meta(|nested| {
-            if nested.path.is_ident("storage") {
-                storage = match nested.value()?.parse::<LitStr>()?.value() {
-                    s if s == TABLE => StorageType::Table,
-                    s if s == SPARSE_SET => StorageType::SparseSet,
-                    _ => {
-                        return Err(nested.error("Invalid storage type"));
-                    }
-                };              
-                Ok(())
-            } else {
-                panic!("Invalid component attribute. Use \n\"component(storage = SparseSet)\"\nfor sparse set.");
-            }
-        }).expect("Invalid attribute(s)");
-    }
+    // let mut storage = StorageType::Table;
 
-    let storage = match storage {
-        StorageType::Table => 
-            Ident::new("Table", Span::call_site()),
-        StorageType::SparseSet => 
-            Ident::new("SparseSet", Span::call_site()),
-    };
+    // for meta in input.attrs.iter().filter(|a| a.path().is_ident("component")) {
+    //     meta.parse_nested_meta(|nested| {
+    //         if nested.path.is_ident("storage") {
+    //             storage = match nested.value()?.parse::<LitStr>()?.value() {
+    //                 s if s == TABLE => StorageType::Table,
+    //                 s if s == SPARSE_SET => StorageType::SparseSet,
+    //                 _ => {
+    //                     return Err(nested.error("Invalid storage type"));
+    //                 }
+    //             };
+    //             Ok(())
+    //         } else {
+    //             panic!("Invalid component attribute. Use \n\"component(storage = SparseSet)\"\nfor sparse set.");
+    //         }
+    //     }).expect("Invalid attribute(s)");
+    // }
+
+    // let storage = match storage {
+    //     StorageType::Table =>
+    //         Ident::new("Table", Span::call_site()),
+    //     StorageType::SparseSet =>
+    //         Ident::new("SparseSet", Span::call_site()),
+    // };
 
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     quote! {
-        impl #impl_generics #path_to_ecs::storage::Storage for #name #ty_generics #where_clause {
-            fn storage_type() -> #path_to_ecs::storage::StorageType {
-                #path_to_ecs::storage::StorageType::#storage   
-            }
-        }
-
         impl #impl_generics #path_to_ecs::storage::Component for #name #ty_generics #where_clause {}
-    }.into()
+    }
+    .into()
 }
 
 #[proc_macro_derive(Resource)]
@@ -95,7 +95,8 @@ fn parse_resource(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> 
 
     quote! {
         impl #impl_generics #path_to_ecs::storage::Resource for #name #ty_generics #where_clause {}
-    }.into()
+    }
+    .into()
 }
 
 #[proc_macro_derive(Event)]
@@ -121,22 +122,23 @@ fn parse_event(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> Tok
 
     quote! {
         impl #impl_generics #path_to_ecs::Event for #name #ty_generics #where_clause {}
-    }.into()
+    }
+    .into()
 }
 
 #[proc_macro_derive(Bundle)]
 pub fn bundle_impl(input: TokenStream) -> TokenStream {
-    parse_bundle(input, quote! { winny::ecs }.into())
+    parse_bundle(input, quote! { winny::ecs })
 }
 
 #[proc_macro_derive(WinnyBundle)]
 pub fn winny_bundle_impl(input: TokenStream) -> TokenStream {
-    parse_bundle(input, quote! { ::ecs }.into())
+    parse_bundle(input, quote! { ::ecs })
 }
 
 #[proc_macro_derive(InternalBundle)]
 pub fn internal_bundle_impl(input: TokenStream) -> TokenStream {
-    parse_bundle(input, quote! { crate }.into())
+    parse_bundle(input, quote! { crate })
 }
 
 fn parse_bundle(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
@@ -153,41 +155,54 @@ fn parse_bundle(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
         }
         syn::Data::Struct(data) => {
             let mut fields = Vec::new();
+            let mut tys = Vec::new();
 
             match &data.fields {
                 Fields::Named(data) => {
                     for field in data.named.iter() {
                         fields.push(field.ident.as_ref().unwrap());
+                        tys.push(&field.ty);
                     }
                 }
                 _ => panic!("helo"),
             }
 
+            let generics = &input.generics;
+            let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
             quote! {
-                use #path_to_ecs::storage::components::ComponentStorageType;
-                impl #path_to_ecs::storage::Bundle for #name {
-                    fn push_storage<'w>(self, world: #path_to_ecs::world::UnsafeWorldCell<'w>, table: &mut #path_to_ecs::storage::Table) -> Result<(), #path_to_ecs::storage::IntoStorageError> {
-                        (#(self.#fields),*).push_storage(world, table)
+                impl #impl_generics #path_to_ecs::storage::Bundle for #name #ty_generics #where_clause {
+                    fn push_storage(self, world: #path_to_ecs::world::UnsafeWorldCell<'_>, table_id: #path_to_ecs::storage::TableId) {
+                        (#(self.#fields),*).push_storage(world, table_id)
                     }
 
-                    fn new_storages<'w>(&self, world: #path_to_ecs::world::UnsafeWorldCell<'w>) -> Vec<(#path_to_ecs::components::ComponentId, #path_to_ecs::storage::DumbVec)> {
-                        (#(self.#fields.clone()),*).new_storages(world)
+                    fn new_table(self, world: &mut #path_to_ecs::world::World) -> #path_to_ecs::storage::Table {
+                        let mut table = #path_to_ecs::storage::Table::new();
+                        unsafe {
+                            #(
+                            let component_id = world.get_component_id(&std::any::TypeId::of::<#tys>());
+                            let mut column = #path_to_ecs::any_vec::AnyVec::new::<#tys>();
+                            {
+                                let mut vec = column.downcast_mut_unchecked::<#tys>();
+                                vec.push(self.#fields);
+                            }
+
+                            table.insert_column(column, component_id);
+                            )*
+                        }
+
+                        table
                     }
 
-                    fn type_ids(&self) -> Vec<std::any::TypeId>  {
-                        (#(self.#fields.clone()),*).type_ids()
+                    fn type_ids(&self) -> Vec<std::any::TypeId> {
+                        vec![#(std::any::TypeId::of::<#tys>()),*]
                     }
 
-                    fn component_ids<'w>(&self, world: #path_to_ecs::world::UnsafeWorldCell<'w>) -> Vec<#path_to_ecs::components::ComponentId>  {
-                        (#(self.#fields.clone()),*).component_ids(world)
-                    }
-
-                    fn storage_locations(&self) -> Vec<#path_to_ecs::storage::StorageType> {
-                        (#(self.#fields.clone()),*).storage_locations()
+                    fn register_components(&self, world: &mut #path_to_ecs::world::World) {
+                        #(world.register_component::<#tys>();)*
                     }
                 }
-            }
-            .into()
+            }.into()
         }
     }
 }

@@ -1,8 +1,10 @@
+use crate::access::{AccessFilter, ComponentAccessFilter, SystemAccess};
+
 use super::*;
 
 pub trait Filter: Send + Sync {
     fn condition(arch: &Archetype) -> bool;
-    fn set_access() -> Vec<ComponentAccessFilter>;
+    fn system_access(components: &mut Components) -> SystemAccess;
 }
 
 pub struct With<T>(PhantomData<T>);
@@ -14,8 +16,9 @@ impl<T: Component> Filter for With<T> {
         arch.contains_type_id::<T>()
     }
 
-    fn set_access() -> Vec<ComponentAccessFilter> {
-        vec![ComponentAccessFilter::new::<T>(AccessFilter::With)]
+    fn system_access(components: &mut Components) -> SystemAccess {
+        let id = components.register::<T>();
+        SystemAccess::default().with_filter(ComponentAccessFilter::new(AccessFilter::With, id))
     }
 }
 
@@ -24,8 +27,9 @@ impl<T: Component> Filter for Without<T> {
         !arch.contains_type_id::<T>()
     }
 
-    fn set_access() -> Vec<ComponentAccessFilter> {
-        vec![ComponentAccessFilter::new::<T>(AccessFilter::Without)]
+    fn system_access(components: &mut Components) -> SystemAccess {
+        let id = components.register::<T>();
+        SystemAccess::default().with_filter(ComponentAccessFilter::new(AccessFilter::Without, id))
     }
 }
 
@@ -34,8 +38,9 @@ impl<T: Component> Filter for Or<T> {
         arch.contains_type_id::<T>()
     }
 
-    fn set_access() -> Vec<ComponentAccessFilter> {
-        vec![ComponentAccessFilter::new::<T>(AccessFilter::Or)]
+    fn system_access(components: &mut Components) -> SystemAccess {
+        let id = components.register::<T>();
+        SystemAccess::default().with_filter(ComponentAccessFilter::new(AccessFilter::Or, id))
     }
 }
 
@@ -44,8 +49,8 @@ impl Filter for () {
         true
     }
 
-    fn set_access() -> Vec<ComponentAccessFilter> {
-        vec![]
+    fn system_access(_components: &mut Components) -> SystemAccess {
+        SystemAccess::default()
     }
 }
 
@@ -56,10 +61,10 @@ macro_rules! or_expand {
                 $($t::condition(arch))||*
             }
 
-            fn set_access() -> Vec<ComponentAccessFilter> {
-                let mut access = vec![];
-                $(access.append(
-                        &mut $t::set_access()
+            fn system_access(components: &mut Components) -> SystemAccess {
+                let mut access = SystemAccess::default();
+                $(access = access.with(
+                        $t::system_access(components)
                         );
                     )*
                 access
@@ -77,9 +82,12 @@ macro_rules! filter_expand {
                 $($t::condition(arch))&&*
             }
 
-            fn set_access() -> Vec<ComponentAccessFilter> {
-                let mut access = vec![];
-                $(access.append(&mut $t::set_access());)*
+            fn system_access(components: &mut Components) -> SystemAccess {
+                let mut access = SystemAccess::default();
+                $(access = access.with(
+                        $t::system_access(components)
+                        );
+                    )*
                 access
             }
         }

@@ -1,0 +1,255 @@
+use crate::{ComponentId, ResourceId};
+
+#[derive(Debug, Default)]
+pub struct SystemAccess {
+    components: Vec<ComponentAccess>,
+    resources: Vec<ResourceAccess>,
+    filters: Vec<ComponentAccessFilter>,
+}
+
+impl SystemAccess {
+    pub fn with(mut self, mut other: SystemAccess) -> Self {
+        self.components.append(&mut other.components);
+        self.resources.append(&mut other.resources);
+        self.filters.append(&mut other.filters);
+        self
+    }
+
+    pub fn with_component(mut self, param: ComponentAccess) -> Self {
+        self.components.push(param);
+        self
+    }
+
+    pub fn with_resource(mut self, res: ResourceAccess) -> Self {
+        self.resources.push(res);
+        self
+    }
+
+    pub fn with_filter(mut self, filter: ComponentAccessFilter) -> Self {
+        self.filters.push(filter);
+        self
+    }
+
+    // TODO: better panics
+    pub fn validate_or_panic(&self) {
+        let mutable_access: Vec<_> = self.components.iter().filter(|c| c.is_mutable()).collect();
+        let immutable_access: Vec<_> = self
+            .components
+            .iter()
+            .filter(|c| c.is_immutable())
+            .collect();
+
+        for m in mutable_access.iter() {
+            for i in immutable_access.iter() {
+                if i.id == m.id {
+                    panic!(
+                        "Query attemps to access the same Component mutably and immutably: {:#?}, {:#?}",
+                        i, m
+                    );
+                }
+            }
+        }
+
+        let mutable_access: Vec<_> = self.resources.iter().filter(|c| c.is_mutable()).collect();
+        let immutable_access: Vec<_> = self.resources.iter().filter(|c| c.is_immutable()).collect();
+
+        for m in mutable_access.iter() {
+            for i in immutable_access.iter() {
+                if i.id == m.id {
+                    panic!(
+                        "System attemps to access the same Resource mutably and immutably: {:#?}, {:#?}",
+                        i, m
+                    );
+                }
+            }
+        }
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        !self.components.iter().any(|c| c.is_mutable())
+            && !self.resources.iter().any(|r| r.is_mutable())
+    }
+
+    pub fn is_read_and_write(&self) -> bool {
+        !self.is_read_only()
+    }
+
+    pub fn conflicts_with(&self, other: &SystemAccess) -> bool {
+        let mutable_access: Vec<_> = self.components.iter().filter(|a| a.is_mutable()).collect();
+        let immutable_access: Vec<_> = self
+            .components
+            .iter()
+            .filter(|a| a.is_immutable())
+            .collect();
+
+        let other_mutable_access: Vec<_> =
+            other.components.iter().filter(|a| a.is_mutable()).collect();
+        let other_immutable_access: Vec<_> = other
+            .components
+            .iter()
+            .filter(|a| a.is_immutable())
+            .collect();
+
+        let components = mutable_access
+            .iter()
+            .any(|s| other_immutable_access.iter().any(|o| s.id == o.id))
+            || other_mutable_access
+                .iter()
+                .any(|o| immutable_access.iter().any(|s| s.id == o.id))
+            || other_mutable_access
+                .iter()
+                .any(|o| mutable_access.iter().any(|s| s.id == o.id));
+
+        let mutable_access: Vec<_> = self.resources.iter().filter(|a| a.is_mutable()).collect();
+        let immutable_access: Vec<_> = self.resources.iter().filter(|a| a.is_immutable()).collect();
+
+        let other_mutable_access: Vec<_> =
+            other.resources.iter().filter(|a| a.is_mutable()).collect();
+        let other_immutable_access: Vec<_> = other
+            .resources
+            .iter()
+            .filter(|a| a.is_immutable())
+            .collect();
+
+        let resources = mutable_access
+            .iter()
+            .any(|s| other_immutable_access.iter().any(|o| s.id == o.id))
+            || other_mutable_access
+                .iter()
+                .any(|o| immutable_access.iter().any(|s| s.id == o.id))
+            || other_mutable_access
+                .iter()
+                .any(|o| mutable_access.iter().any(|s| s.id == o.id));
+
+        components || resources
+    }
+}
+
+#[derive(Debug)]
+pub struct ComponentAccess {
+    pub access_type: AccessType,
+    pub id: ComponentId,
+}
+
+#[derive(Debug)]
+pub struct ResourceAccess {
+    pub access_type: AccessType,
+    pub id: ResourceId,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AccessType {
+    Immutable,
+    Mutable,
+}
+
+impl ComponentAccess {
+    pub fn new(access_type: AccessType, id: ComponentId) -> Self {
+        Self { access_type, id }
+    }
+
+    pub fn is_immutable(&self) -> bool {
+        self.access_type == AccessType::Immutable
+    }
+
+    pub fn is_mutable(&self) -> bool {
+        self.access_type == AccessType::Mutable
+    }
+}
+
+impl ResourceAccess {
+    pub fn new(access_type: AccessType, id: ResourceId) -> Self {
+        Self { access_type, id }
+    }
+
+    pub fn is_immutable(&self) -> bool {
+        self.access_type == AccessType::Immutable
+    }
+
+    pub fn is_mutable(&self) -> bool {
+        self.access_type == AccessType::Mutable
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AccessFilter {
+    With,
+    Without,
+    Or,
+}
+
+#[derive(Debug)]
+pub struct ComponentAccessFilter {
+    pub filter: AccessFilter,
+    pub id: ComponentId,
+}
+
+impl ComponentAccessFilter {
+    pub fn new(filter: AccessFilter, id: ComponentId) -> Self {
+        Self { filter, id }
+    }
+
+    pub fn with(&self) -> bool {
+        self.filter == AccessFilter::With
+    }
+
+    pub fn without(&self) -> bool {
+        self.filter == AccessFilter::Without
+    }
+
+    pub fn or(&self) -> bool {
+        self.filter == AccessFilter::Or
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let sa_1 = SystemAccess::default().with_component(ComponentAccess::new(
+            AccessType::Immutable,
+            ComponentId::new(0),
+        ));
+        sa_1.validate_or_panic();
+
+        let sa_2 = SystemAccess::default().with_component(ComponentAccess::new(
+            AccessType::Mutable,
+            ComponentId::new(0),
+        ));
+        sa_2.validate_or_panic();
+
+        assert!(sa_1.conflicts_with(&sa_2));
+
+        let panic = SystemAccess::default()
+            .with_component(ComponentAccess::new(
+                AccessType::Immutable,
+                ComponentId::new(0),
+            ))
+            .with_component(ComponentAccess::new(
+                AccessType::Mutable,
+                ComponentId::new(0),
+            ));
+
+        let panic = std::thread::spawn(move || {
+            panic.validate_or_panic();
+        });
+
+        assert!(panic.join().is_err());
+
+        let sa_1 = SystemAccess::default().with_component(ComponentAccess::new(
+            AccessType::Immutable,
+            ComponentId::new(0),
+        ));
+        sa_1.validate_or_panic();
+
+        let sa_2 = SystemAccess::default().with_component(ComponentAccess::new(
+            AccessType::Mutable,
+            ComponentId::new(1),
+        ));
+        sa_2.validate_or_panic();
+
+        assert!(!sa_1.conflicts_with(&sa_2));
+    }
+}

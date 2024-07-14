@@ -1,80 +1,15 @@
-use std::{hash::Hash, ptr::NonNull};
+use std::{cell::UnsafeCell, hash::Hash};
 
-use util::tracing::{error, info};
-
-use crate::unsafe_world::UnsafeWorldCell;
-
-use self::dumb_vec::DumbVec;
+use any_vec::AnyVec;
+use util::tracing::error;
 
 use super::*;
-
-#[derive(Debug)]
-pub struct Column {
-    storage: DumbVec,
-}
-
-impl Column {
-    pub fn new(storage: DumbVec) -> Self {
-        Self { storage }
-    }
-
-    pub unsafe fn storage_mut(&mut self) -> &mut DumbVec {
-        &mut self.storage
-    }
-
-    pub unsafe fn storage(&self) -> &DumbVec {
-        &self.storage
-    }
-
-    pub fn len(&self) -> usize {
-        self.storage.len()
-    }
-
-    // TODO: error
-    pub fn swap_remove(&mut self, row: TableRow) -> Result<(), ()> {
-        if self.len() <= row.0 {
-            return Err(());
-        }
-
-        self.storage.swap_remove_drop_unchecked(row.0);
-
-        Ok(())
-    }
-
-    pub unsafe fn get_row(&self, row: TableRow) -> NonNull<u8> {
-        debug_assert!(row.0 < self.storage.len());
-
-        self.storage.get_unchecked(row.0)
-    }
-
-    pub fn push<T>(&mut self, val: T) -> Result<(), IntoStorageError> {
-        self.storage.push(val)
-    }
-}
-
-pub trait SparseArrayIndex: Copy {
-    fn to_index(&self) -> usize;
-}
-
-impl SparseArrayIndex for usize {
-    fn to_index(&self) -> usize {
-        *self
-    }
-}
-
-#[derive(Debug)]
-pub struct Tables {
-    tables: SparseSet<TableId, Table>,
-}
-
-unsafe impl Sync for Tables {}
-unsafe impl Send for Tables {}
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TableId(usize);
 
 impl SparseArrayIndex for TableId {
-    fn to_index(&self) -> usize {
+    fn index(&self) -> usize {
         self.id()
     }
 }
@@ -89,137 +24,157 @@ impl TableId {
     }
 }
 
-impl Tables {
-    pub fn new() -> Self {
+#[derive(Debug)]
+pub struct Tables {
+    tables: SparseArray<TableId, Table>,
+}
+
+impl Default for Tables {
+    fn default() -> Self {
         Self {
-            tables: SparseSet::new(),
+            tables: SparseArray::new(),
         }
     }
+}
 
-    pub fn len(&self) -> usize {
-        self.tables.len()
+impl Tables {
+    pub fn push(&mut self, table: Table) -> TableId {
+        TableId(self.tables.insert_in_first_empty(table))
     }
 
-    pub fn new_table(&mut self, id: TableId, table: Table) {
-        self.tables.insert(id, table);
+    pub fn get(&self, id: TableId) -> &Table {
+        // Safety:
+        // Cannot obtain a ['TableId'] other than from Tables. Depends on the Immutability of ['Tables']
+        unsafe { self.tables.get_unchecked(&id) }
     }
 
-    pub fn get(&self, id: TableId) -> Option<&Table> {
-        self.tables.get(&id)
-    }
-
-    pub fn get_mut(&mut self, id: TableId) -> Option<&mut Table> {
-        self.tables.get_mut(&id)
-    }
-
-    pub fn new_id(&self) -> TableId {
-        TableId::new(self.tables.len())
+    pub fn get_mut(&mut self, id: TableId) -> &mut Table {
+        // Safety:
+        // Cannot obtain a ['TableId'] other than from Tables. Depends on the Immutability of ['Tables']
+        unsafe { self.tables.get_mut_unchecked(&id) }
     }
 }
 
 #[derive(Debug)]
 pub struct Table {
-    pub storage: SparseSet<ComponentId, Column>,
+    storage: SparseSet<ComponentId, AnyVec<dyn Sync + Send>>,
 }
 
 impl Table {
-    pub fn new(storages: Vec<(ComponentId, DumbVec)>) -> Self {
-        let mut storage = SparseSet::new();
-
-        for (component_id, dumb_vec) in storages.into_iter() {
-            storage.insert(component_id, Column::new(dumb_vec));
+    pub fn new() -> Self {
+        Self {
+            storage: SparseSet::new(),
         }
-
-        Self { storage }
     }
 
-    pub fn from_bundle<'w, T: Bundle>(bundle: T, world: UnsafeWorldCell<'w>) -> Self {
-        let mut table = Self::new(bundle.new_storages(world));
-        table.new_entity(bundle, world);
-
-        table
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            storage: SparseSet::with_capacity(cap),
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.storage.len()
+        self.storage.sparse_len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn depth(&self) -> usize {
-        if self.storage.len() == 0 {
+        if let Some(column) = self.storage.values().first() {
+            column.len()
+        } else {
             0
-        } else {
-            let index = self.storage.indexes().first().expect("cannot be empty");
-            self.storage.get(index).expect("must be occupied").len()
         }
     }
 
-    pub fn new_entity<'w, T: Bundle>(&mut self, bundle: T, world: UnsafeWorldCell<'w>) {
-        let _ = bundle.push_storage(world, self).map_err(|err| {
-            error!("Could not push bundle into table storage: {:?}", err);
-            // TODO: REMOVE
-            info!("{:#?}", unsafe { world.read_only() });
-            panic!();
-        });
+    pub fn iter(&self) -> impl Iterator<Item = (&ComponentId, &AnyVec<dyn Sync + Send>)> {
+        self.storage.iter()
     }
 
-    pub fn remove_entity(&mut self, row: TableRow) -> Result<(), ()> {
-        for column in self.storage.values_mut() {
-            column.swap_remove(row)?;
-        }
-
-        Ok(())
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&ComponentId, &mut AnyVec<dyn Sync + Send>)> {
+        self.storage.iter_mut()
     }
 
-    pub unsafe fn get_entity<T: Component>(&self, row: TableRow, component_id: ComponentId) -> &T {
-        if let Some(column) = self.storage.get(&component_id) {
-            column.get_row(row).cast::<T>().as_ref()
-        } else {
-            error!("Could not get entity from table: {:?}", row);
-            panic!();
+    pub fn remove_entity(&mut self, row: TableRow) {
+        for column in self.storage.iter_mut() {
+            column.1.swap_remove(row.0);
         }
     }
 
-    pub unsafe fn get_entity_mut<T: Component>(
-        &self,
+    pub fn get_entity<T: Component>(&self, row: TableRow, component_id: ComponentId) -> &T {
+        unsafe {
+            let Some(column) = self.storage.get(&component_id) else {
+                error!("Could not get entity from table: {:?}", row);
+                panic!();
+            };
+
+            column.get_unchecked(row.0).downcast_ref_unchecked::<T>()
+        }
+    }
+
+    pub fn get_entity_mut<T: Component>(
+        &mut self,
         row: TableRow,
         component_id: ComponentId,
     ) -> &mut T {
-        if let Some(column) = self.storage.get(&component_id) {
-            column.get_row(row).cast::<T>().as_mut()
-        } else {
+        let Some(column) = self.storage.get_mut(&component_id) else {
             error!("Could not get entity from table: {:?}", row);
             panic!();
+        };
+
+        unsafe {
+            column
+                .get_unchecked_mut(row.0)
+                .downcast_mut_unchecked::<T>()
         }
     }
 
-    // Caller needs to ensure that all elements of entity are present and successfully pushed
-    // so that there are not miss-shapen columns
-    pub fn push_column<T: Component>(
+    // Safety:
+    //     This should only ever be called in the construction of a new table. Archetype and Query
+    //     Metadata relies on the immutability of a Table.
+    pub unsafe fn insert_column(
         &mut self,
-        val: T,
+        column: AnyVec<dyn Sync + Send>,
         component_id: ComponentId,
-    ) -> Result<(), IntoStorageError> {
-        Ok(self
-            .storage
-            .get_mut(&component_id)
-            .ok_or_else(|| IntoStorageError::IncorrectSparseIndex)?
-            .push(val)?)
+    ) {
+        self.storage.insert(component_id, column);
     }
 
-    pub fn column_mut(&mut self, component_id: ComponentId) -> Option<&mut Column> {
-        self.storage.get_mut(&component_id)
+    pub fn push_column<T: Component>(&mut self, val: T, component_id: ComponentId) {
+        let Some(column) = self.storage.get_mut(&component_id) else {
+            error!("Could not push component to table");
+            panic!();
+        };
+
+        unsafe {
+            let mut vec = column.downcast_mut_unchecked::<T>();
+            vec.push(val);
+        }
     }
-}
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum StorageType {
-    Table,
-    SparseSet,
-}
+    pub fn column_mut(
+        &mut self,
+        component_id: &ComponentId,
+    ) -> Option<&mut AnyVec<dyn Sync + Send>> {
+        self.storage.get_mut(component_id)
+    }
 
-impl StorageType {
-    pub fn of<T: Storage>() -> StorageType {
-        T::storage_type()
+    pub unsafe fn column_slice<T: Component>(
+        &self,
+        component_id: &ComponentId,
+    ) -> &mut [UnsafeCell<T>] {
+        unsafe {
+            let column = self
+                .storage
+                .get(component_id)
+                .unwrap()
+                .downcast_ref_unchecked::<T>();
+            std::slice::from_raw_parts_mut(column.as_ptr() as *mut UnsafeCell<T>, column.len())
+        }
     }
 }
 

@@ -1,41 +1,76 @@
+use std::marker::PhantomData;
+
 use util::tracing::warn;
 
 use super::*;
 
-// pub struct IndexAtlas {
-//     components: SparseSet<TypeId, ComponentId>,
-//     resources: SparseSet<TypeId, ResourceId>,
-//     events: SparseSet<TypeId, EventId>,
-// }
-
-#[derive(Debug, Default)]
-pub struct SparseArray<V> {
-    values: Vec<Option<V>>,
+pub trait SparseArrayIndex: Copy {
+    fn index(&self) -> usize;
 }
 
-impl<V: Debug> SparseArray<V> {
+impl SparseArrayIndex for usize {
+    fn index(&self) -> usize {
+        *self
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SparseArray<I: SparseArrayIndex, V> {
+    values: Vec<Option<V>>,
+    _phantom: PhantomData<I>,
+}
+
+impl<I: SparseArrayIndex, V> SparseArray<I, V> {
     pub fn new() -> Self {
-        Self { values: Vec::new() }
+        Self {
+            values: Vec::new(),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            values: Vec::with_capacity(cap),
+            _phantom: PhantomData,
+        }
     }
 
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
-    pub fn get(&self, index: usize) -> Option<&V> {
-        if index >= self.values.len() {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get(&self, index: &I) -> Option<&V> {
+        if index.index() >= self.values.len() {
             None
         } else {
-            self.values[index].as_ref()
+            self.values[index.index()].as_ref()
         }
     }
 
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut V> {
-        if index >= self.values.len() {
+    pub fn get_mut(&mut self, index: &I) -> Option<&mut V> {
+        if index.index() >= self.values.len() {
             None
         } else {
-            self.values[index].as_mut()
+            self.values[index.index()].as_mut()
         }
+    }
+
+    pub unsafe fn get_unchecked(&self, index: &I) -> &V {
+        // TODO: remove when this works
+        self.values.get(index.index()).unwrap().as_ref().unwrap()
+    }
+
+    pub unsafe fn get_mut_unchecked(&mut self, index: &I) -> &mut V {
+        // TODO: remove when this works
+        self.values
+            .get_mut(index.index())
+            .unwrap()
+            .as_mut()
+            .unwrap()
     }
 
     pub fn insert(&mut self, index: usize, value: V) {
@@ -43,110 +78,59 @@ impl<V: Debug> SparseArray<V> {
             self.values.push(None);
         }
 
-        if self.values[index].is_some() {
-            warn!("Overwriting data stored in sparse array");
+        if std::mem::replace(&mut self.values[index], Some(value)).is_some() {
+            warn!(
+                "Overwriting data stored in ['SparseArray']: {}. This is unintented behaviour...",
+                std::any::type_name::<V>()
+            );
         }
-        self.values[index] = Some(value);
     }
 
     pub fn insert_in_first_empty(&mut self, value: V) -> usize {
-        let index = self
-            .values
-            .iter()
-            .enumerate()
-            .find(|(_, v)| v.is_none())
-            .map(|(i, _)| i)
-            .unwrap_or_else(|| {
-                self.values.push(None);
-                self.len() - 1
-            });
-        self.insert(index, value);
+        let mut index = 0;
+        for v in self.values.iter() {
+            if v.is_none() {
+                break;
+            }
+            index += 1;
+        }
 
-        index
+        if self.len() == index {
+            self.values.push(Some(value));
+            index
+        } else {
+            self.values[index] = Some(value);
+            index
+        }
+    }
+
+    pub fn push(&mut self, value: V) -> usize {
+        self.values.push(Some(value));
+        self.len() - 1
     }
 
     pub fn remove(&mut self, index: usize) -> Option<V> {
         self.values[index].take()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+    pub fn iter(&self) -> impl Iterator<Item = &V> {
+        self.values.iter().filter_map(|v| v.as_ref())
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut V> {
-        self.values
-            .iter_mut()
-            .filter(|v| v.is_some())
-            .map(|v| v.as_mut().unwrap())
+        self.values.iter_mut().filter_map(|v| v.as_mut())
     }
 }
-
-pub struct SparseArrayIter<'a, V> {
-    sparse_array: &'a SparseArray<V>,
-    cursor: usize,
-}
-
-impl<'a, V: Debug> Iterator for SparseArrayIter<'a, V> {
-    type Item = &'a V;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while self.sparse_array.get(self.cursor).is_none() {
-            if self.cursor == self.sparse_array.len() {
-                return None;
-            }
-            self.cursor += 1;
-        }
-
-        self.sparse_array.get(self.cursor)
-    }
-}
-
-// pub struct SparseArrayIntoIter<V> {
-//     sparse_array: SparseArray<V>,
-//     cursor: usize,
-// }
-//
-// impl<I: SparseArrayIndex, V> SparseArrayIntoIter<I, V> {
-//     pub fn new(sparse_array: SparseArray<I, V>) -> Self {
-//         Self {
-//             cursor: 0,
-//             sparse_array,
-//         }
-//     }
-// }
-//
-// impl<I: SparseArrayIndex, V> Iterator for SparseArrayIntoIter<I, V> {
-//     type Item = V;
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         while self.sparse_array.get(self.cursor).is_none() {
-//             if self.cursor == self.values.len() {
-//                 return None;
-//             }
-//             self.cursor += 1;
-//         }
-//
-//         self.sparse_array.remove(self.cursor)
-//     }
-// }
-//
-// impl<I: SparseArrayIndex, V> IntoIterator for SparseArray<I, V> {
-//     type Item = V;
-//     type IntoIter = SparseArrayIntoIter<I, V>;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         SparseArrayIntoIter::new(self)
-//     }
-// }
 
 #[derive(Default, Debug)]
 pub struct SparseSet<I: SparseArrayIndex, V> {
     dense: Vec<V>,
     indexes: Vec<I>,
-    sparse: SparseArray<usize>,
+    sparse: SparseArray<I, usize>,
 }
 
 impl<I: SparseArrayIndex, V> SparseSet<I, V> {
+    // Required for AnyVec
     pub fn new() -> Self {
         Self {
             dense: Vec::new(),
@@ -155,8 +139,16 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
         }
     }
 
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            dense: Vec::with_capacity(cap),
+            indexes: Vec::with_capacity(cap),
+            sparse: SparseArray::with_capacity(cap),
+        }
+    }
+
     pub fn insert(&mut self, index: I, value: V) {
-        self.sparse.insert(index.to_index(), self.dense.len());
+        self.sparse.insert(index.index(), self.dense.len());
         self.dense.push(value);
         self.indexes.push(index);
     }
@@ -169,13 +161,13 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
 
     pub fn get(&self, index: &I) -> Option<&V> {
         self.sparse
-            .get(index.to_index())
+            .get(index)
             .map(|dense_index| &self.dense[*dense_index])
     }
 
     pub fn get_mut(&mut self, index: &I) -> Option<&mut V> {
         self.sparse
-            .get(index.to_index())
+            .get(index)
             .map(|dense_index| &mut self.dense[*dense_index])
     }
 
@@ -192,13 +184,13 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
 
     pub fn remove(&mut self, index: &I) {
         for i in 0..self.indexes.len() {
-            if self.indexes[i].to_index() == index.to_index() {
+            if self.indexes[i].index() == index.index() {
                 self.indexes.remove(i);
                 break;
             }
         }
 
-        let Some(index) = self.sparse.get(index.to_index()) else {
+        let Some(index) = self.sparse.get(index) else {
             panic!("removal index exceedes bounds");
         };
 
@@ -240,73 +232,19 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
         self.get(&index).is_some()
     }
 
-    pub fn len(&self) -> usize {
+    pub fn dense_len(&self) -> usize {
         self.dense.len()
     }
 
-    pub fn iter(&self) -> SparseSetIter<'_, I, V> {
-        SparseSetIter::new(self)
+    pub fn sparse_len(&self) -> usize {
+        self.sparse.len()
     }
 
-    // pub fn iter_mut(&self) -> SparseSetIterMut<'_, I, V> {
-    //     SparseSetIterMut::new(self)
-    // }
+    pub fn iter(&self) -> impl Iterator<Item = (&I, &V)> {
+        self.indexes.iter().zip(self.dense.iter())
+    }
 
-    // pub fn iter_indexes(&self) -> Vec<usize> {
-    //     self.indexes.iter().map(|i| i.to_index()).collect()
-    // }
-}
-
-pub struct SparseSetIter<'a, I: SparseArrayIndex, V> {
-    sparse_set: &'a SparseSet<I, V>,
-    indexes: std::slice::Iter<'a, I>,
-}
-
-impl<'a, I: SparseArrayIndex, V> SparseSetIter<'a, I, V> {
-    pub fn new(sparse_set: &'a SparseSet<I, V>) -> Self {
-        Self {
-            indexes: sparse_set.indexes().iter(),
-            sparse_set,
-        }
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut V)> {
+        self.indexes.iter().zip(self.dense.iter_mut())
     }
 }
-
-impl<'a, I: SparseArrayIndex, V> Iterator for SparseSetIter<'a, I, V> {
-    type Item = (&'a I, &'a V);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(index) = self.indexes.next() {
-            Some((index, self.sparse_set.get(index).unwrap()))
-        } else {
-            None
-        }
-    }
-}
-
-// pub struct SparseSetIterMut<'a, I: SparseArrayIndex, V> {
-//     sparse_set: &'a mut SparseSet<I, V>,
-//     indexes: std::vec::IntoIter<&'a I>,
-// }
-//
-// impl<'a, I: SparseArrayIndex, V> SparseSetIterMut<'a, I, V> {
-//     pub fn new(sparse_set: &'a mut SparseSet<I, V>, indexes: Vec<&'a I>) -> Self {
-//         let indexes = indexes.into_iter();
-//
-//         Self {
-//             indexes,
-//             sparse_set,
-//         }
-//     }
-// }
-//
-// impl<'a, I: SparseArrayIndex, V> Iterator for SparseSetIterMut<'a, I, V> {
-//     type Item = (&'a I, &'a mut V);
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if let Some(index) = self.indexes.next() {
-//             Some((index, self.sparse_set.get_mut(index).unwrap()))
-//         } else {
-//             None
-//         }
-//     }
-// }

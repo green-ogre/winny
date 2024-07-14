@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use asset::{Asset, Assets, Handle, LoadedAsset};
+use asset::{Asset, AssetLoaderError, Assets, Handle, LoadedAsset};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, StreamConfig,
@@ -49,7 +49,7 @@ impl AudioStreamHandle {
 }
 
 impl SparseArrayIndex for AudioStreamHandle {
-    fn to_index(&self) -> usize {
+    fn index(&self) -> usize {
         self.0
     }
 }
@@ -124,11 +124,16 @@ pub struct AudioSource {
 impl Asset for AudioSource {}
 
 impl AudioSource {
-    pub fn new(bytes: Vec<u8>, format: WavFormat) -> Self {
-        Self {
+    pub fn new(reader: asset::reader::ByteReader<std::fs::File>) -> Result<Self, AssetLoaderError> {
+        let (bytes, format) = wav::load_from_bytes(reader).map_err(|e| {
+            error!("{:?}", e);
+            AssetLoaderError::from(e)
+        })?;
+
+        Ok(Self {
             bytes: Arc::new(bytes),
             format,
-        }
+        })
     }
 
     pub fn stream(
@@ -326,17 +331,26 @@ impl AssetLoader for AudioAssetLoader {
 
     fn load(
         reader: asset::reader::ByteReader<std::fs::File>,
-        _ext: &str,
-    ) -> Result<Self::Asset, ()> {
-        let (bytes, format) = wav::load_from_bytes(reader).map_err(|err| {
-            error!("{:?}", err);
-        })?;
-
-        Ok(AudioSource::new(bytes, format))
+        ext: &str,
+    ) -> Result<Self::Asset, AssetLoaderError> {
+        match ext {
+            "wav" => AudioSource::new(reader),
+            _ => Err(AssetLoaderError::UnsupportedFileExtension),
+        }
     }
 
-    fn extensions(&self) -> Vec<String> {
-        vec!["wav".into()]
+    fn extensions(&self) -> Vec<&'static str> {
+        vec!["wav"]
+    }
+}
+
+impl From<crate::wav::Error> for AssetLoaderError {
+    fn from(value: crate::wav::Error) -> Self {
+        if value == crate::wav::Error::InvalidPath {
+            Self::FileNotFound
+        } else {
+            Self::FailedToParse
+        }
     }
 }
 
