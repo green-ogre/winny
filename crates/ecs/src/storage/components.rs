@@ -1,4 +1,6 @@
-use std::any::TypeId;
+use std::{alloc::Layout, any::TypeId};
+
+use crate::storage::DumbDrop;
 
 use super::*;
 
@@ -12,45 +14,40 @@ use util::tracing::{error, trace};
 )]
 pub trait Component: 'static + Send + Sync {}
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Components {
     next_id: usize,
     id_table: fxhash::FxHashMap<std::any::TypeId, ComponentMeta>,
 }
 
 impl Components {
-    pub fn register<T: Component>(&mut self) -> ComponentId {
+    pub fn register<T: Component>(&mut self) -> &ComponentMeta {
         let type_id = std::any::TypeId::of::<T>();
-        if let Some(meta) = self.id_table.get(&type_id) {
-            meta.id
-        } else {
+        if self.id_table.get(&type_id).is_none() {
             let id = self.new_id();
             let meta = ComponentMeta::new::<T>(id);
             self.id_table.insert(type_id, meta);
 
-            trace!(
-                "Registering component: {} => {:?}",
-                std::any::type_name::<T>(),
-                id
-            );
-
-            id
+            trace!("Registering component: {}", std::any::type_name::<T>(),);
         }
+
+        // just created
+        self.id_table.get(&type_id).unwrap()
     }
 
-    pub fn register_by_id(&mut self, type_id: std::any::TypeId, name: &'static str) -> ComponentId {
-        if let Some(meta) = self.id_table.get(&type_id) {
-            meta.id
-        } else {
-            let id = self.new_id();
-            let meta = ComponentMeta { id, name };
-            self.id_table.insert(type_id, meta);
-
-            trace!("Registering component: {} => {:?}", name, id);
-
-            id
-        }
-    }
+    // pub fn register_by_id(&mut self, type_id: std::any::TypeId, name: &'static str) -> ComponentId {
+    //     if let Some(meta) = self.id_table.get(&type_id) {
+    //         meta.id
+    //     } else {
+    //         let id = self.new_id();
+    //         let meta = ComponentMeta { id, name };
+    //         self.id_table.insert(type_id, meta);
+    //
+    //         trace!("Registering component by id: {}", name);
+    //
+    //         id
+    //     }
+    // }
 
     pub fn meta<T: Component>(&self) -> &ComponentMeta {
         self.id_table.get(&std::any::TypeId::of::<T>()).unwrap()
@@ -82,20 +79,30 @@ impl Components {
     }
 }
 
+#[derive(Debug)]
 pub struct ComponentMeta {
     pub id: ComponentId,
+    pub layout: Layout,
+    pub drop: Option<DumbDrop>,
     pub name: &'static str,
 }
 
 impl ComponentMeta {
     pub fn new<T: Component>(id: ComponentId) -> Self {
         let name = std::any::type_name::<T>();
+        let layout = std::alloc::Layout::new::<T>();
+        let drop = crate::storage::new_dumb_drop::<T>();
 
-        Self { id, name }
+        Self {
+            id,
+            name,
+            layout,
+            drop,
+        }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
 pub struct ComponentId(usize);
 
 impl ComponentId {

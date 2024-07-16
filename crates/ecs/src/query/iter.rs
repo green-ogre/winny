@@ -67,9 +67,9 @@ impl<'w, 's, T: QueryData> Cursor<'w, 's, T> {
         loop {
             if self.current_row == self.table_len {
                 let storage_id = self.storage_ids.next()?;
-                let table = tables.get(storage_id.table_id);
-                let archetype = archetypes.get(&storage_id.archetype_id).unwrap();
-                self.entities = archetype.entities.values();
+                let table = tables.get(storage_id.table_id).unwrap();
+                let archetype = archetypes.get(storage_id.archetype_id).unwrap();
+                self.entities = archetype.entities.as_slice();
                 self.current_row = 0;
                 self.table_len = table.depth();
 

@@ -4,7 +4,7 @@ use asset::{AssetApp, AssetId, AssetLoaderError, AssetLoaderEvent, Assets, Handl
 use ecs::{EventReader, EventWriter, Res, ResMut, SparseSet, WinnyEvent, WinnyResource};
 
 use image::GenericImageView;
-use util::tracing::{error, info};
+use util::tracing::info;
 
 use crate::model::load_binary;
 
@@ -18,11 +18,12 @@ impl asset::AssetLoader for TextureAssetLoader {
     }
 
     fn load(
-        reader: asset::reader::ByteReader<std::fs::File>,
+        _reader: asset::reader::ByteReader<std::fs::File>,
+        path: String,
         ext: &str,
     ) -> Result<Self::Asset, AssetLoaderError> {
         match ext {
-            "png" => TextureSource::new(reader),
+            "png" => TextureSource::new(path),
             _ => Err(AssetLoaderError::UnsupportedFileExtension),
         }
     }
@@ -100,13 +101,21 @@ pub struct TextureSource {
 impl asset::Asset for TextureSource {}
 
 impl TextureSource {
-    pub fn new(reader: asset::reader::ByteReader<std::fs::File>) -> Result<Self, AssetLoaderError> {
-        let (bytes, dimensions) = crate::png::to_bytes(reader).map_err(|e| {
-            error!("{}", e);
-            AssetLoaderError::from(e)
-        })?;
+    pub fn new(path: String) -> Result<Self, AssetLoaderError> {
+        let data = load_binary(path.as_str()).map_err(|_| AssetLoaderError::FailedToParse)?;
+        let img = image::load_from_memory(&data).map_err(|_| AssetLoaderError::FailedToParse)?;
+        let rgba = img.to_rgba8();
+        let dimensions = img.dimensions();
 
-        Ok(Self { bytes, dimensions })
+        // let (bytes, dimensions) = crate::png::to_bytes(reader).map_err(|e| {
+        //     error!("{}", e);
+        //     AssetLoaderError::from(e)
+        // })?;
+
+        Ok(Self {
+            bytes: rgba.into_raw(),
+            dimensions,
+        })
     }
 }
 

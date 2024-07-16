@@ -10,3 +10,6 @@ app = { path = "../app" }
 ecs = { path = "../ecs" }
 
 cpal = "0.15.3"
+
+[dev-dependencies]
+tracing-test = "0.2.5"

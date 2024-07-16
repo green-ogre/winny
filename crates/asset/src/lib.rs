@@ -8,14 +8,14 @@ use std::{
     sync::{mpsc::TryRecvError, Arc, Mutex},
 };
 
-use any_vec::{any_value::AnyValueSizeless, AnyVec};
 use app::{app::App, plugins::Plugin};
 use ecs::{
-    EventWriter, ResMut, SparseArrayIndex, SparseSet, WinnyComponent, WinnyEvent, WinnyResource,
+    DumbVec, EventWriter, ResMut, SparseArrayIndex, SparseSet, WinnyComponent, WinnyEvent,
+    WinnyResource,
 };
 use reader::ByteReader;
 
-use util::tracing::{error, info};
+use util::tracing::{error, info, trace, trace_span};
 
 pub mod prelude;
 pub mod reader;
@@ -140,16 +140,13 @@ impl<A: Asset> Into<ErasedLoadedAsset> for LoadedAsset<A> {
 
 #[derive(Debug)]
 pub struct ErasedLoadedAsset {
-    loaded_asset: AnyVec,
+    loaded_asset: DumbVec,
 }
 
 impl ErasedLoadedAsset {
     pub fn new<A: Asset>(asset: LoadedAsset<A>) -> Self {
-        let mut loaded_asset = AnyVec::with_capacity::<A>(1);
-        {
-            let mut vec = unsafe { loaded_asset.downcast_mut_unchecked::<LoadedAsset<A>>() };
-            vec.push(asset);
-        }
+        let mut loaded_asset = DumbVec::with_capacity::<LoadedAsset<A>>(1);
+        unsafe { loaded_asset.push::<LoadedAsset<A>>(asset) };
 
         Self { loaded_asset }
     }
@@ -161,12 +158,7 @@ unsafe impl Send for ErasedLoadedAsset {}
 
 impl<A: Asset> Into<LoadedAsset<A>> for ErasedLoadedAsset {
     fn into(mut self) -> LoadedAsset<A> {
-        unsafe {
-            self.loaded_asset
-                .pop()
-                .unwrap()
-                .downcast_unchecked::<LoadedAsset<A>>()
-        }
+        unsafe { self.loaded_asset.pop::<LoadedAsset<A>>() }
     }
 }
 
@@ -283,9 +275,11 @@ impl AssetLoaders {
 
     pub fn load<A: Asset, P: AsRef<Path>>(&mut self, asset_folder: String, path: P) -> Handle<A> {
         if let Some(handle) = self.loaded_assets.get(path.as_ref().to_str().unwrap()) {
+            trace!("found loaded asset, returning");
             return handle.into_typed_handle();
         }
 
+        trace!("loaded asset not found");
         let file_ext = path
             .as_ref()
             .extension()
@@ -298,9 +292,9 @@ impl AssetLoaders {
             .iter()
             .find(|(ext, _)| ext.contains(&file_ext.to_str().unwrap()))
             .map(|(_, i)| i)
-            .expect("valid file");
-        let f =
-            std::fs::File::open(Path::new(&asset_folder).join(path.clone())).expect("valid file");
+            .expect("valid ext");
+        let f = std::fs::File::open(Path::new(&asset_folder).join(path.clone()))
+            .expect(format!("valid file: {}", path).as_str());
         let reader = ByteReader::new(BufReader::new(f));
         let internal_loader = &mut self.loaders[*loader_index];
 
@@ -340,6 +334,7 @@ impl AssetServer {
     }
 
     pub fn load<A: Asset, P: AsRef<Path>>(&mut self, path: P) -> Handle<A> {
+        let _span = trace_span!("asset load").entered();
         self.loaders.load(self.asset_folder.clone(), path)
     }
 }
@@ -472,7 +467,11 @@ impl std::error::Error for AssetLoaderError {}
 pub trait AssetLoader: Send + Sync + 'static {
     type Asset: Asset;
 
-    fn load(reader: ByteReader<File>, ext: &str) -> Result<Self::Asset, AssetLoaderError>;
+    fn load(
+        reader: ByteReader<File>,
+        path: String,
+        ext: &str,
+    ) -> Result<Self::Asset, AssetLoaderError>;
     fn extensions(&self) -> Vec<&'static str>;
 }
 
@@ -523,7 +522,8 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
         let handle = handler.new_id();
 
         std::thread::spawn(move || {
-            let result = L::load(reader, ext.as_str())
+            let _span = trace_span!("load thread").entered();
+            let result = L::load(reader, path.clone(), ext.as_str())
                 .map(|asset| LoadedAsset::new(asset, path.clone(), handle.clone()));
             sender
                 .lock()

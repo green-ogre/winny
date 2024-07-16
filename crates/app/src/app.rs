@@ -272,8 +272,7 @@ impl WinitApp {
     }
 
     pub fn render(&mut self) -> JoinHandle<Duration> {
-        let world = unsafe { self.app.world().as_unsafe_world().read_and_write() };
-        self.renderer.as_mut().unwrap().render(world)
+        self.renderer.as_mut().unwrap().render(&mut self.app.world)
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, marker::PhantomData, process::exit};
+use std::{fmt::Debug, marker::PhantomData};
 
 use util::tracing::trace;
 
@@ -6,7 +6,7 @@ use access::SystemAccess;
 use ecs_macro::all_tuples;
 use system_param::SystemParam;
 
-use crate::{unsafe_world::UnsafeWorldCell, Schedule, World};
+use crate::{unsafe_world::UnsafeWorldCell, Archetype, Schedule, World};
 
 pub mod access;
 pub mod system_param;
@@ -182,51 +182,52 @@ impl SystemSet {
         }
     }
 
-    pub fn run(&mut self, world: UnsafeWorldCell<'_>) {
-        if let Some(condition) = &mut self.condition {
-            if !condition.run_unsafe(world) {
-                return;
-            }
-        }
+    pub fn run(&mut self, _world: &mut World) {
+        // if let Some(condition) = &mut self.condition {
+        //     if !condition.run_unsafe(unsafe { world.as_unsafe_world() }) {
+        //         return;
+        //     }
+        // }
 
-        std::thread::scope(|s| {
-            let mut handles = Vec::new();
-            for node in self.nodes.iter_mut() {
-                match node {
-                    Node::Leaf(system) => {
-                        if self.chain {
-                            system.run_unsafe(world);
-                        } else {
-                            let h = s.spawn(|| system.run_unsafe(world));
-                            handles.push(h);
-                        }
-                    }
-                    Node::Branch(set) => {
-                        if self.chain {
-                            set.run(world);
-                        } else {
-                            let h = s.spawn(|| set.run(world));
-                            handles.push(h);
-                        }
-                    }
-                }
-            }
+        // std::thread::scope(|s| {
+        //     let world = unsafe { world.as_unsafe_world() };
+        //     let mut handles = Vec::new();
+        //     for node in self.nodes.iter_mut() {
+        //         match node {
+        //             Node::Leaf(system) => {
+        //                 if self.chain {
+        //                     system.run_unsafe(world);
+        //                 } else {
+        //                     let h = s.spawn(|| system.run_unsafe(world));
+        //                     handles.push(h);
+        //                 }
+        //             }
+        //             Node::Branch(set) => {
+        //                 if self.chain {
+        //                     set.run(world);
+        //                 } else {
+        //                     let h = s.spawn(|| set.run(world));
+        //                     handles.push(h);
+        //                 }
+        //             }
+        //         }
+        //     }
 
-            handles.into_iter().all(|h| {
-                h.join()
-                    .map_err(|_| {
-                        exit(1);
-                    })
-                    .is_ok()
-            });
-        });
+        //     handles.into_iter().all(|h| {
+        //         h.join()
+        //             .map_err(|_| {
+        //                 exit(1);
+        //             })
+        //             .is_ok()
+        //     });
+        // });
 
-        for node in self.nodes.iter_mut() {
-            match node {
-                Node::Leaf(system) => system.apply_deffered(unsafe { world.read_and_write() }),
-                Node::Branch(set) => set.apply_deffered(unsafe { world.read_and_write() }),
-            }
-        }
+        // for node in self.nodes.iter_mut() {
+        //     match node {
+        //         Node::Leaf(system) => system.apply_deffered(world),
+        //         Node::Branch(set) => set.apply_deffered(world),
+        //     }
+        // }
     }
 
     pub fn apply_deffered(&mut self, world: &mut World) {
@@ -245,6 +246,7 @@ pub trait System: Send + Sync + 'static {
     fn access(&self, world: &mut World) -> SystemAccess;
     fn name(&self) -> &str;
     fn init_state(&mut self, world: &mut World);
+    fn new_archetype(&mut self, archetype: &Archetype);
     fn run_unsafe(&mut self, world: UnsafeWorldCell<'_>) -> Self::Out;
     fn apply_deffered(&mut self, world: &mut World);
 }
@@ -309,8 +311,11 @@ where
         let _ = self.param_state.insert(state);
     }
 
-    // TODO: the state of the world will change over time, meaning that QueryState will not account
-    // for new archetypes with satisfied constraints if state is only set once
+    fn new_archetype(&mut self, archetype: &Archetype) {
+        trace!("new_archetype");
+        F::Param::new_archetype(archetype, self.param_state.as_mut().unwrap());
+    }
+
     fn run_unsafe(&mut self, world: UnsafeWorldCell<'_>) -> Self::Out {
         let state = self.param_state.as_mut().unwrap();
         let _span = util::tracing::trace_span!("system", name = %self.name).entered();
@@ -421,6 +426,10 @@ macro_rules! impl_system_param {
                 (
                     $($params::init_state(world),)*
                 )
+            }
+
+            fn new_archetype(archetype: &crate::storage::Archetype, state: &mut Self::State) {
+                    $($params::new_archetype(archetype, &mut tuple_index!(state, $idx));)*
             }
 
             fn to_param<'w, 's>(state: &'s mut Self::State, world: UnsafeWorldCell<'w>) -> Self::Item<'w, 's> {

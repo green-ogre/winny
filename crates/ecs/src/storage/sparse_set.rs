@@ -117,6 +117,14 @@ impl<I: SparseArrayIndex, V> SparseArray<I, V> {
         self.values.iter().filter_map(|v| v.as_ref())
     }
 
+    pub fn iter_indexed(&self) -> impl Iterator<Item = (usize, &V)> {
+        self.values
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.as_ref().is_some())
+            .map(|(i, v)| (i, unsafe { v.as_ref().unwrap_unchecked() }))
+    }
+
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut V> {
         self.values.iter_mut().filter_map(|v| v.as_mut())
     }
@@ -169,6 +177,16 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
         self.sparse
             .get(index)
             .map(|dense_index| &mut self.dense[*dense_index])
+    }
+
+    pub unsafe fn get_unchecked(&self, index: &I) -> &V {
+        let index = self.sparse.get_unchecked(index);
+        &self.dense[*index]
+    }
+
+    pub unsafe fn get_mut_unchecked(&mut self, index: &I) -> &mut V {
+        let index = self.sparse.get_unchecked(index);
+        &mut self.dense[*index]
     }
 
     pub fn get_or_insert_with<F>(&mut self, index: I, f: F) -> &V

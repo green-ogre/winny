@@ -729,6 +729,7 @@ impl DepthTexture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
     pub fn new(device: &RenderDevice, config: &RenderConfig, label: &str) -> Self {
+        trace!("new DepthTexture");
         let size = wgpu::Extent3d {
             width: config.width(),
             height: config.height(),

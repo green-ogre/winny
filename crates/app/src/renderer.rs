@@ -9,7 +9,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use util::tracing::{error, info};
+use util::tracing::{error, trace, trace_span};
 
 use ecs::{WinnyResource, World};
 use wgpu::TextureFormat;
@@ -85,6 +85,8 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, world: &mut World, width: u32, height: u32) {
+        let _span = trace_span!("resize").entered();
+        trace!("resizing");
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;

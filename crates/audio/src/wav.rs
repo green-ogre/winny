@@ -85,10 +85,14 @@ impl WavParser {
                             let total_samples = data_len / bytes_per_sample;
                             bytes.reserve_exact((bytes_per_sample * total_samples) as usize);
 
-                            for _ in 0..total_samples {
+                            for i in 0..total_samples {
                                 let mut sample =
                                     chunk.reader.read_bytes(bytes_per_sample as usize)?;
                                 bytes.append(&mut sample);
+                                // TODO: remove
+                                if i == 100 {
+                                    break;
+                                }
                             }
                         }
                         _ => unimplemented!(),

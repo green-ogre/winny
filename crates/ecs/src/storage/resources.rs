@@ -1,6 +1,5 @@
 use std::ptr::NonNull;
 
-use any_vec::AnyVec;
 use util::tracing::trace;
 
 use super::*;
@@ -90,7 +89,7 @@ impl SparseArrayIndex for ResourceId {
 
 #[derive(Debug)]
 pub struct Resources {
-    resources: SparseSet<ResourceId, AnyVec<dyn Send + Sync>>,
+    resources: SparseSet<ResourceId, DumbVec>,
     next_id: usize,
     id_table: fxhash::FxHashMap<std::any::TypeId, ResourceId>,
 }
@@ -114,11 +113,7 @@ impl Resources {
             let id = self.new_id();
             self.id_table.insert(type_id, id);
 
-            trace!(
-                "Registering resource: {} => {:?}",
-                std::any::type_name::<R>(),
-                id
-            );
+            trace!("Registering resource: {}", std::any::type_name::<R>(),);
 
             id
         }
@@ -126,15 +121,12 @@ impl Resources {
 
     pub fn insert<R: Resource>(&mut self, res: R, id: ResourceId) {
         if let Some(storage) = self.resources.get_mut(&id) {
-            storage.clear();
-            let mut vec = unsafe { storage.downcast_mut_unchecked::<R>() };
-            vec.push(res);
+            // caller promises that R and ResourceId match
+            unsafe { storage.replace_drop::<R>(res, 0) };
         } else {
-            let mut storage: AnyVec<dyn Send + Sync> = AnyVec::with_capacity::<R>(1);
-            {
-                let mut vec = unsafe { storage.downcast_mut_unchecked::<R>() };
-                vec.push(res);
-            }
+            let mut storage = DumbVec::with_capacity::<R>(1);
+            // storage newly created with type
+            unsafe { storage.push(res) };
 
             self.resources.insert(id, storage);
         }
@@ -146,12 +138,16 @@ impl Resources {
     }
 
     pub fn get_ptr<R: Resource>(&self, id: ResourceId) -> Option<NonNull<R>> {
-        self.resources.get(&id).map(|res| {
-            (res.len() == 1).then(|| unsafe {
-                let ptr = res.downcast_ref_unchecked::<R>().as_ptr();
-                NonNull::new(ptr as *mut R)
-            })?
-        })?
+        self.resources
+            .get(&id)
+            .map(|res| Self::is_valid(res).then(|| 
+                // caller promises that R and ResourceId match
+                unsafe { res.get_unchecked(0).cast::<R>() }
+            ))?
+    }
+
+    fn is_valid(res: &DumbVec) -> bool {
+        res.len() == 1
     }
 
     fn new_id(&mut self) -> ResourceId {

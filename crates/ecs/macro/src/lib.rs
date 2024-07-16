@@ -172,34 +172,16 @@ fn parse_bundle(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
 
             quote! {
                 impl #impl_generics #path_to_ecs::storage::Bundle for #name #ty_generics #where_clause {
-                    fn push_storage(self, world: #path_to_ecs::world::UnsafeWorldCell<'_>, table_id: #path_to_ecs::storage::TableId) {
-                        (#(self.#fields),*).push_storage(world, table_id)
+                    fn component_ids<F: FnMut(ComponentId)>(components: &mut Components, ids: &mut F) {
+                        #(
+                            ids(components.register::<#tys>());
+                        )*
                     }
-
-                    fn new_table(self, world: &mut #path_to_ecs::world::World) -> #path_to_ecs::storage::Table {
-                        let mut table = #path_to_ecs::storage::Table::new();
-                        unsafe {
-                            #(
-                            let component_id = world.get_component_id(&std::any::TypeId::of::<#tys>());
-                            let mut column = #path_to_ecs::any_vec::AnyVec::new::<#tys>();
-                            {
-                                let mut vec = column.downcast_mut_unchecked::<#tys>();
-                                vec.push(self.#fields);
-                            }
-
-                            table.insert_column(column, component_id);
-                            )*
-                        }
-
-                        table
-                    }
-
-                    fn type_ids(&self) -> Vec<std::any::TypeId> {
-                        vec![#(std::any::TypeId::of::<#tys>()),*]
-                    }
-
-                    fn register_components(&self, world: &mut #path_to_ecs::world::World) {
-                        #(world.register_component::<#tys>();)*
+                    // Inserted in the order of [`component_ids`]
+                    fn insert_components<F: FnMut(OwnedPtr)>(self, f: &mut F) {
+                        #(
+                            OwnedPtr::make(self.#fields, |self_ptr| f(self_ptr));
+                        )*
                     }
                 }
             }.into()

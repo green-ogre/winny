@@ -1,9 +1,6 @@
 use std::{
     fmt::Debug,
-    sync::{
-        mpsc::{Receiver, Sender},
-        Arc,
-    },
+    sync::mpsc::{Receiver, Sender},
 };
 
 use asset::{Asset, AssetLoaderError, Assets, Handle, LoadedAsset};
@@ -15,7 +12,7 @@ use ecs::{
     Commands, Entity, Query, Res, ResMut, SparseArrayIndex, WinnyBundle, WinnyComponent,
     WinnyResource, Without,
 };
-use util::tracing::{error, info};
+use util::tracing::{error, info, trace};
 use wav::WavFormat;
 
 pub mod prelude;
@@ -117,7 +114,7 @@ impl GlobalAudio {
 }
 
 pub struct AudioSource {
-    bytes: Arc<Vec<u8>>,
+    bytes: Box<[u8]>,
     format: WavFormat,
 }
 
@@ -131,7 +128,7 @@ impl AudioSource {
         })?;
 
         Ok(Self {
-            bytes: Arc::new(bytes),
+            bytes: bytes.into_boxed_slice(),
             format,
         })
     }
@@ -312,6 +309,7 @@ fn init_audio_bundle_streams(
         if let Some(source) = sources.get(handle) {
             if let Ok(playback) = AudioPlayback::new(source, *playback_settings, &mut global_audio)
             {
+                info!("spawning audio playback");
                 commands.get_entity(entity).insert(playback);
             } else {
                 error!("Could not create playback for audio bundle");
@@ -331,6 +329,7 @@ impl AssetLoader for AudioAssetLoader {
 
     fn load(
         reader: asset::reader::ByteReader<std::fs::File>,
+        _path: String,
         ext: &str,
     ) -> Result<Self::Asset, AssetLoaderError> {
         match ext {
@@ -362,5 +361,54 @@ impl Plugin for AudioPlugin {
         app.register_asset_loader::<AudioSource>(loader)
             .add_systems(ecs::Schedule::PreUpdate, init_audio_bundle_streams)
             .insert_resource(GlobalAudio::new());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ecs::prelude::*;
+    use tracing_test::traced_test;
+    use util::tracing;
+
+    use app::{
+        app::AppExit,
+        plugins::{Plugin, PluginSet},
+        prelude::{KeyCode, KeyInput},
+        window::WindowPlugin,
+    };
+    use asset::*;
+    use ecs::{EventReader, EventWriter};
+
+    pub fn startup(mut commands: Commands, mut asset_server: ResMut<AssetServer>) {
+        commands.spawn(AudioBundle {
+            playback_settings: PlaybackSettings::default(),
+            handle: asset_server.load("the_tavern.wav"),
+        });
+    }
+
+    fn exit_on_load(
+        mut event_writer: EventWriter<AppExit>,
+        load: EventReader<AssetLoaderEvent<AudioSource>>,
+    ) {
+        for _ in load.peak_read() {
+            event_writer.send(AppExit);
+        }
+    }
+
+    #[traced_test]
+    #[test]
+    fn it_works() {
+        App::default()
+            .add_plugins((
+                app::window::WindowPlugin::default(),
+                asset::AssetLoaderPlugin {
+                    asset_folder: "../../../res/".into(),
+                },
+                AudioPlugin,
+            ))
+            .add_systems(Schedule::StartUp, startup)
+            .add_systems(Schedule::Update, exit_on_load)
+            .run();
     }
 }

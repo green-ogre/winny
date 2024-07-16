@@ -10,9 +10,9 @@ impl Default for SchedulerBuilder {
         Self {
             schedules: vec![
                 ScheduleBuilder::new(Schedule::StartUp),
-                ScheduleBuilder::new(Schedule::Platform),
                 ScheduleBuilder::new(Schedule::Exit),
                 ScheduleBuilder::new(Schedule::FlushEvents),
+                ScheduleBuilder::new(Schedule::Platform),
                 ScheduleBuilder::new(Schedule::PreUpdate),
                 ScheduleBuilder::new(Schedule::Update),
                 ScheduleBuilder::new(Schedule::PostUpdate),
@@ -72,8 +72,14 @@ impl Scheduler {
         }
     }
 
+    pub fn new_archetype(&mut self, archetype: &Archetype) {
+        for executer in self.executers.iter_mut() {
+            executer.new_archetype(archetype);
+        }
+    }
+
     pub fn run(&mut self, world: &mut World) {
-        for executer in self.executers.iter_mut().skip(4) {
+        for executer in self.executers.iter_mut().skip(3) {
             let _span = util::tracing::trace_span!("schedule", name = ?executer.tag).entered();
             executer.run(world);
             executer.apply_deffered(world);
@@ -106,13 +112,13 @@ impl Scheduler {
 // TODO: pull out backend schedules
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Schedule {
-    StartUp = 0,
-    Platform = 1,
-    Exit = 2,
-    FlushEvents = 3,
-    PreUpdate = 4,
-    Update = 5,
-    PostUpdate = 6,
+    StartUp,
+    Exit,
+    FlushEvents,
+    Platform,
+    PreUpdate,
+    Update,
+    PostUpdate,
 }
 
 #[derive(Debug)]
@@ -149,6 +155,12 @@ impl ScheduleExecuter {
     pub fn init_systems(&mut self, world: &mut World) {
         for system in self.systems.iter_mut() {
             system.init_state(world);
+        }
+    }
+
+    pub fn new_archetype(&mut self, arch: &Archetype) {
+        for system in self.systems.iter_mut() {
+            system.new_archetype(arch);
         }
     }
 
