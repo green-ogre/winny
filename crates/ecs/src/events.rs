@@ -1,5 +1,5 @@
 use self::unsafe_world::UnsafeWorldCell;
-use std::{fmt::Debug, marker::PhantomData};
+use std::fmt::Debug;
 
 use super::*;
 
@@ -27,7 +27,6 @@ impl SparseArrayIndex for EventId {
 #[derive(Debug, InternalResource)]
 pub struct Events<E: Event> {
     storage: Vec<E>,
-    _phantom: PhantomData<E>,
 }
 
 unsafe impl<E: Event> Sync for Events<E> {}
@@ -37,7 +36,6 @@ impl<E: Event> Events<E> {
     pub fn new() -> Self {
         Self {
             storage: Vec::new(),
-            _phantom: PhantomData,
         }
     }
 
@@ -58,7 +56,7 @@ impl<E: Event> Events<E> {
     }
 
     pub fn peak(&self) -> Option<&E> {
-        (self.storage.is_empty()).then_some(self.storage.last().unwrap())
+        self.storage.last()
     }
 
     pub fn append(&mut self, vals: impl Iterator<Item = E>) {

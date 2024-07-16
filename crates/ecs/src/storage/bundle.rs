@@ -1,117 +1,46 @@
-use std::any::TypeId;
-
-use any_vec::AnyVec;
-
 use util::tracing::{trace, warn};
-
-use crate::{unsafe_world::UnsafeWorldCell, World};
 
 use super::*;
 
+// https://github.com/bevyengine/bevy/blob/main/crates/bevy_ecs/src/bundle.rs#L146C1-L150C3
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a `Bundle`",
+    label = "invalid `Bundle`",
+    note = "consider annotating `{Self}` with `#[derive(Component)]` or `#[derive(Bundle)]`"
+)]
 pub trait Bundle: 'static + Send + Sync {
-    fn push_storage(self, world: UnsafeWorldCell<'_>, table_id: TableId);
-    fn new_table(self, world: &mut World) -> Table;
-    fn register_components(&self, world: &mut World);
-    fn type_ids(&self) -> Vec<TypeId>;
+    fn component_meta<F: FnMut(&ComponentMeta)>(components: &mut Components, ids: &mut F);
+    // Inserted in the order of [`component_ids`]
+    fn insert_components<F: FnMut(OwnedPtr)>(self, f: &mut F);
 }
 
-impl<T: Component + 'static> Bundle for T {
-    fn push_storage(self, world: UnsafeWorldCell<'_>, table_id: TableId) {
-        let component_id = unsafe { world.components() }.id(&std::any::TypeId::of::<T>());
-        unsafe {
-            world
-                .tables_mut()
-                .get_mut(table_id)
-                .push_column(self, component_id);
-        }
+impl<C: Component> Bundle for C {
+    fn component_meta<F: FnMut(&ComponentMeta)>(components: &mut Components, ids: &mut F) {
+        ids(components.register::<C>())
     }
-
-    fn new_table(self, world: &mut World) -> Table {
-        unsafe {
-            let component_id = world.get_component_id(&std::any::TypeId::of::<T>());
-            let mut column: AnyVec<dyn Send + Sync> = AnyVec::new::<T>();
-            {
-                let mut vec = column.downcast_mut_unchecked::<T>();
-                vec.push(self);
-            }
-
-            let mut table = Table::new();
-            table.insert_column(column, component_id);
-
-            table
-        }
-    }
-
-    fn register_components(&self, world: &mut World) {
-        world.register_component::<T>();
-    }
-
-    fn type_ids(&self) -> Vec<TypeId> {
-        vec![std::any::TypeId::of::<Self>()]
+    // Inserted in the order of [`component_ids`]
+    fn insert_components<F: FnMut(OwnedPtr)>(self, f: &mut F) {
+        OwnedPtr::make(self, |self_ptr| f(self_ptr))
     }
 }
 
 macro_rules! bundle {
     ($($t:ident),*) => {
         #[allow(non_snake_case)]
-        impl<$($t: Bundle + 'static),*> Bundle for ($($t,)*) {
-
-    fn push_storage(self, world: UnsafeWorldCell<'_>, table_id: TableId) {
-               let ($($t,)*) = self;
-
+        impl<$($t: Bundle),*> Bundle for ($($t,)*) {
+            fn component_meta<F: FnMut(&ComponentMeta)>(components: &mut Components, ids: &mut F) {
                 $(
-                    $t.push_storage(world, table_id);
+                    $t::component_meta::<F>(components, ids);
                 )*
-    }
-
-
-    fn register_components(&self, world: &mut World) {
-        $(
-        world.register_component_by_id(std::any::TypeId::of::<$t>(), std::any::type_name::<$t>());
-        )*
-    }
-
-            fn new_table(self, world: &mut World ) -> Table {
-               let ($($t,)*) = self;
-        unsafe {
-            let mut table = Table::new();
-       $(
-            let component_id = world.get_component_id(&std::any::TypeId::of::<$t>());
-            let mut column = AnyVec::new::<$t>();
-            {
-                let mut vec = column.downcast_mut_unchecked::<$t>();
-                vec.push($t);
             }
-            table.insert_column(column, component_id);
-    )*
-
-
-            table
+            // Inserted in the order of [`component_ids`]
+            fn insert_components<F: FnMut(OwnedPtr)>(self, f: &mut F) {
+                let ($($t,)*) = self;
+                $(
+                    $t.insert_components::<F>(f);
+                )*
+            }
         }
-            }
-
-
-            fn type_ids(&self) -> Vec<TypeId>  {
-               let ($($t,)*) = self;
-
-                vec![
-                    $($t.type_ids(),)*
-                ].into_iter().flatten().collect::<Vec<_>>()
-            }
-
-            // fn component_ids<'w>(&self, world: UnsafeWorldCell<'w>) -> Vec<ComponentId>  {
-            //    let ($($t,)*) = self;
-            //
-            //     vec![
-            //         $($t.component_ids(world),)*
-            //     ].into_iter().flatten().collect::<Vec<_>>()
-            // }
-        }
-    };
-
-    ($(($t:ident)),*, $next:ident) => {
-        bundle!($(($t)),*);
-        bundle!($(($t)),*, $next);
     }
 }
 
@@ -119,43 +48,48 @@ ecs_macro::all_tuples!(bundle, 1, 10, B);
 
 #[derive(Default)]
 pub struct Bundles {
-    id_table: fxhash::FxHashMap<std::any::TypeId, BundleMeta>,
+    meta: fxhash::FxHashMap<std::any::TypeId, BundleMeta>,
 }
 
 impl Bundles {
-    pub fn register<B: Bundle>(&mut self, archetype: ArchId, table: TableId) -> BundleMeta {
+    pub fn register<B: Bundle>(
+        &mut self,
+        archetype: ArchId,
+        table: TableId,
+        component_ids: Box<[ComponentId]>,
+    ) -> &BundleMeta {
         let id = std::any::TypeId::of::<B>();
-        let meta = BundleMeta::new::<B>(archetype, table);
-
-        trace!(
-            "Registering bundle: {} => {:?}",
-            std::any::type_name::<B>(),
-            id
-        );
-
-        if let Some(old_meta) = self.id_table.insert(id, meta) {
-            warn!(
-                "Unnecessarily constructing new BundleMeta for [{:?}]",
-                old_meta
-            );
+        if let Some(_) = self.meta.get(&id) {
+            warn!("Unnecessarily registering meta");
+        } else {
+            trace!("Registering bundle: {}", std::any::type_name::<B>());
+            let meta = BundleMeta::new(archetype, table, component_ids);
+            self.meta.insert(id, meta);
         }
 
-        meta
+        // just created
+        self.meta::<B>().unwrap()
     }
 
-    pub fn get<B: Bundle>(&self) -> Option<&BundleMeta> {
-        self.id_table.get(&std::any::TypeId::of::<B>())
+    pub fn meta<B: Bundle>(&self) -> Option<&BundleMeta> {
+        self.meta.get(&std::any::TypeId::of::<B>())
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct BundleMeta {
     pub arch_id: ArchId,
     pub table_id: TableId,
+    // Unsorted
+    pub component_ids: Box<[ComponentId]>,
 }
 
 impl BundleMeta {
-    pub fn new<B: Bundle>(arch_id: ArchId, table_id: TableId) -> Self {
-        Self { arch_id, table_id }
+    pub fn new(arch_id: ArchId, table_id: TableId, component_ids: Box<[ComponentId]>) -> Self {
+        Self {
+            arch_id,
+            table_id,
+            component_ids,
+        }
     }
 }

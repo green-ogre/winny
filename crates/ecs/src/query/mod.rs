@@ -146,7 +146,7 @@ impl<T: Component> QueryData for Mut<T> {
 
 impl<T: Component> WorldQuery for Mut<T> {
     type Item<'d> = &'d mut T;
-    type Fetch<'d> = Option<&'d mut [UnsafeCell<T>]>;
+    type Fetch<'d> = Option<&'d [UnsafeCell<T>]>;
     type State = ComponentId;
 
     fn init_state(world: UnsafeWorldCell<'_>) -> Self::State {
@@ -188,7 +188,7 @@ impl<T: Component> ReadOnlyQueryData for T {}
 
 impl<T: Component> WorldQuery for T {
     type Item<'d> = &'d T;
-    type Fetch<'d> = Option<&'d mut [UnsafeCell<T>]>;
+    type Fetch<'d> = Option<&'d [UnsafeCell<T>]>;
     type State = ComponentId;
 
     fn init_state(world: UnsafeWorldCell<'_>) -> Self::State {

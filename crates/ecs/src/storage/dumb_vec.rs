@@ -1,269 +1,261 @@
+#![allow(clippy::missing_safety_doc, dead_code)]
 use std::{
     alloc::Layout,
+    cell::UnsafeCell,
+    mem::ManuallyDrop,
     ptr::{self, NonNull},
 };
-
-use crate::IntoStorageError;
-
-pub type DumbDrop = unsafe fn(ptr: *mut u8);
-
-pub fn new_dumb_drop<T>() -> Option<DumbDrop> {
-    match std::mem::needs_drop::<T>() {
-        true => Some(|ptr: *mut u8| unsafe {
-            std::ptr::drop_in_place(ptr as *mut T);
-        }),
-        false => None,
-    }
-}
 
 #[derive(Debug)]
 pub struct DumbVec {
     capacity: usize,
     len: usize,
-    item_layout: Option<Layout>,
+    item_layout: Layout,
     data: NonNull<u8>,
     drop: Option<DumbDrop>,
 }
 
+unsafe impl Sync for DumbVec {}
+unsafe impl Send for DumbVec {}
+
 impl DumbVec {
     pub fn new<T>() -> Self {
         let drop = new_dumb_drop::<T>();
-        let capacity = if std::mem::size_of::<T>() == 0 { usize::MAX } else { 0 };
-        let item_layout = if std::mem::size_of::<T>() == 0 { None } else { std::alloc::Layout::new::<T>() };
+        let capacity = if std::mem::size_of::<T>() == 0 {
+            usize::MAX
+        } else {
+            0
+        };
+        let item_layout = std::alloc::Layout::new::<T>();
 
-        Self {
-            len: 0,
-            data: NonNull::dangling(),
-            item_layout,
-            capacity,
-            drop,
-        }
+        Self::new_init(item_layout, capacity, drop)
     }
 
-    pub fn to_new_with_capacity(&self, capacity: usize) -> DumbVec {
-        if self.capacity == usize::MAX {
-        Self {
-            len: 0,
-            data: NonNull::dangling(),
-            item_layout: None,
-            capacity: usize::MAX,
-            drop: None,
-        }
+    pub fn new_from(layout: std::alloc::Layout, capacity: usize, drop: Option<DumbDrop>) -> Self {
+        let capacity = if layout.size() == 0 {
+            usize::MAX
         } else {
-
-        let alloc_layout = unsafe {
-            Layout::from_size_align_unchecked(
-                self.item_layout.unwrap().size() * capacity,
-                self.item_layout.unwrap().align(),
-            )
+            capacity
         };
-        let ptr = unsafe { std::alloc::alloc(alloc_layout) };
-        let Some(data) = NonNull::new(ptr) else {
-            panic!("Failed to allocate memory of capaity {}!", capacity);
+
+        Self::new_init(layout, capacity, drop)
+    }
+
+    pub fn with_capacity<T>(cap: usize) -> Self {
+        let drop = new_dumb_drop::<T>();
+        let item_layout = std::alloc::Layout::new::<T>();
+        let capacity = if std::mem::size_of::<T>() == 0 {
+            usize::MAX
+        } else {
+            cap
+        };
+
+        Self::new_init(item_layout, capacity, drop)
+    }
+
+    fn new_init(item_layout: Layout, capacity: usize, drop: Option<DumbDrop>) -> Self {
+        let data = if capacity != 0 && capacity != usize::MAX {
+            unsafe {
+                let layout = Layout::from_size_align_unchecked(
+                    item_layout.size() * capacity,
+                    item_layout.align(),
+                );
+                NonNull::new_unchecked(std::alloc::alloc(layout))
+            }
+        } else {
+            NonNull::dangling()
         };
 
         Self {
+            drop,
             capacity,
+            item_layout,
             data,
             len: 0,
-            item_layout: self.item_layout.unwrap().clone(),
-            drop: self.drop.clone(),
-        }
         }
     }
 
-    pub fn remove_and_push_other(&mut self, other: &mut DumbVec, src: usize) {
-        if src >= self.len {
-            panic!("removal index exceedes bounds");
-        }
+    pub fn clone_empty(&self) -> Self {
+        let item_layout = self.item_layout;
+        let capacity = 0;
+        let drop = self.drop;
 
-        if other.len >= other.capacity || other.capacity == 0 {
-            other.reserve(1);
-        }
-
-        let size = self.item_layout.size();
-
-        unsafe {
-            {
-                let ptr = self.get_ptr().add(src * size);
-                ptr::copy(ptr, other.get_ptr().add(other.len * size), size);
-                ptr::copy(ptr.add(1 * size), ptr, (self.len - src - 1) * size);
-            }
-            self.len -= 1;
-            other.len += 1;
-        }
+        Self::new_init(item_layout, capacity, drop)
     }
 
     pub fn len(&self) -> usize {
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
-    pub fn get_ptr(&self) -> *mut u8 {
+    pub fn as_ptr(&self) -> *mut u8 {
         self.data.as_ptr()
     }
 
-    pub fn get_unchecked(&self, index: usize) -> NonNull<u8> {
-        let size = self.item_layout.unwrap().size();
-
-        unsafe { NonNull::new_unchecked(self.get_ptr().byte_add(size * index)) }
+    // Caller is responsible for bounds
+    pub unsafe fn get_unchecked(&self, index: usize) -> NonNull<u8> {
+        NonNull::new_unchecked(self.as_ptr().add(self.item_layout.size() * index))
     }
 
-    pub fn get_mut_unchecked(&self, index: usize) -> NonNull<u8> {
-        let size = self.item_layout.unwrap().size();
-
-        unsafe { NonNull::new_unchecked(self.get_ptr().byte_add(size * index)) }
+    // Caller is responsible for bounds
+    pub unsafe fn get_mut_unchecked(&self, index: usize) -> NonNull<u8> {
+        NonNull::new_unchecked(self.as_ptr().add(self.item_layout.size() * index))
     }
 
-    fn reserve(&mut self, additional: usize) {
-        if self.len + additional > self.capacity {
-            self.resize_exact(self.capacity + additional);
+    fn reserve(&mut self, new_size: usize) {
+        if new_size > self.capacity {
+            self.resize_exact(new_size);
         }
     }
 
     fn resize_exact(&mut self, exact_count: usize) {
+        assert!(self.item_layout.size() != 0, "capacity overflow");
+
         let new_layout = unsafe {
             Layout::from_size_align_unchecked(
-                self.item_layout.unwrap().size() * exact_count,
-                self.item_layout.unwrap().align(),
+                self.item_layout.size() * exact_count,
+                self.item_layout.align(),
             )
         };
 
-        let data = if self.capacity == 0 {
-            unsafe { std::alloc::alloc(new_layout) }
-        } else {
-            unsafe { std::alloc::realloc(self.data.as_ptr(), new_layout, new_layout.size()) }
-        };
-
-        self.capacity = exact_count;
-        self.data = unsafe { NonNull::new_unchecked(data) };
-    }
-
-    pub fn push<T>(&mut self, val: T) -> Result<(), IntoStorageError> {
-
-        if self.item_layout.is_none() {
-
-        self.len += 1;
-            return Ok(());
-        }
-
-        if std::alloc::Layout::new::<T>() != self.item_layout.unwrap() {
-            return Err(IntoStorageError::LayoutMisMatch);
-        }
-
-        if self.len >= self.capacity || self.capacity == 0 {
-            self.reserve(1);
-        }
-
-        unsafe { ptr::write(self.get_unchecked(self.len).cast::<T>().as_mut(), val) };
-        self.len += 1;
-
-        Ok(())
-    }
-
-    pub fn push_unchecked<T>(&mut self, val: T) -> Result<(), ()> {
-        if self.item_layout.is_none() {
-
-        self.len += 1;
-            return Ok(());
-        }
-
-        if self.len >= self.capacity || self.capacity == 0 {
-            self.reserve(1);
-        }
-
-        unsafe { ptr::write(self.get_unchecked(self.len).cast::<T>().as_mut(), val) };
-        self.len += 1;
-
-        Ok(())
-    }
-
-    pub fn push_erased_unchecked(&mut self, val: *const u8) {
-        if self.len >= self.capacity || self.capacity == 0 {
-            self.reserve(1);
-        }
-
-        let size = self.item_layout.unwrap().size();
-
-        unsafe { self.get_ptr().add(self.len * size).copy_from(val, size) }
-    }
-
-    pub fn pop<T>(&mut self) -> Option<T> {
-        if self.len == 0 {
-            None
-        } else {
-            self.len -= 1;
-            Some(unsafe { ptr::read(self.get_unchecked(self.len).cast::<T>().as_ref()) })
-        }
-    }
-
-    pub fn pop_unchecked<T>(&mut self) -> T {
-        self.len -= 1;
-        unsafe { ptr::read(self.get_unchecked(self.len).cast::<T>().as_ref()) }
-    }
-
-    pub fn push_dyn<T>(&mut self, val: T) -> Result<(), ()> {
-        if std::alloc::Layout::new::<T>() != self.item_layout.unwrap() {
-            return Err(());
-        }
-
-        if self.len > self.capacity || self.capacity == 0 {
-            self.reserve(self.len);
-        } else {
-            unsafe { ptr::write(self.get_unchecked(self.len).cast::<T>().as_mut(), val) };
-            self.len += 1;
-        }
-
-        Ok(())
-    }
-
-    // The 'removed' value is overwritten by the last element. There will be two instances of an
-    // element, however, the old element is forgotten and will either be dropped when the DumbVec leaves scope, or
-    // overwritten by another element.
-    fn swap_remove_unchecked(&mut self, index: usize) {
-        let last = self.get_mut_unchecked(self.len - 1);
-        let remove = self.get_mut_unchecked(index);
+        assert!(
+            new_layout.size() <= isize::MAX as usize,
+            "Allocation too large"
+        );
 
         unsafe {
-            std::ptr::copy_nonoverlapping(last.as_ptr(), remove.as_ptr(), self.item_layout.unwrap().size())
+            let ptr = if self.capacity == 0 {
+                std::alloc::alloc(new_layout)
+            } else {
+                let old_layout = Layout::from_size_align_unchecked(
+                    self.item_layout.size() * self.capacity,
+                    self.item_layout.align(),
+                );
+
+                std::alloc::realloc(self.data.as_ptr(), old_layout, new_layout.size())
+            };
+            self.data = NonNull::new(ptr).unwrap();
         }
+
+        self.capacity = exact_count;
+        // Cannot check for null ptr allocations
+        // self.data = match NonNull::new(new_ptr as *mut T) {
+        //     Some(p) => p,
+        //     None => alloc::handle_alloc_error(new_layout),
+        // };
+    }
+
+    // Caller ensures that DumbVec stores the correct type
+    pub unsafe fn push<T>(&mut self, val: T) {
+        assert!(Layout::new::<T>() == self.item_layout, "Invalid type");
+
+        if self.len >= self.capacity || self.capacity == 0 {
+            self.reserve(self.len * 2 + 1);
+        }
+
+        ptr::write(self.get_unchecked(self.len).cast::<T>().as_mut(), val);
+        self.len += 1;
+    }
+
+    // Caller ensures that DumbVec stores the correct type
+    pub unsafe fn pop<T>(&mut self) -> T {
+        assert!(Layout::new::<T>() == self.item_layout, "Invalid type");
 
         self.len -= 1;
+        ptr::read(self.get_unchecked(self.len).cast::<T>().as_mut())
     }
 
-    pub fn swap_remove_drop_unchecked(&mut self, index: usize) {
-        self.swap_remove_unchecked(index);
+    // Caller ensures that DumbVec stores the correct type
+    pub unsafe fn push_erased(&mut self, val: OwnedPtr) {
+        if self.len >= self.capacity || self.capacity == 0 {
+            self.reserve(self.len * 2 + 1);
+        }
 
+        let src = val.as_ptr();
+        let dst = self.get_mut_unchecked(self.len).as_ptr();
+
+        std::ptr::copy_nonoverlapping(src, dst, self.item_layout.size());
+        self.len += 1;
+    }
+
+    // Caller ensures that DumbVec stores the correct type
+    pub unsafe fn replace_drop<T>(&mut self, val: T, index: usize) {
+        assert!(index < self.len);
+
+        let dst = self.get_mut_unchecked(index).cast::<T>().as_ptr();
+        let _old_val = std::ptr::read(dst);
+        std::ptr::write(dst, val);
+    }
+
+    // Caller ensures that DumbVec stores the correct type
+    pub unsafe fn replace_erased(&mut self, val: OwnedPtr, index: usize) {
+        assert!(index < self.len);
+
+        let src = val.as_ptr();
+        let dst = self.get_mut_unchecked(index).as_ptr();
+
+        std::ptr::copy_nonoverlapping(src, dst, self.item_layout.size());
+    }
+
+    pub unsafe fn swap_remove_no_drop(&mut self, index: usize) {
+        assert!(index < self.len);
+
+        self.len -= 1;
+        if self.len == index {
+            return;
+        }
+
+        std::ptr::copy_nonoverlapping(
+            self.get_mut_unchecked(self.len).as_ptr(),
+            self.get_mut_unchecked(index).as_ptr(),
+            self.item_layout.size(),
+        );
+    }
+
+    pub unsafe fn swap_remove_drop(&mut self, index: usize) {
         if let Some(drop) = self.drop {
-            unsafe { drop(self.get_mut_unchecked(index).as_ptr()) };
+            assert!(index < self.len);
+
+            drop(self.get_mut_unchecked(index).as_ptr());
+
+            self.len -= 1;
+            if self.len == index {
+                return;
+            }
+
+            std::ptr::copy_nonoverlapping(
+                self.get_mut_unchecked(self.len).as_ptr(),
+                self.get_mut_unchecked(index).as_ptr(),
+                self.item_layout.size(),
+            );
+        } else {
+            self.swap_remove_no_drop(index);
         }
     }
 
-    pub fn as_slice<T>(&self) -> &[T] {
-        unsafe { std::slice::from_raw_parts(self.get_ptr() as *const T, self.len) }
+    pub unsafe fn as_slice<T>(&self) -> &[UnsafeCell<T>] {
+        std::slice::from_raw_parts(self.as_ptr() as *const UnsafeCell<T>, self.len)
     }
 
-    pub fn into_vec<T>(&mut self) -> Vec<T> {
-        let mut new_vec = Vec::with_capacity(self.len);
-
-        while let Some(val) = self.pop::<T>() {
-            new_vec.push(val);
-        }
-
-        new_vec
+    fn as_slice_debug<T>(&self) -> &[T] {
+        unsafe { std::slice::from_raw_parts(self.as_ptr().cast::<T>(), self.len) }
     }
 
-    pub fn clear_drop(&mut self) {
+    pub fn clear(&mut self) {
         if let Some(drop) = self.drop {
             let mut ptr = self.data.as_ptr();
 
             for _ in 0..self.len {
                 unsafe {
                     drop(ptr);
-                    ptr = ptr.byte_add(self.item_layout.unwrap().size());
+                    ptr = ptr.byte_add(self.item_layout.size());
                 }
             }
         }
@@ -280,9 +272,166 @@ impl Drop for DumbVec {
             for _ in 0..self.len {
                 unsafe {
                     drop(ptr);
-                    ptr = ptr.byte_add(self.item_layout.unwrap().size());
+                    ptr = ptr.byte_add(self.item_layout.size());
                 }
             }
+        }
+
+        unsafe {
+            if self.item_layout.size() != 0 {
+                let layout = Layout::from_size_align_unchecked(
+                    self.item_layout.size() * self.capacity,
+                    self.item_layout.align(),
+                );
+                std::alloc::dealloc(self.as_ptr(), layout);
+            }
+        }
+    }
+}
+
+pub type DumbDrop = unsafe fn(ptr: *mut u8);
+
+pub fn new_dumb_drop<T>() -> Option<DumbDrop> {
+    match std::mem::needs_drop::<T>() {
+        true => Some(|ptr: *mut u8| unsafe {
+            std::ptr::drop_in_place(ptr as *mut T);
+        }),
+        false => None,
+    }
+}
+
+pub struct OwnedPtr(NonNull<u8>);
+
+impl OwnedPtr {
+    pub fn make<T, F>(val: T, f: F)
+    where
+        F: FnOnce(OwnedPtr),
+    {
+        let mut tmp = ManuallyDrop::new(val);
+
+        f(Self(NonNull::from(&mut *tmp).cast()));
+    }
+
+    pub fn new<T>(mut val: T) -> Self {
+        let ptr = OwnedPtr::from(NonNull::from(&mut val));
+        std::mem::forget(val);
+
+        ptr
+    }
+
+    pub fn from<T>(ptr: NonNull<T>) -> Self {
+        Self(ptr.cast::<u8>())
+    }
+
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.0.as_ptr()
+    }
+
+    pub fn read<T>(self) -> T {
+        unsafe { ptr::read(self.0.as_ptr().cast::<T>()) }
+    }
+
+    pub fn drop<T>(self) {
+        unsafe { self.0.as_ptr().cast::<T>().drop_in_place() };
+    }
+}
+
+// impl Drop for OwnedPtr {
+//     fn drop(&mut self) {
+//         // util::tracing::error!("Failed to drop OwnedPtr");
+//         println!("dropping OwnedPtr");
+//     }
+// }
+
+#[derive(Debug)]
+pub struct Test(&'static str);
+
+impl Drop for Test {
+    fn drop(&mut self) {
+        println!("    Dropping: {:?}", self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strings() {
+        unsafe {
+            let val = String::from("hello");
+            let val2 = String::from("world");
+            let mut vec = DumbVec::new::<String>();
+            vec.push(val);
+            vec.push(val2);
+            vec.push(String::from("goodbye"));
+
+            // let x = Test(2);
+            // let val = { OwnedPtr::new(x) };
+
+            // let val = OwnedPtr::new(Test(2));
+
+            {
+                let x = String::from("gooch");
+                OwnedPtr::make(x, |x_ptr| vec.push_erased(x_ptr));
+            }
+
+            println!("{:?}", vec.as_slice_debug::<String>());
+
+            let mut vec2 = DumbVec::new::<String>();
+            let val = OwnedPtr::from(vec.get_unchecked(0));
+            vec2.push_erased(val);
+            vec.swap_remove_no_drop(0);
+            vec2.swap_remove_drop(0);
+
+            println!("{:?}", vec.as_slice_debug::<String>());
+            println!("{:?}", vec2.as_slice_debug::<String>());
+        }
+    }
+
+    #[test]
+    fn drop() {
+        unsafe {
+            let val = Test("hello");
+            let val2 = Test("world");
+            let mut vec = DumbVec::new::<Test>();
+            vec.push(val);
+            vec.push(val2);
+            vec.push(Test("goodbye"));
+
+            // let x = Test(2);
+            // let val = { OwnedPtr::new(x) };
+
+            // let val = OwnedPtr::new(Test(2));
+
+            {
+                let x = Test("gooch");
+                OwnedPtr::make(x, |x_ptr| vec.push_erased(x_ptr));
+            }
+
+            println!("{:?}", vec.as_slice_debug::<Test>());
+
+            let mut vec2 = DumbVec::new::<Test>();
+            let val = OwnedPtr::from(vec.get_unchecked(0));
+            vec2.push_erased(val);
+            vec.swap_remove_no_drop(0);
+
+            vec2.swap_remove_drop(0);
+
+            println!("{:?}", vec.as_slice_debug::<Test>());
+            println!("{:?}", vec2.as_slice_debug::<Test>());
+        }
+    }
+
+    struct Zero;
+
+    #[test]
+    fn zst() {
+        unsafe {
+            let mut vec = DumbVec::new::<Zero>();
+            vec.push(Zero);
+            vec.push(Zero);
+            vec.push(Zero);
         }
     }
 }

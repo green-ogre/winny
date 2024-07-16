@@ -9,22 +9,19 @@ path = "src/lib.rs"
 
 [workspace]
 members = ["crates/*"]
-exclude = ["crates/deprecated", "crates/audio"]
+exclude = ["crates/deprecated"]
 
 [dependencies]
 ecs = { path = "crates/ecs" }
+audio = { path = "crates/audio" }
 log = { path = "crates/log" }
 util = { path = "crates/util" }
 app = { path = "crates/app" }
 winny_math = { path = "crates/winny_math" }
 asset = { path = "crates/asset" }
 gfx = { path = "crates/gfx" }
-
-hot_reload = { path = "crates/hot_reload", optional = true }
-audio = { path = "crates/audio", optional = true }
+hot_reload = { path = "crates/hot_reload" }
 
 [features]
 egui = ["gfx/egui"]
 gilrs = ["app/controller"]
-hot_reload = ["dep:hot_reload"]
-audio = ["dep:audio"]

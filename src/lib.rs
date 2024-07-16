@@ -12,29 +12,21 @@ use ecs::{EventReader, EventWriter};
 
 pub extern crate app;
 pub extern crate asset;
+pub extern crate audio;
 pub extern crate ecs;
 pub extern crate gfx;
+pub extern crate hot_reload;
 pub extern crate log;
 pub extern crate util;
 pub extern crate winny_math as math;
 
-#[cfg(feature = "audio")]
-pub extern crate audio;
-
-#[cfg(feature = "hot_reload")]
-pub extern crate hot_reload;
-
 pub mod prelude {
-    #[cfg(feature = "hot_reload")]
-    pub use hot_reload::prelude::*;
-
-    #[cfg(feature = "audio")]
-    pub use audio::prelude::*;
-
     pub use app::prelude::*;
     pub use asset::prelude::*;
+    pub use audio::prelude::*;
     pub use ecs::prelude::*;
     pub use gfx::prelude::*;
+    pub use hot_reload::prelude::*;
     pub use log::*;
     pub use util::prelude::*;
     pub use winny_math as math;
@@ -60,8 +52,6 @@ fn should_exit(mut event_writer: EventWriter<AppExit>, key_input: EventReader<Ke
 pub struct DefaultPlugins {
     pub window: WindowPlugin,
     pub asset_loader: AssetLoaderPlugin,
-    pub log: log::LogPlugin,
-    // pub sprites: SpritePlugin,
 }
 
 impl Default for DefaultPlugins {
@@ -73,8 +63,6 @@ impl Default for DefaultPlugins {
             asset_loader: AssetLoaderPlugin {
                 asset_folder: "res/".into(),
             },
-            // sprites: SpritePlugin,
-            log: log::LogPlugin::default(),
         }
     }
 }
@@ -82,12 +70,12 @@ impl Default for DefaultPlugins {
 impl Plugin for DefaultPlugins {
     fn build(&mut self, app: &mut app::app::App) {
         app.add_plugins((
-            self.log.clone(),
             self.window.clone(),
             self.asset_loader.clone(),
             gfx::texture::TexturePlugin,
+            log::LogPlugin,
             CloseOnEscape,
-            // self.sprites.clone(),
+            audio::AudioPlugin,
         ));
     }
 }

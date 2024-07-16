@@ -55,6 +55,13 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
         unsafe { &*std::ptr::from_ref(self).cast::<QueryState<NewD, NewF>>() }
     }
 
+    pub fn new_archetype(&mut self, arch: &Archetype) {
+        // TODO: fix type id issue
+        let arch_ids = arch.type_ids.clone().into_vec();
+        let query_ids = self.
+
+    }
+
     pub fn read_only(&self) -> &QueryState<T::ReadOnly, F> {
         self.as_transmuted_state::<T::ReadOnly, F>()
     }

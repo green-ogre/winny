@@ -1,7 +1,7 @@
 use crate::{
     access::{AccessType, ResourceAccess, SystemAccess},
-    CommandQueue, Commands, Event, EventReader, EventWriter, Events, Filter, Query, QueryData,
-    QueryState, Res, ResMut, Resource, ResourceId, UnsafeWorldCell, World,
+    Archetype, CommandQueue, Commands, Event, EventReader, EventWriter, Events, Filter, Query,
+    QueryData, QueryState, Res, ResMut, Resource, ResourceId, UnsafeWorldCell, World,
 };
 
 pub trait SystemParam {
@@ -10,6 +10,7 @@ pub trait SystemParam {
 
     fn access(world: &mut World) -> SystemAccess;
     fn init_state(world: &mut World) -> Self::State;
+    fn new_archetype(_archetype: &Archetype, _state: &mut Self::State) {}
     fn to_param<'w, 's>(
         state: &'s mut Self::State,
         world: UnsafeWorldCell<'w>,
@@ -37,7 +38,6 @@ impl SystemParam for Commands<'_, '_> {
     }
 
     fn apply_deffered(world: &mut World, state: &mut Self::State) {
-        util::tracing::trace!("ASDFADF");
         state.apply_deffered(world);
     }
 }
@@ -179,6 +179,10 @@ impl<T: 'static + QueryData, F: 'static + Filter> SystemParam for Query<'_, '_, 
 
     fn init_state<'w>(world: &mut World) -> Self::State {
         QueryState::from_world_unsafe(unsafe { world.as_unsafe_world() })
+    }
+
+    fn new_archetype(archetype: &Archetype, state: &mut Self::State) {
+        state.new_archetype(archetype);
     }
 
     fn to_param<'w, 's>(

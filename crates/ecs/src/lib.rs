@@ -18,5 +18,3 @@ pub use schedule::*;
 pub use storage::*;
 pub use systems::*;
 pub use world::*;
-
-pub extern crate any_vec;

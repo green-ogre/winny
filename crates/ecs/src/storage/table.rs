@@ -1,6 +1,7 @@
 use std::{cell::UnsafeCell, hash::Hash};
 
-use any_vec::AnyVec;
+use std::ptr::NonNull;
+
 use util::tracing::error;
 
 use super::*;
@@ -15,7 +16,7 @@ impl SparseArrayIndex for TableId {
 }
 
 impl TableId {
-    pub fn new(id: usize) -> Self {
+    pub(crate) fn new(id: usize) -> Self {
         Self(id)
     }
 
@@ -24,15 +25,24 @@ impl TableId {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TableRow(pub usize);
+
 pub struct Tables {
-    tables: SparseArray<TableId, Table>,
+    tables: SparseSet<TableId, Table>,
+}
+
+impl Debug for Tables {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let tables = self.tables.iter().collect::<Vec<_>>();
+        f.debug_struct("Tables").field("tables", &tables).finish()
+    }
 }
 
 impl Default for Tables {
     fn default() -> Self {
         Self {
-            tables: SparseArray::new(),
+            tables: SparseSet::new(),
         }
     }
 }
@@ -42,35 +52,80 @@ impl Tables {
         TableId(self.tables.insert_in_first_empty(table))
     }
 
-    pub fn get(&self, id: TableId) -> &Table {
+    pub unsafe fn get_unchecked(&self, id: TableId) -> &Table {
         // Safety:
         // Cannot obtain a ['TableId'] other than from Tables. Depends on the Immutability of ['Tables']
         unsafe { self.tables.get_unchecked(&id) }
     }
 
-    pub fn get_mut(&mut self, id: TableId) -> &mut Table {
+    pub unsafe fn get_mut_unchecked(&mut self, id: TableId) -> &mut Table {
         // Safety:
         // Cannot obtain a ['TableId'] other than from Tables. Depends on the Immutability of ['Tables']
         unsafe { self.tables.get_mut_unchecked(&id) }
     }
+
+    pub fn get(&self, id: TableId) -> Option<&Table> {
+        self.tables.get(&id)
+    }
+
+    pub fn get_mut(&mut self, id: TableId) -> Option<&mut Table> {
+        self.tables.get_mut(&id)
+    }
 }
 
-#[derive(Debug)]
 pub struct Table {
-    storage: SparseSet<ComponentId, AnyVec<dyn Sync + Send>>,
+    storage: SparseSet<ComponentId, Column>,
 }
 
-impl Table {
-    pub fn new() -> Self {
+impl Debug for Table {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let storage = self.storage.iter().collect::<Vec<_>>();
+        f.debug_struct("Table").field("storage", &storage).finish()
+    }
+}
+
+impl Default for Table {
+    fn default() -> Self {
         Self {
             storage: SparseSet::new(),
         }
     }
+}
 
+impl Table {
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             storage: SparseSet::with_capacity(cap),
         }
+    }
+
+    pub fn clone_empty(&self) -> Self {
+        let mut storage = SparseSet::new();
+        for (component_id, column) in self.storage.iter() {
+            storage.insert(*component_id, column.clone_empty());
+        }
+
+        Self { storage }
+    }
+
+    pub fn clone_empty_if<F>(&self, f: F) -> Self
+    where
+        F: Fn(&ComponentId, &Column) -> bool,
+    {
+        let mut storage = SparseSet::new();
+        for (component_id, column) in self.storage.iter() {
+            if f(component_id, column) {
+                storage.insert(*component_id, column.clone_empty());
+            }
+        }
+
+        Self { storage }
+    }
+
+    // This can only be used immediately following clone_empty, the world relies on immutable
+    // tables!
+    pub unsafe fn remove_column(&mut self, id: ComponentId) {
+        self.storage.remove(&id);
     }
 
     pub fn len(&self) -> usize {
@@ -89,31 +144,27 @@ impl Table {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&ComponentId, &AnyVec<dyn Sync + Send>)> {
-        self.storage.iter()
-    }
-
-    pub fn iter_mut(
-        &mut self,
-    ) -> impl Iterator<Item = (&ComponentId, &mut AnyVec<dyn Sync + Send>)> {
-        self.storage.iter_mut()
-    }
-
-    pub fn remove_entity(&mut self, row: TableRow) {
+    pub fn swap_remove_row(&mut self, row: TableRow) {
         for column in self.storage.iter_mut() {
-            column.1.swap_remove(row.0);
+            column.1.swap_remove_row_drop(row);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        for column in self.storage.iter_mut() {
+            column.1.clear();
         }
     }
 
     pub fn get_entity<T: Component>(&self, row: TableRow, component_id: ComponentId) -> &T {
-        unsafe {
-            let Some(column) = self.storage.get(&component_id) else {
-                error!("Could not get entity from table: {:?}", row);
-                panic!();
-            };
+        let Some(column) = self.storage.get(&component_id) else {
+            error!("Could not get entity from table: {:?}", row);
+            panic!();
+        };
 
-            column.get_unchecked(row.0).downcast_ref_unchecked::<T>()
-        }
+        assert!(row.0 < column.len());
+
+        unsafe { column.get_row_unchecked::<T>(row) }
     }
 
     pub fn get_entity_mut<T: Component>(
@@ -126,22 +177,24 @@ impl Table {
             panic!();
         };
 
-        unsafe {
-            column
-                .get_unchecked_mut(row.0)
-                .downcast_mut_unchecked::<T>()
-        }
+        assert!(row.0 < column.len());
+
+        unsafe { column.get_row_mut_unchecked::<T>(row) }
     }
 
     // Safety:
     //     This should only ever be called in the construction of a new table. Archetype and Query
     //     Metadata relies on the immutability of a Table.
-    pub unsafe fn insert_column(
-        &mut self,
-        column: AnyVec<dyn Sync + Send>,
-        component_id: ComponentId,
-    ) {
+    pub unsafe fn insert_column(&mut self, column: Column, component_id: ComponentId) {
         self.storage.insert(component_id, column);
+    }
+
+    // Safety:
+    //     This should only ever be called in the construction of a new table. Archetype and Query
+    //     Metadata relies on the immutability of a Table.
+    pub unsafe fn new_column_from_meta(&mut self, meta: &ComponentMeta) {
+        let column = Column::new_from_meta(meta);
+        self.storage.insert(meta.id, column);
     }
 
     pub fn push_column<T: Component>(&mut self, val: T, component_id: ComponentId) {
@@ -150,33 +203,105 @@ impl Table {
             panic!();
         };
 
-        unsafe {
-            let mut vec = column.downcast_mut_unchecked::<T>();
-            vec.push(val);
-        }
+        // caller promises that component_id and component match
+        unsafe { column.push::<T>(val) }
     }
 
-    pub fn column_mut(
-        &mut self,
-        component_id: &ComponentId,
-    ) -> Option<&mut AnyVec<dyn Sync + Send>> {
+    pub fn push_column_unchecked(&mut self, component_id: ComponentId, val: OwnedPtr) {
+        let Some(column) = self.storage.get_mut(&component_id) else {
+            error!("Could not append column to table");
+            panic!();
+        };
+
+        // caller promises that component_id and component match
+        unsafe { column.push_erased(val) }
+    }
+
+    pub fn column_mut(&mut self, component_id: &ComponentId) -> Option<&mut Column> {
         self.storage.get_mut(component_id)
+    }
+
+    pub unsafe fn column_mut_unchecked(&mut self, component_id: &ComponentId) -> &mut Column {
+        self.storage.get_mut_unchecked(component_id)
     }
 
     pub unsafe fn column_slice<T: Component>(
         &self,
         component_id: &ComponentId,
-    ) -> &mut [UnsafeCell<T>] {
-        unsafe {
-            let column = self
-                .storage
-                .get(component_id)
-                .unwrap()
-                .downcast_ref_unchecked::<T>();
-            std::slice::from_raw_parts_mut(column.as_ptr() as *mut UnsafeCell<T>, column.len())
-        }
+    ) -> &[UnsafeCell<T>] {
+        self.storage.get(component_id).unwrap().as_slice()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&ComponentId, &mut Column)> {
+        self.storage.iter_mut()
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct TableRow(pub usize);
+#[derive(Debug)]
+pub struct Column {
+    components: DumbVec,
+}
+
+impl Column {
+    pub fn new<T>() -> Self {
+        Self {
+            components: DumbVec::new::<T>(),
+        }
+    }
+
+    pub fn new_from_meta(meta: &ComponentMeta) -> Self {
+        Self {
+            components: DumbVec::new_from(meta.layout, 0, meta.drop),
+        }
+    }
+
+    pub fn clone_empty(&self) -> Self {
+        Self {
+            components: self.components.clone_empty(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.components.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn swap_remove_row_drop(&mut self, row: TableRow) {
+        unsafe { self.components.swap_remove_drop(row.0) };
+    }
+
+    pub fn swap_remove_row_no_drop(&mut self, row: TableRow) {
+        unsafe { self.components.swap_remove_no_drop(row.0) };
+    }
+
+    pub fn clear(&mut self) {
+        self.components.clear();
+    }
+
+    pub unsafe fn push<T>(&mut self, val: T) {
+        self.components.push(val)
+    }
+
+    pub unsafe fn push_erased(&mut self, val: OwnedPtr) {
+        self.components.push_erased(val)
+    }
+
+    pub unsafe fn get_row_unchecked<T>(&self, row: TableRow) -> &T {
+        self.components.get_unchecked(row.0).cast::<T>().as_ref()
+    }
+
+    pub unsafe fn get_row_mut_unchecked<T>(&mut self, row: TableRow) -> &mut T {
+        self.components.get_unchecked(row.0).cast::<T>().as_mut()
+    }
+
+    pub unsafe fn get_row_ptr_unchecked(&self, row: TableRow) -> NonNull<u8> {
+        self.components.get_unchecked(row.0)
+    }
+
+    pub unsafe fn as_slice<T: Component>(&self) -> &[UnsafeCell<T>] {
+        unsafe { self.components.as_slice::<T>() }
+    }
+}
