@@ -8,7 +8,7 @@ use util::tracing::trace;
 #[derive(Debug)]
 pub struct Archetypes {
     archetypes: SparseSet<ArchId, Archetype>,
-    id_table: fxhash::FxHashMap<Box<[ComponentId]>, ArchId>,
+    id_table: fxhash::FxHashMap<Box<[ComponentMeta]>, ArchId>,
 }
 
 impl Default for Archetypes {
@@ -26,11 +26,10 @@ impl Archetypes {
 
         let archetype = unsafe { self.get_mut_unchecked(arch_id) };
         archetype.arch_id = arch_id;
-        let ids = archetype.type_ids.clone();
+        let ids = archetype.component_metas.clone();
         let _ = archetype;
 
-        // self.id_table.insert(ids, arch_id);
-        todo!();
+        self.id_table.insert(ids, arch_id);
 
         arch_id
     }
@@ -63,12 +62,12 @@ impl Archetypes {
         self.archetypes.get_mut_unchecked(&id)
     }
 
-    pub fn get_from_components(&self, ids: &Box<[ComponentId]>) -> Option<&Archetype> {
+    pub fn get_from_components(&self, ids: &Box<[ComponentMeta]>) -> Option<&Archetype> {
         let arch_id = self.id_table.get(ids)?;
         self.archetypes.get(arch_id)
     }
 
-    pub fn get_mut_from_components(&mut self, ids: Box<[ComponentId]>) -> Option<&mut Archetype> {
+    pub fn get_mut_from_components(&mut self, ids: Box<[ComponentMeta]>) -> Option<&mut Archetype> {
         let arch_id = self.id_table.get(&ids)?;
         self.archetypes.get_mut(arch_id)
     }
@@ -123,7 +122,7 @@ pub struct Archetype {
     pub arch_id: ArchId,
     pub table_id: TableId,
     pub entities: Vec<ArchEntity>,
-    pub component_ids: Box<[ComponentId]>,
+    pub component_metas: Box<[ComponentMeta]>,
 }
 
 #[derive(Clone, Copy)]
@@ -142,12 +141,12 @@ pub enum SwapEntity {
 }
 
 impl Archetype {
-    pub fn new(table_id: TableId, component_ids: Box<[ComponentId]>) -> Self {
+    pub fn new(table_id: TableId, component_metas: Box<[ComponentMeta]>) -> Self {
         Self {
             arch_id: ArchId::new(usize::MAX),
             entities: Vec::new(),
             table_id,
-            component_ids,
+            component_metas,
         }
     }
 
@@ -214,14 +213,28 @@ impl Archetype {
         index
     }
 
-    // pub fn contains_type_id<T: Component>(&self) -> bool {
-    //     self.type_ids.contains(&TypeId::of::<T>())
-    // }
-    //
-    // pub fn contains_query<T: QueryData>(&self) -> bool {
-    //     self.contains_id_set(&T::set_ids())
-    // }
-    //
+    pub fn contains_type_id<T: Component>(&self) -> bool {
+        self.contains_type_id_of(TypeId::of::<T>())
+    }
+
+    fn contains_type_id_of(&self, id: TypeId) -> bool {
+        self.component_metas
+            .iter()
+            .map(|m| m.type_id)
+            .any(|m_id| m_id == id)
+    }
+
+    pub fn contains_query<T: QueryData>(&self) -> bool {
+        let ids = T::set_ids();
+        ids.iter().all(|c| {
+            if *c == TypeId::of::<Entity>() {
+                true
+            } else {
+                self.contains_type_id_of(*c)
+            }
+        })
+    }
+
     // pub fn contains_id(&self, id: &TypeId) -> bool {
     //     self.type_ids.contains(id)
     // }

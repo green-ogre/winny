@@ -46,7 +46,7 @@ macro_rules! bundle {
 
 ecs_macro::all_tuples!(bundle, 1, 10, B);
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Bundles {
     meta: fxhash::FxHashMap<std::any::TypeId, BundleMeta>,
 }
@@ -56,7 +56,7 @@ impl Bundles {
         &mut self,
         archetype: ArchId,
         table: TableId,
-        component_ids: Box<[ComponentId]>,
+        component_ids: Box<[ComponentMeta]>,
     ) -> &BundleMeta {
         let id = std::any::TypeId::of::<B>();
         if let Some(_) = self.meta.get(&id) {
@@ -81,11 +81,11 @@ pub struct BundleMeta {
     pub arch_id: ArchId,
     pub table_id: TableId,
     // Unsorted
-    pub component_ids: Box<[ComponentId]>,
+    pub component_ids: Box<[ComponentMeta]>,
 }
 
 impl BundleMeta {
-    pub fn new(arch_id: ArchId, table_id: TableId, component_ids: Box<[ComponentId]>) -> Self {
+    pub fn new(arch_id: ArchId, table_id: TableId, component_ids: Box<[ComponentMeta]>) -> Self {
         Self {
             arch_id,
             table_id,

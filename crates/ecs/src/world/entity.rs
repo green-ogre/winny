@@ -1,8 +1,8 @@
 use std::{fmt::Debug, sync::atomic::AtomicU32};
 
 use crate::{
-    ArchId, ArchRow, Archetype, Bundle, SparseArray, SparseArrayIndex, SwapEntity, TableId,
-    TableRow, World,
+    ArchId, ArchRow, Bundle, ComponentMeta, SparseArray, SparseArrayIndex, SwapEntity, TableId,
+    TableRow, UnsafeWorldCell, World,
 };
 
 use util::tracing::{error, trace};
@@ -232,57 +232,73 @@ impl<'w> EntityMut<'w> {
         Self { world, entity }
     }
 
-    // TODO: lots of cloning vecs here
     pub fn insert<B: Bundle>(&mut self, bundle: B) {
         if let Some(meta) = self.world.entities.meta(self.entity).cloned() {
             trace!("meta found: {:?}", meta);
-            let old_arch_id = meta.location.archetype_id;
-            let old_arch = self.world.archetypes.get_mut(old_arch_id).unwrap();
-            let old_table_row = meta.location.table_row;
-            let old_table_id = meta.location.table_id;
-            let old_arch_row = meta.location.arch_row;
 
-            match old_arch.swap_remove_entity(meta.location.arch_row) {
-                SwapEntity::Swap => unsafe {
-                    self.world
-                        .entities
-                        .set_location(old_arch.get_entity_unchecked(old_arch_row), meta.location);
-                },
-                SwapEntity::Pop => (),
-            }
+            let mut bundle_ids = Vec::new();
+            B::component_meta(&mut self.world.components, &mut |meta| {
+                bundle_ids.push(*meta);
+            });
+            self.verify_insert_action(meta, &bundle_ids);
+            self.swap_remove_entity(meta);
 
-            let mut old_arch_type_ids: Vec<_> = old_arch.type_ids.clone().into();
-            let mut bundle_type_ids = B::type_ids();
-            let mut new_type_ids =
-                Vec::with_capacity(bundle_type_ids.len() + old_arch_type_ids.len());
-            new_type_ids.append(&mut old_arch_type_ids);
-            new_type_ids.append(&mut bundle_type_ids);
-            new_type_ids.sort();
+            let old_arch = self
+                .world
+                .archetypes
+                .get_mut(meta.location.archetype_id)
+                .unwrap();
 
-            let world = unsafe { self.world.as_unsafe_world() };
-            let arch = unsafe {
-                if let Some(arch) = world
-                    .archetypes_mut()
-                    .get_mut_from_type_ids(new_type_ids.clone().into_boxed_slice())
-                {
-                    trace!("archetype found: {:?}", arch.arch_id);
-                    arch
-                } else {
-                    trace!("no archteype found, creating arch + table");
-                    let table = world.tables().get_unchecked(old_table_id).clone_empty();
-                    let table_id = world.tables_mut().push(table);
-                    let arch_id = world
-                        .archetypes_mut()
-                        .push(Archetype::new(table_id, new_type_ids));
-                    world.archetypes_mut().get_mut_unchecked(arch_id)
+            let mut component_metas = bundle_ids.clone();
+            component_metas.append(&mut old_arch.component_metas.clone().to_vec());
+            component_metas.sort();
+            let component_metas = component_metas.into_boxed_slice();
+
+            let (arch_id, table_id) = unsafe {
+                UnsafeWorldCell::find_or_create_storage::<B>(
+                    meta,
+                    component_metas,
+                    &mut self.world.archetypes,
+                    &mut self.world.tables,
+                    &mut self.world.components,
+                    &|_, _| true,
+                    true,
+                )
+            };
+
+            trace!("adding components: {:?}", bundle_ids);
+
+            let table = unsafe { self.world.tables.get_mut_unchecked(table_id) };
+            let mut bundle_ids = bundle_ids.iter();
+
+            bundle.insert_components(&mut |component_ptr| {
+                // bundle_components is the same order as bundle components
+                if let Some(meta) = bundle_ids.next() {
+                    unsafe {
+                        table
+                            .column_mut_unchecked(&meta.id)
+                            .push_erased(component_ptr)
+                    };
                 }
+            });
+
+            let table_id = unsafe { self.world.archetypes.get_mut_unchecked(arch_id).table_id };
+            unsafe {
+                UnsafeWorldCell::transfer_table_row(
+                    &mut self.world.tables,
+                    meta.location.table_row,
+                    meta.location.table_id,
+                    table_id,
+                )
             };
 
             unsafe {
-                world.insert_entity_into_world(self.entity, arch, |arch| {
-                    bundle.push_storage(world, arch.table_id);
-                    world.transfer_table_row(old_table_row, old_table_id, arch.table_id);
-                });
+                UnsafeWorldCell::insert_entity_into_world(
+                    self.entity,
+                    self.world.archetypes.get_mut_unchecked(arch_id),
+                    &mut self.world.tables,
+                    &mut self.world.entities,
+                );
             }
         } else {
             trace!("entity is reserved, spawning bundle");
@@ -294,20 +310,143 @@ impl<'w> EntityMut<'w> {
         }
     }
 
+    fn verify_insert_action(&self, meta: EntityMeta, bundle_metas: &[ComponentMeta]) {
+        let arch = unsafe {
+            self.world
+                .archetypes
+                .get_unchecked(meta.location.archetype_id)
+        };
+
+        if arch
+            .component_metas
+            .iter()
+            .any(|m| bundle_metas.contains(m))
+        {
+            panic!(
+                "Tried to insert component into entity already containing component:\
+                            inserting bundle => {:#?}. Maybe this should be supported?",
+                bundle_metas
+            );
+        }
+    }
+
     pub fn remove<B: Bundle>(&mut self) {
         let Some(meta) = self.world.entities.meta(self.entity).cloned() else {
             error!("meta not found");
-            panic!();
+            panic!("cannot remove bundle from entity that does not exist");
+        };
+        trace!("meta found: {:?}", meta);
+
+        let mut bundle_metas = Vec::new();
+        B::component_meta(&mut self.world.components, &mut |meta| {
+            bundle_metas.push(*meta);
+        });
+        self.verify_remove_action(meta, &bundle_metas);
+        self.swap_remove_entity(meta);
+
+        let mut new_metas = unsafe {
+            self.world
+                .archetypes
+                .get_mut_unchecked(meta.location.archetype_id)
+                .component_metas
+                .clone()
+                .to_vec()
+        };
+        new_metas.retain(|t| !bundle_metas.contains(t));
+        let new_metas = new_metas.into_boxed_slice();
+
+        let (arch_id, table_id) = unsafe {
+            UnsafeWorldCell::find_or_create_storage::<B>(
+                meta,
+                new_metas,
+                &mut self.world.archetypes,
+                &mut self.world.tables,
+                &mut self.world.components,
+                &|id, _| !bundle_metas.iter().any(|m| m.id == *id),
+                false,
+            )
         };
 
-        unsafe { B::register_components(self.world.as_unsafe_world()) };
-        let old_arch_id = meta.location.archetype_id;
-        let old_arch = self.world.archetypes.get_mut(old_arch_id).unwrap();
-        let old_table_row = meta.location.table_row;
-        let old_table_id = meta.location.table_id;
-        let old_arch_row = meta.location.arch_row;
+        trace!("removing components: {:?}", bundle_metas);
 
-        match old_arch.swap_remove_entity(meta.location.arch_row) {
+        unsafe {
+            UnsafeWorldCell::transfer_table_row_if(
+                &mut self.world.tables,
+                meta.location.table_row,
+                meta.location.table_id,
+                table_id,
+                |id, _| !bundle_metas.iter().any(|m| m.id == *id),
+            )
+        };
+
+        unsafe {
+            UnsafeWorldCell::insert_entity_into_world(
+                self.entity,
+                self.world.archetypes.get_mut_unchecked(arch_id),
+                &mut self.world.tables,
+                &mut self.world.entities,
+            );
+        }
+    }
+
+    fn verify_remove_action(&self, meta: EntityMeta, bundle_metas: &[ComponentMeta]) {
+        let arch = unsafe {
+            self.world
+                .archetypes
+                .get_unchecked(meta.location.archetype_id)
+        };
+
+        if !bundle_metas
+            .iter()
+            .all(|m| arch.component_metas.contains(m))
+        {
+            panic!(
+                "Tried to remove component from entity who does not contain component:\
+                            remove bundle => {:#?}. Maybe this should be supported?",
+                bundle_metas
+            );
+        }
+
+        if arch
+            .component_metas
+            .len()
+            .saturating_sub(bundle_metas.len())
+            == 0
+        {
+            panic!(
+                "Cannot remove last component(s) from entity: {:#?}. This should be implemented.",
+                bundle_metas
+            );
+        }
+    }
+
+    // pub fn get_components(&self) ->
+
+    pub fn despawn(mut self) {
+        let Some(meta) = self.world.entities.meta(self.entity).cloned() else {
+            trace!("entity uninitialized, noop");
+            return;
+        };
+
+        let table = self
+            .world
+            .tables
+            .get_mut(meta.location.table_id)
+            .expect("valid entity");
+        table.swap_remove_row(meta.location.table_row);
+        self.swap_remove_entity(meta);
+        self.world.entities.despawn(self.entity);
+    }
+
+    fn swap_remove_entity(&mut self, meta: EntityMeta) {
+        let old_arch_row = meta.location.arch_row;
+        let old_arch = unsafe {
+            self.world
+                .archetypes
+                .get_mut_unchecked(meta.location.archetype_id)
+        };
+
+        match old_arch.swap_remove_entity(old_arch_row) {
             SwapEntity::Swap => unsafe {
                 self.world
                     .entities
@@ -315,84 +454,6 @@ impl<'w> EntityMut<'w> {
             },
             SwapEntity::Pop => (),
         }
-
-        let mut new_type_ids: Vec<_> = old_arch.type_ids.clone().into();
-        let bundle_type_ids = B::type_ids();
-        new_type_ids.retain(|t| !bundle_type_ids.contains(t));
-
-        let bundle_component_ids = self.world.get_component_ids(&bundle_type_ids);
-
-        let world = unsafe { self.world.as_unsafe_world() };
-        let arch = unsafe {
-            if let Some(arch) = world
-                .archetypes_mut()
-                .get_mut_from_type_ids(new_type_ids.clone().into_boxed_slice())
-            {
-                trace!("archetype found: {:?}", arch.arch_id);
-                arch
-            } else {
-                trace!("no archteype found, creating arch + table");
-                let table = world
-                    .tables_mut()
-                    .get_unchecked(old_table_id)
-                    .clone_empty_if(|id, _| !bundle_component_ids.contains(id));
-                let table_id = world.tables_mut().push(table);
-                let arch_id = world
-                    .archetypes_mut()
-                    .push(Archetype::new(table_id, new_type_ids));
-                world.archetypes_mut().get_mut_unchecked(arch_id)
-            }
-        };
-
-        unsafe {
-            world.insert_entity_into_world(self.entity, arch, |arch| {
-                world.transfer_table_row_if(old_table_row, old_table_id, arch.table_id, |id, _| {
-                    !bundle_component_ids.contains(id)
-                });
-            });
-        }
-    }
-
-    pub fn despawn(self) {
-        let Some(meta) = self.world.entities.meta(self.entity).cloned() else {
-            trace!("entity uninitialized, noop");
-            return;
-        };
-
-        let table_id = meta.location.table_id;
-        let archetype_id = meta.location.archetype_id;
-        let table_row = meta.location.table_row;
-        let arch_row = meta.location.arch_row;
-
-        let archetype = self
-            .world
-            .archetypes
-            .get_mut(archetype_id)
-            .expect("valid entity");
-        let table = self.world.tables.get_mut(table_id).expect("valid entity");
-
-        if SwapEntity::Swap == archetype.swap_remove_entity(arch_row) {
-            table.swap_remove_row(table_row);
-            let swapped_entity = archetype.get_entity(arch_row).unwrap();
-            trace!(
-                "swapping entities: {:?} & {:?}",
-                self.entity,
-                swapped_entity
-            );
-            let new_location = MetaLocation {
-                table_id,
-                archetype_id,
-                table_row,
-                arch_row,
-            };
-            self.world
-                .entities
-                .set_location(swapped_entity, new_location);
-        } else {
-            trace!("no swap: EntityPop");
-        }
-
-        self.world.entities.despawn(self.entity);
     }
 }
 
@@ -401,8 +462,8 @@ mod tests {
     use super::*;
     use crate::prelude::*;
     use ecs_macro::InternalComponent;
-    use tracing_test::traced_test;
-    use util::tracing;
+    // use tracing_test::traced_test;
+    // use util::tracing;
 
     #[derive(Debug, InternalComponent)]
     struct Health(u32);
@@ -413,25 +474,42 @@ mod tests {
     #[derive(Debug, InternalComponent, PartialEq, Eq, Hash)]
     struct Size(u32);
 
-    #[traced_test]
+    macro_rules! impl_drop {
+        ($s:ident) => {
+            impl Drop for $s {
+                fn drop(&mut self) {
+                    println!("Dropping: {:?}", self);
+                }
+            }
+        };
+    }
+
+    impl_drop!(Health);
+    impl_drop!(Weight);
+    impl_drop!(Size);
+
+    // #[traced_test]
     #[test]
-    fn it_works() {
+    fn all_entity_mutations() {
         let mut world = World::default();
         let e2 = world.spawn((Health(0), Weight(0)));
         let e = world.spawn((Health(1), Weight(1)));
 
         let mut e = world.entity_mut(e);
         e.insert(Size(1));
+        // println!("{:#?}", world.entities);
+        e.despawn();
 
         let mut e2 = world.entity_mut(e2);
         e2.insert(Size(0));
-        e2.remove::<Weight>();
-        e2.despawn();
+        e2.remove::<(Health, Size)>();
+        e2.insert((Health(69), Size(69)));
+
+        // println!("{:#?}", world.entities);
 
         assert!(world.archetypes.len() == 3);
         assert!(world.entities.len() == 2);
 
-        println!("{:#?}", world.entities);
-        println!("{:#?}", world.archetypes);
+        println!("exiting scope");
     }
 }

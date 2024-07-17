@@ -11,7 +11,7 @@ use crate::storage::*;
 
 pub use self::unsafe_world::UnsafeWorldCell;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct World {
     pub(crate) archetypes: Archetypes,
     pub(crate) tables: Tables,
@@ -56,17 +56,17 @@ impl World {
         unsafe { self.as_unsafe_world().get_resource_mut_ref::<R>() }
     }
 
-    pub fn register_component<C: Component>(&mut self) -> ComponentId {
-        self.components.register::<C>()
-    }
-
-    pub fn register_component_by_id(
-        &mut self,
-        id: std::any::TypeId,
-        name: &'static str,
-    ) -> ComponentId {
-        self.components.register_by_id(id, name)
-    }
+    // pub fn register_component<C: Component>(&mut self) -> ComponentId {
+    //     self.components.register::<C>()
+    // }
+    //
+    // pub fn register_component_by_id(
+    //     &mut self,
+    //     id: std::any::TypeId,
+    //     name: &'static str,
+    // ) -> ComponentId {
+    //     self.components.register_by_id(id, name)
+    // }
 
     pub fn get_component_id(&self, id: &std::any::TypeId) -> ComponentId {
         self.components.id(id)
