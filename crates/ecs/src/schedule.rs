@@ -49,7 +49,7 @@ impl SchedulerBuilder {
 #[derive(Debug, Default)]
 pub struct Scheduler {
     builder: SchedulerBuilder,
-    executers: Vec<ScheduleExecuter>,
+    pub(crate) executers: Vec<ScheduleExecuter>,
 }
 
 impl Scheduler {
@@ -122,10 +122,11 @@ pub enum Schedule {
 }
 
 #[derive(Debug)]
-struct ScheduleExecuter {
-    tag: Schedule,
-    systems: Vec<StoredSystem>,
-    conditions: Vec<Option<StoredCondition>>,
+pub(crate) struct ScheduleExecuter {
+    pub(crate) tag: Schedule,
+    pub(crate) systems: Vec<StoredSystem>,
+    pub(crate) conditions: Vec<Option<StoredCondition>>,
+    pub(crate) archetypes_len: usize,
 }
 
 impl ScheduleExecuter {
@@ -149,6 +150,7 @@ impl ScheduleExecuter {
             tag,
             systems,
             conditions,
+            archetypes_len: 0,
         }
     }
 
@@ -158,15 +160,24 @@ impl ScheduleExecuter {
         }
     }
 
-    pub fn new_archetype(&mut self, arch: &Archetype) {
-        for system in self.systems.iter_mut() {
-            system.new_archetype(arch);
-        }
-    }
-
     pub fn apply_deffered(&mut self, world: &mut World) {
         for system in self.systems.iter_mut() {
             system.apply_deffered(world);
+        }
+
+        while self.archetypes_len < world.archetypes.len() {
+            let arch = world
+                .archetypes
+                .get(ArchId::new(self.archetypes_len))
+                .expect("valid id");
+            self.new_archetype(arch);
+            self.archetypes_len += 1;
+        }
+    }
+
+    pub fn new_archetype(&mut self, arch: &Archetype) {
+        for system in self.systems.iter_mut() {
+            system.new_archetype(arch);
         }
     }
 
@@ -179,5 +190,46 @@ impl ScheduleExecuter {
                 sys.run_unsafe(world);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, InternalComponent)]
+    struct Health(u32);
+
+    #[derive(Debug, InternalResource)]
+    struct Weight(u32);
+
+    #[derive(Debug, InternalComponent)]
+    struct Size(u32);
+
+    fn test_q(q: Query<(Health, Size)>) {
+        if q.get_single().is_ok() {
+            println!("match single");
+        } else {
+            println!("mismatch single");
+        }
+    }
+
+    fn test_r(_r: Res<Weight>) {}
+
+    #[test]
+    fn miri() {
+        let mut world = World::default();
+        let mut scheduler = Scheduler::default();
+        world.insert_resource(Weight(0));
+        scheduler.add_systems(Schedule::Update, (test_q, test_r));
+        scheduler.add_systems(Schedule::PostUpdate, test_r);
+        scheduler.build_schedule(&mut world);
+        scheduler.startup(&mut world);
+        scheduler.run(&mut world);
+        world.spawn((Health(0), Size(0)));
+        scheduler.new_archetype(world.archetypes.get(ArchId::new(0)).unwrap());
+        scheduler.run(&mut world);
+        scheduler.flush_events(&mut world);
+        scheduler.exit(&mut world);
     }
 }

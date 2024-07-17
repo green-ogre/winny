@@ -424,7 +424,10 @@ pub enum AssetLoaderEvent<A: Asset> {
 
 impl<A: Asset> Debug for AssetLoaderEvent<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AssetLoaderEvent").finish()
+        match self {
+            Self::Loaded { handle } => write!(f, "AssetLoaderEvent::Loaded: {:?}", handle),
+            Self::Err { handle } => write!(f, "AssetLoaderEvent::Err: {:?}", handle),
+        }
     }
 }
 

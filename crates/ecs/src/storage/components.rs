@@ -17,22 +17,24 @@ pub trait Component: 'static + Send + Sync {}
 #[derive(Debug, Default)]
 pub struct Components {
     next_id: usize,
-    id_table: fxhash::FxHashMap<std::any::TypeId, ComponentMeta>,
+    type_id_table: fxhash::FxHashMap<std::any::TypeId, ComponentMeta>,
+    component_id_table: fxhash::FxHashMap<ComponentId, ComponentMeta>,
 }
 
 impl Components {
     pub fn register<T: Component>(&mut self) -> &ComponentMeta {
         let type_id = std::any::TypeId::of::<T>();
-        if self.id_table.get(&type_id).is_none() {
+        if self.type_id_table.get(&type_id).is_none() {
             let id = self.new_id();
             let meta = ComponentMeta::new::<T>(id);
-            self.id_table.insert(type_id, meta);
+            self.type_id_table.insert(type_id, meta);
+            self.component_id_table.insert(meta.id, meta);
 
             trace!("Registering component: {}", std::any::type_name::<T>(),);
         }
 
         // just created
-        self.id_table.get(&type_id).unwrap()
+        self.type_id_table.get(&type_id).unwrap()
     }
 
     // pub fn register_by_id(&mut self, type_id: std::any::TypeId, name: &'static str) -> ComponentId {
@@ -50,11 +52,18 @@ impl Components {
     // }
 
     pub fn meta<T: Component>(&self) -> &ComponentMeta {
-        self.id_table.get(&std::any::TypeId::of::<T>()).unwrap()
+        self.type_id_table
+            .get(&std::any::TypeId::of::<T>())
+            .unwrap()
+    }
+
+    pub fn meta_from_id(&self, id: ComponentId) -> &ComponentMeta {
+        // must be valid component id
+        self.component_id_table.get(&id).unwrap()
     }
 
     pub fn id(&self, type_id: &std::any::TypeId) -> ComponentId {
-        let Some(meta) = self.id_table.get(type_id) else {
+        let Some(meta) = self.type_id_table.get(type_id) else {
             error!("Failed to get component meta: {:?}", type_id);
             panic!();
         };
@@ -79,26 +88,47 @@ impl Components {
     }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ComponentMeta {
     pub id: ComponentId,
-    pub layout: Layout,
+    pub type_id: TypeId,
     pub drop: Option<DumbDrop>,
     pub name: &'static str,
+    size: usize,
+    align: usize,
+}
+
+impl Debug for ComponentMeta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComponentMeta")
+            .field("id", &self.id)
+            // .field("type_id", &self.type_id)
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ComponentMeta {
     pub fn new<T: Component>(id: ComponentId) -> Self {
         let name = std::any::type_name::<T>();
-        let layout = std::alloc::Layout::new::<T>();
         let drop = crate::storage::new_dumb_drop::<T>();
+        let type_id = TypeId::of::<T>();
+        let layout = std::alloc::Layout::new::<T>();
+        let size = layout.size();
+        let align = layout.align();
 
         Self {
             id,
+            type_id,
             name,
-            layout,
             drop,
+            size,
+            align,
         }
+    }
+
+    pub fn layout(&self) -> Layout {
+        unsafe { Layout::from_size_align_unchecked(self.size, self.align) }
     }
 }
 

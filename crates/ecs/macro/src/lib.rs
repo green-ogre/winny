@@ -172,15 +172,15 @@ fn parse_bundle(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
 
             quote! {
                 impl #impl_generics #path_to_ecs::storage::Bundle for #name #ty_generics #where_clause {
-                    fn component_ids<F: FnMut(ComponentId)>(components: &mut Components, ids: &mut F) {
+                    fn component_meta<F: FnMut(&#path_to_ecs::components::ComponentMeta)>(components: &mut #path_to_ecs::components::Components, ids: &mut F) {
                         #(
                             ids(components.register::<#tys>());
                         )*
                     }
                     // Inserted in the order of [`component_ids`]
-                    fn insert_components<F: FnMut(OwnedPtr)>(self, f: &mut F) {
+                    fn insert_components<F: FnMut(#path_to_ecs::storage::OwnedPtr)>(self, f: &mut F) {
                         #(
-                            OwnedPtr::make(self.#fields, |self_ptr| f(self_ptr));
+                            #path_to_ecs::storage::OwnedPtr::make(self.#fields, |self_ptr| f(self_ptr));
                         )*
                     }
                 }

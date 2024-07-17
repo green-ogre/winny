@@ -5,8 +5,6 @@ use std::{
         mpsc::{Receiver, Sender},
         Arc,
     },
-    thread::JoinHandle,
-    time::{Duration, SystemTime},
 };
 
 use util::tracing::{error, trace, trace_span};
@@ -104,8 +102,7 @@ impl Renderer {
         self.passes.push(pass);
     }
 
-    pub fn render(&mut self, world: &mut World) -> JoinHandle<Duration> {
-        let start = SystemTime::now();
+    pub fn render(&mut self, world: &mut World) {
         if let Ok(pass) = self.rp_rx.try_recv() {
             self.add_render_pass_boxed(pass);
         }
@@ -132,10 +129,7 @@ impl Renderer {
         // NOTE: present() does not submit the window, it buffers the submit to be executed
         // let window = world.resource::<WinitWindow>();
         // window.pre_present_notify();
-        std::thread::spawn(move || {
-            output.present();
-            SystemTime::now().duration_since(start).unwrap_or_default()
-        })
+        output.present();
     }
 
     pub fn config(&self) -> RenderConfig {

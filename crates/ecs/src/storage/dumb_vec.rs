@@ -2,6 +2,7 @@
 use std::{
     alloc::Layout,
     cell::UnsafeCell,
+    marker::PhantomData,
     mem::ManuallyDrop,
     ptr::{self, NonNull},
 };
@@ -300,16 +301,16 @@ pub fn new_dumb_drop<T>() -> Option<DumbDrop> {
     }
 }
 
-pub struct OwnedPtr(NonNull<u8>);
+pub struct OwnedPtr<'d>(NonNull<u8>, PhantomData<&'d u8>);
 
-impl OwnedPtr {
+impl OwnedPtr<'_> {
     pub fn make<T, F>(val: T, f: F)
     where
         F: FnOnce(OwnedPtr),
     {
         let mut tmp = ManuallyDrop::new(val);
 
-        f(Self(NonNull::from(&mut *tmp).cast()));
+        f(Self(NonNull::from(&mut *tmp).cast(), PhantomData));
     }
 
     pub fn new<T>(mut val: T) -> Self {
@@ -320,7 +321,7 @@ impl OwnedPtr {
     }
 
     pub fn from<T>(ptr: NonNull<T>) -> Self {
-        Self(ptr.cast::<u8>())
+        Self(ptr.cast::<u8>(), PhantomData)
     }
 
     pub fn as_ptr(&self) -> *mut u8 {
@@ -426,7 +427,7 @@ mod tests {
     struct Zero;
 
     #[test]
-    fn zst() {
+    fn zero_sized_struct() {
         unsafe {
             let mut vec = DumbVec::new::<Zero>();
             vec.push(Zero);

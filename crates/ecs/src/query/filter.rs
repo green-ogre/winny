@@ -17,19 +17,21 @@ impl<T: Component> Filter for With<T> {
     }
 
     fn system_access(components: &mut Components) -> SystemAccess {
-        let id = components.register::<T>();
-        SystemAccess::default().with_filter(ComponentAccessFilter::new(AccessFilter::With, id))
+        let meta = components.register::<T>();
+        SystemAccess::default().with_filter(ComponentAccessFilter::new(AccessFilter::With, *meta))
     }
 }
 
+// TODO: doesn't work?
 impl<T: Component> Filter for Without<T> {
     fn condition(arch: &Archetype) -> bool {
         !arch.contains_type_id::<T>()
     }
 
     fn system_access(components: &mut Components) -> SystemAccess {
-        let id = components.register::<T>();
-        SystemAccess::default().with_filter(ComponentAccessFilter::new(AccessFilter::Without, id))
+        let meta = components.register::<T>();
+        SystemAccess::default()
+            .with_filter(ComponentAccessFilter::new(AccessFilter::Without, *meta))
     }
 }
 
@@ -39,8 +41,8 @@ impl<T: Component> Filter for Or<T> {
     }
 
     fn system_access(components: &mut Components) -> SystemAccess {
-        let id = components.register::<T>();
-        SystemAccess::default().with_filter(ComponentAccessFilter::new(AccessFilter::Or, id))
+        let meta = components.register::<T>();
+        SystemAccess::default().with_filter(ComponentAccessFilter::new(AccessFilter::Or, *meta))
     }
 }
 
@@ -54,26 +56,26 @@ impl Filter for () {
     }
 }
 
-macro_rules! or_expand {
-    ($($t:ident),*) => {
-        impl<$($t: Filter),*> Filter for Or<($($t,)*)> {
-            fn condition(arch: &Archetype) -> bool {
-                $($t::condition(arch))||*
-            }
-
-            fn system_access(components: &mut Components) -> SystemAccess {
-                let mut access = SystemAccess::default();
-                $(access = access.with(
-                        $t::system_access(components)
-                        );
-                    )*
-                access
-            }
-        }
-    }
-}
-
-all_tuples!(or_expand, 1, 10, O);
+// macro_rules! or_expand {
+//     ($($t:ident),*) => {
+//         impl<$($t: Filter),*> Filter for Or<($($t,)*)> {
+//             fn condition(arch: &Archetype) -> bool {
+//                 $($t::condition(arch))||*
+//             }
+//
+//             fn system_access(components: &mut Components) -> SystemAccess {
+//                 let mut access = SystemAccess::default();
+//                 $(access = access.with(
+//                         $t::system_access(components)
+//                         );
+//                     )*
+//                 access
+//             }
+//         }
+//     }
+// }
+//
+// all_tuples!(or_expand, 1, 10, O);
 
 macro_rules! filter_expand {
         ($($t:ident),*) => {
@@ -84,10 +86,11 @@ macro_rules! filter_expand {
 
             fn system_access(components: &mut Components) -> SystemAccess {
                 let mut access = SystemAccess::default();
-                $(access = access.with(
+                $(
+                    access = access.with(
                         $t::system_access(components)
-                        );
-                    )*
+                    );
+                )*
                 access
             }
         }
@@ -95,3 +98,57 @@ macro_rules! filter_expand {
 }
 
 all_tuples!(filter_expand, 1, 10, F);
+
+macro_rules! with_expand {
+        ($($t:ident),*) => {
+        impl<$($t: Component),*> Filter for With<($($t,)*)> {
+            fn condition(arch: &Archetype) -> bool {
+                $(arch.contains_type_id::<$t>())&&*
+            }
+
+            fn system_access(components: &mut Components) -> SystemAccess {
+                let mut access = SystemAccess::default();
+                access = access
+                $(
+                    .with_filter(
+                        ComponentAccessFilter {
+                            filter: AccessFilter::With,
+                            meta: *components.register::<$t>(),
+                        }
+                    )
+                )*;
+
+                access
+            }
+        }
+    }
+}
+
+all_tuples!(with_expand, 1, 10, F);
+
+macro_rules! without_expand {
+        ($($t:ident),*) => {
+        impl<$($t: Component),*> Filter for Without<($($t,)*)> {
+            fn condition(arch: &Archetype) -> bool {
+                $(!arch.contains_type_id::<$t>())&&*
+            }
+
+            fn system_access(components: &mut Components) -> SystemAccess {
+                let mut access = SystemAccess::default();
+                access = access
+                $(
+                    .with_filter(
+                        ComponentAccessFilter {
+                            filter: AccessFilter::Without,
+                            meta: *components.register::<$t>(),
+                        }
+                    )
+                )*;
+
+                access
+            }
+        }
+    }
+}
+
+all_tuples!(without_expand, 1, 10, F);

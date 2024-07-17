@@ -242,7 +242,6 @@ pub enum WinitEvent {
 struct WinitApp {
     app: App,
     renderer: Option<Renderer>,
-    render_handle: Option<JoinHandle<Duration>>,
     exit_requested: bool,
     startup: bool,
     presented_frames: u32,
@@ -259,7 +258,6 @@ impl WinitApp {
         Self {
             app,
             renderer: None,
-            render_handle: None,
             exit_requested: false,
             startup: false,
             presented_frames: 0,
@@ -271,7 +269,7 @@ impl WinitApp {
         self.app.update()
     }
 
-    pub fn render(&mut self) -> JoinHandle<Duration> {
+    pub fn render(&mut self) {
         self.renderer.as_mut().unwrap().render(&mut self.app.world)
     }
 }
@@ -335,7 +333,7 @@ impl ApplicationHandler for WinitApp {
                 .app
                 .insert_winit_event(WinitEvent::KeyboardInput(event)),
             winit::event::WindowEvent::RedrawRequested => {
-                self.render();
+                // self.render();
             }
             _ => (),
         }
@@ -360,13 +358,9 @@ impl ApplicationHandler for WinitApp {
         }
         let update_end = SystemTime::now().duration_since(start).unwrap_or_default();
 
-        let mut render_end = Duration::default();
-        if let Some(handle) = self.render_handle.take() {
-            if let Ok(duration) = handle.join() {
-                render_end = duration;
-            }
-        }
-        self.render_handle = Some(self.render());
+        let start = SystemTime::now();
+        self.render();
+        let mut render_end = SystemTime::now().duration_since(start).unwrap_or_default();
         self.presented_frames += 1;
 
         if SystemTime::now()

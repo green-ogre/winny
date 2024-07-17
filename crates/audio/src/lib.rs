@@ -3,16 +3,16 @@ use std::{
     sync::mpsc::{Receiver, Sender},
 };
 
-use asset::{Asset, AssetLoaderError, Assets, Handle, LoadedAsset};
+use asset::{Asset, AssetLoaderError, AssetLoaderEvent, Assets, Handle, LoadedAsset};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, StreamConfig,
 };
 use ecs::{
-    Commands, Entity, Query, Res, ResMut, SparseArrayIndex, WinnyBundle, WinnyComponent,
-    WinnyResource, Without,
+    Commands, Entity, EventReader, Query, Res, ResMut, SparseArrayIndex, WinnyBundle,
+    WinnyComponent, WinnyResource, Without,
 };
-use util::tracing::{error, info, trace};
+use util::tracing::{error, info};
 use wav::WavFormat;
 
 pub mod prelude;
@@ -150,6 +150,7 @@ impl AudioSource {
         let resample_ratio: f64 = format.samples_per_sec as f64 / config.sample_rate.0 as f64;
         let _playhead = 0.0;
 
+        error!("{}", format.samples_per_sec);
         error!("{} {}", resample_ratio, data.len());
 
         std::thread::spawn(move || {
@@ -212,7 +213,6 @@ impl AudioSource {
                 }
             }
 
-            // TODO: streams don't seem to exit
             info!("Exiting audio stream");
         });
 
@@ -318,6 +318,12 @@ fn init_audio_bundle_streams(
     }
 }
 
+fn look_for_event(event: EventReader<AssetLoaderEvent<AudioSource>>) {
+    for e in event.read() {
+        println!("{:?}", e);
+    }
+}
+
 struct AudioAssetLoader;
 
 use app::app::App;
@@ -360,6 +366,7 @@ impl Plugin for AudioPlugin {
         let loader = AudioAssetLoader {};
         app.register_asset_loader::<AudioSource>(loader)
             .add_systems(ecs::Schedule::PreUpdate, init_audio_bundle_streams)
+            .add_systems(ecs::Schedule::Update, look_for_event)
             .insert_resource(GlobalAudio::new());
     }
 }

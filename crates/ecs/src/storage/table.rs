@@ -251,7 +251,7 @@ impl Column {
 
     pub fn new_from_meta(meta: &ComponentMeta) -> Self {
         Self {
-            components: DumbVec::new_from(meta.layout, 0, meta.drop),
+            components: DumbVec::new_from(meta.layout(), 0, meta.drop),
         }
     }
 

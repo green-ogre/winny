@@ -1,8 +1,11 @@
+use crate::World;
+
+use util::tracing::{trace, trace_span};
+
 use super::*;
 
 pub struct QueryState<T: QueryData, F = ()> {
     pub storage_locations: Vec<StorageId>,
-    system_access: SystemAccess,
     pub state: T::State,
     filter: PhantomData<F>,
 }
@@ -13,41 +16,36 @@ unsafe impl<T: QueryData, F: Filter> Sync for QueryState<T, F> {}
 impl<T: QueryData, F: Filter> Debug for QueryState<T, F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QueryState")
-            .field("filter", &self.filter)
-            .finish()
+            .field("storages", &self.storage_locations)
+            .field("query_data", &std::any::type_name::<T>())
+            .field("filter", &std::any::type_name::<F>())
+            .finish_non_exhaustive()
     }
 }
 
 impl<T: QueryData, F: Filter> QueryState<T, F> {
-    pub fn from_world_unsafe(world: UnsafeWorldCell<'_>) -> Self {
-        let storages = unsafe {
-            world
-                .archetypes()
-                .iter()
-                .filter(|(_, arch)| arch.contains_query::<T>())
-                .filter(|(_, arch)| F::condition(arch))
-                .map(|(id, arch)| StorageId {
-                    table_id: arch.table_id,
-                    archetype_id: *id,
-                })
-                .collect()
-        };
+    pub fn from_world(world: &mut World) -> Self {
+        let storages = world
+            .archetypes
+            .iter()
+            .filter(|(_, arch)| arch.contains_query::<T>())
+            .filter(|(_, arch)| F::condition(arch))
+            .map(|(id, arch)| StorageId {
+                table_id: arch.table_id,
+                archetype_id: *id,
+            })
+            .collect();
         Self::new(world, storages)
     }
 
-    pub fn new(world: UnsafeWorldCell<'_>, storage_locations: Vec<StorageId>) -> Self {
-        let state = T::init_state(world);
+    pub fn new(world: &mut World, storage_locations: Vec<StorageId>) -> Self {
+        let state = T::init_state(unsafe { world.as_unsafe_world() });
 
         Self {
             storage_locations,
-            system_access: T::system_access(unsafe { world.components_mut() }),
             state,
             filter: PhantomData,
         }
-    }
-
-    pub fn system_access(&self) -> SystemAccess {
-        todo!();
     }
 
     // From https://github.com/bevyengine/bevy/blob/d7080369a7471e6aa9747bad41a4469092f9967b/crates/bevy_ecs/src/query/state.rs#L124
@@ -56,10 +54,16 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
     }
 
     pub fn new_archetype(&mut self, arch: &Archetype) {
-        // TODO: fix type id issue
-        let arch_ids = arch.type_ids.clone().into_vec();
-        let query_ids = self.
-
+        let _span = trace_span!("new_archetype", state = ?self).entered();
+        if arch.contains_query::<T>() && F::condition(arch) {
+            trace!("match");
+            self.storage_locations.push(StorageId {
+                table_id: arch.table_id,
+                archetype_id: arch.arch_id,
+            });
+        } else {
+            trace!("no match");
+        }
     }
 
     pub fn read_only(&self) -> &QueryState<T::ReadOnly, F> {

@@ -2,9 +2,9 @@
 use std::{cell::UnsafeCell, marker::PhantomData};
 
 use crate::{
-    ArchEntity, ArchRow, Archetype, Archetypes, Bundle, BundleMeta, Bundles, Column, Component,
-    ComponentId, Components, Entities, Entity, MetaLocation, OwnedPtr, Res, ResMut, Resource,
-    ResourceId, Resources, Table, TableId, TableRow, Tables, World,
+    ArchEntity, ArchId, ArchRow, Archetype, Archetypes, Bundle, Bundles, Column, ComponentId,
+    ComponentMeta, Components, Entities, Entity, EntityMeta, MetaLocation, OwnedPtr, Res, ResMut,
+    Resource, ResourceId, Resources, Table, TableId, TableRow, Tables, World,
 };
 
 use util::tracing::{error, trace, trace_span};
@@ -61,17 +61,17 @@ impl<'w> UnsafeWorldCell<'w> {
         self.components().id(id)
     }
 
-    pub unsafe fn register_component<C: Component>(self) -> ComponentId {
-        self.components_mut().register::<C>()
-    }
-
-    pub unsafe fn register_component_by_id(
-        self,
-        id: std::any::TypeId,
-        name: &'static str,
-    ) -> ComponentId {
-        self.components_mut().register_by_id(id, name)
-    }
+    // pub unsafe fn register_component<C: Component>(self) -> ComponentId {
+    //     self.components_mut().register::<C>()
+    // }
+    //
+    // pub unsafe fn register_component_by_id(
+    //     self,
+    //     id: std::any::TypeId,
+    //     name: &'static str,
+    // ) -> ComponentId {
+    //     self.components_mut().register_by_id(id, name)
+    // }
 
     pub unsafe fn get_component_ids(&self, ids: &[std::any::TypeId]) -> Vec<ComponentId> {
         let mut c_ids = Vec::new();
@@ -190,22 +190,40 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub unsafe fn spawn_bundle<B: Bundle>(self, bundle: B) -> Entity {
-        self.register_bundle::<B>();
-        let bundle_meta = self
-            .bundles_mut()
-            .get_or_register_with(bundle, self, |bundle: B| {
-                let type_ids = B::type_ids();
-                let table = bundle.new_table(self);
-                let table_id = self.tables_mut().push(table);
-                let arch_id = self
-                    .archetypes_mut()
-                    .push(Archetype::new(table_id, type_ids));
-                (table_id, arch_id)
-            });
+        let _span = trace_span!("spawn bundle").entered();
+        let bundle_meta = if let Some(meta) = self.world().bundles.meta::<B>() {
+            meta
+        } else {
+            self.register_bundle::<B>();
+            self.world().bundles.meta::<B>().unwrap()
+        };
         trace!(bundle_meta = ?bundle_meta);
 
-        let table_row = TableRow(self.tables().get(bundle_meta.table_id).unwrap().depth() - 1);
-        let archetype = self.archetypes_mut().get_mut(bundle_meta.arch_id).unwrap();
+        // just registered
+        let table = self
+            .world_mut()
+            .tables
+            .get_mut_unchecked(bundle_meta.table_id);
+        let mut bundle_components = bundle_meta.component_ids.iter();
+        bundle.insert_components(&mut |component_ptr| {
+            // bundle_components is the same order as bundle components
+            if let Some(meta) = bundle_components.next() {
+                trace!("pushing component ptr: {:?}", meta);
+                // table is given by the registered bundle, therefore column of component type `id`
+                // must exist
+                table
+                    .column_mut_unchecked(&meta.id)
+                    .push_erased(component_ptr);
+            }
+        });
+
+        // just registered
+        let table_row = TableRow(self.tables().get_unchecked(bundle_meta.table_id).depth() - 1);
+        let archetype = self
+            .world_mut()
+            .archetypes
+            // just registered
+            .get_mut_unchecked(bundle_meta.arch_id);
 
         archetype.new_entity_with(table_row, |arch_row: ArchRow| {
             self.entities_mut().spawn(
@@ -219,14 +237,33 @@ impl<'w> UnsafeWorldCell<'w> {
 
     pub unsafe fn spawn_bundle_with_entity<B: Bundle>(self, entity: Entity, bundle: B) {
         let _span = trace_span!("spawn bundle with entity", entity = ?entity).entered();
-        self.register_bundle::<B>();
-        // just created
-        let bundle_meta = self.world().bundles.meta::<B>().unwrap();
+
+        let bundle_meta = if let Some(meta) = self.world().bundles.meta::<B>() {
+            meta
+        } else {
+            self.register_bundle::<B>();
+            self.world().bundles.meta::<B>().unwrap()
+        };
         trace!(bundle_meta = ?bundle_meta);
 
-        let (table, column) = bundle.insert_components(&mut |ptr| {});
+        // just registered
+        let table = self
+            .world_mut()
+            .tables
+            .get_mut_unchecked(bundle_meta.table_id);
+        let mut bundle_components = bundle_meta.component_ids.iter();
+        bundle.insert_components(&mut |component_ptr| {
+            // bundle_components is the same order as bundle components
+            if let Some(meta) = bundle_components.next() {
+                // table is given by the registered bundle, therefore column of component type `id`
+                // must exist
+                table
+                    .column_mut_unchecked(&meta.id)
+                    .push_erased(component_ptr);
+            }
+        });
 
-        let table_row = TableRow(self.tables().get(bundle_meta.table_id).unwrap().depth());
+        let table_row = TableRow(self.tables().get(bundle_meta.table_id).unwrap().depth() - 1);
         let archetype = self
             .world_mut()
             .archetypes
@@ -244,13 +281,14 @@ impl<'w> UnsafeWorldCell<'w> {
         })
     }
 
-    fn register_bundle<B: Bundle>(self) {
-        let mut component_ids = Vec::new();
+    pub fn register_bundle<B: Bundle>(self) {
+        let mut component_metas = Vec::new();
         B::component_meta(unsafe { self.components_mut() }, &mut |meta| {
-            component_ids.push(meta.id);
+            component_metas.push(*meta);
         });
-        component_ids.sort();
-        let component_ids = component_ids.into_boxed_slice();
+        let unsorted_component_metas = component_metas.clone();
+        component_metas.sort();
+        let component_ids = component_metas.into_boxed_slice();
 
         let (arch_id, table_id);
         unsafe {
@@ -270,28 +308,25 @@ impl<'w> UnsafeWorldCell<'w> {
         }
 
         unsafe {
-            self.world_mut()
-                .bundles
-                .register::<B>(arch_id, table_id, component_ids)
+            self.world_mut().bundles.register::<B>(
+                arch_id,
+                table_id,
+                unsorted_component_metas.into_boxed_slice(),
+            )
         };
     }
 
-    pub unsafe fn transfer_table_row(self, src_row: TableRow, src: TableId, dst: TableId) {
-        let _span = trace_span!("transfer table row").entered();
-        let new_table = self.tables_mut().get_mut_unchecked(dst);
-        let old_table = self.tables_mut().get_mut_unchecked(src);
-
-        for (component_id, column) in old_table.iter_mut() {
-            let val = OwnedPtr::from(column.get_row_ptr_unchecked(src_row));
-            new_table
-                .column_mut_unchecked(component_id)
-                .push_erased(val);
-            column.swap_remove_row_no_drop(src_row);
-        }
+    pub unsafe fn transfer_table_row(
+        tables: &mut Tables,
+        src_row: TableRow,
+        src: TableId,
+        dst: TableId,
+    ) {
+        Self::transfer_table_row_if(tables, src_row, src, dst, |_, _| true);
     }
 
     pub unsafe fn transfer_table_row_if<F>(
-        self,
+        tables: &mut Tables,
         src_row: TableRow,
         src: TableId,
         dst: TableId,
@@ -300,34 +335,48 @@ impl<'w> UnsafeWorldCell<'w> {
         F: Fn(&ComponentId, &Column) -> bool,
     {
         let _span = trace_span!("conditional transfer table row").entered();
-        let new_table = self.tables_mut().get_mut_unchecked(dst);
-        let old_table = self.tables_mut().get_mut_unchecked(src);
 
-        for (component_id, column) in old_table.iter_mut() {
-            if f(component_id, column) {
-                let val = OwnedPtr::from(column.get_row_ptr_unchecked(src_row));
-                new_table
-                    .column_mut_unchecked(component_id)
-                    .push_erased(val);
-                column.swap_remove_row_no_drop(src_row);
-            } else {
-                column.swap_remove_row_drop(src_row);
+        let mut components: Vec<(ComponentId, OwnedPtr)> = Vec::with_capacity(10);
+        {
+            let src_table = tables.get_mut_unchecked(src);
+            for (component_id, column) in src_table.iter_mut() {
+                if f(component_id, column) {
+                    let val = OwnedPtr::from(column.get_row_ptr_unchecked(src_row));
+                    components.push((*component_id, val));
+                }
+            }
+        }
+
+        {
+            let dst = tables.get_mut_unchecked(dst);
+            for (component_id, ptr) in components.into_iter() {
+                dst.column_mut_unchecked(&component_id).push_erased(ptr);
+            }
+        }
+
+        {
+            let src = tables.get_mut_unchecked(src);
+            for (component_id, column) in src.iter_mut() {
+                if f(component_id, column) {
+                    column.swap_remove_row_no_drop(src_row);
+                } else {
+                    column.swap_remove_row_drop(src_row);
+                }
             }
         }
     }
 
-    pub unsafe fn insert_entity_into_world<F>(self, entity: Entity, arch: &mut Archetype, insert: F)
-    where
-        F: FnOnce(&Archetype),
-    {
-        // arch points to valid table
+    pub unsafe fn insert_entity_into_world(
+        entity: Entity,
+        arch: &mut Archetype,
+        tables: &mut Tables,
+        entities: &mut Entities,
+    ) {
         let _span = trace_span!("insert entity").entered();
-        let new_table_row = unsafe { self.tables().get_unchecked(arch.table_id).depth() };
+        let new_table_row = unsafe { tables.get_unchecked(arch.table_id).depth() - 1 };
         let table_row = TableRow(new_table_row);
         let new_arch_entity = ArchEntity::new(entity, table_row);
         let arch_row = arch.new_entity(new_arch_entity);
-
-        insert(arch);
 
         let new_location = MetaLocation {
             table_id: arch.table_id,
@@ -336,6 +385,35 @@ impl<'w> UnsafeWorldCell<'w> {
             table_row,
         };
 
-        self.entities_mut().set_location(entity, new_location);
+        entities.set_location(entity, new_location);
+    }
+
+    pub unsafe fn find_or_create_storage<B: Bundle>(
+        meta: EntityMeta,
+        component_metas: Box<[ComponentMeta]>,
+        archetypes: &mut Archetypes,
+        tables: &mut Tables,
+        components: &mut Components,
+        clone_if: &impl Fn(&ComponentId, &Column) -> bool,
+        add_bundle_components: bool,
+    ) -> (ArchId, TableId) {
+        if let Some(arch) = archetypes.get_from_components(&component_metas) {
+            trace!("archetype found: {:?}", arch.arch_id);
+            (arch.arch_id, arch.table_id)
+        } else {
+            trace!("no archetype found, creating arch + table");
+            let mut table = tables
+                .get_unchecked(meta.location.table_id)
+                .clone_empty_if(clone_if);
+            if add_bundle_components {
+                B::component_meta(components, &mut |meta| {
+                    table.new_column_from_meta(meta);
+                })
+            }
+            let table_id = tables.push(table);
+            let arch_id = archetypes.push(Archetype::new(table_id, component_metas.clone()));
+
+            (arch_id, table_id)
+        }
     }
 }

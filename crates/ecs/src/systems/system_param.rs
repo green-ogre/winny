@@ -178,7 +178,7 @@ impl<T: 'static + QueryData, F: 'static + Filter> SystemParam for Query<'_, '_, 
     }
 
     fn init_state<'w>(world: &mut World) -> Self::State {
-        QueryState::from_world_unsafe(unsafe { world.as_unsafe_world() })
+        QueryState::from_world(world)
     }
 
     fn new_archetype(archetype: &Archetype, state: &mut Self::State) {

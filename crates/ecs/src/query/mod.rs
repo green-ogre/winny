@@ -171,8 +171,8 @@ impl<T: Component> WorldQuery for Mut<T> {
     }
 
     fn system_access(components: &mut Components) -> SystemAccess {
-        let id = components.register::<T>();
-        SystemAccess::default().with_component(ComponentAccess::new(AccessType::Mutable, id))
+        let meta = components.register::<T>();
+        SystemAccess::default().with_component(ComponentAccess::new(AccessType::Mutable, *meta))
     }
 
     fn set_ids() -> Vec<TypeId> {
@@ -213,8 +213,8 @@ impl<T: Component> WorldQuery for T {
     }
 
     fn system_access(components: &mut Components) -> SystemAccess {
-        let id = components.register::<T>();
-        SystemAccess::default().with_component(ComponentAccess::new(AccessType::Immutable, id))
+        let meta = components.register::<T>();
+        SystemAccess::default().with_component(ComponentAccess::new(AccessType::Immutable, *meta))
     }
 
     fn set_ids() -> Vec<TypeId> {
@@ -281,5 +281,64 @@ impl<'w, 's, T: QueryData, F: Filter> Query<'w, 's, T, F> {
 
     pub fn get_single_mut(&mut self) -> Result<T::Item<'_>, SingleQueryError> {
         self.state.get_single(self.world)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{prelude::*, Scheduler, World};
+    use ecs_macro::InternalComponent;
+    // use tracing_test::traced_test;
+    // use util::tracing;
+
+    #[derive(Debug, InternalComponent)]
+    struct Health(u32);
+
+    #[derive(Debug, InternalComponent)]
+    struct Weight(u32);
+
+    #[derive(Debug, InternalComponent)]
+    struct Size(u32);
+
+    // macro_rules! impl_drop {
+    //     ($s:ident) => {
+    //         impl Drop for $s {
+    //             fn drop(&mut self) {
+    //                 println!("Dropping: {:?}", self);
+    //             }
+    //         }
+    //     };
+    // }
+    //
+    // impl_drop!(Health);
+    // impl_drop!(Weight);
+    // impl_drop!(Size);
+
+    fn test_query(_q: Query<(Entity, Health), Without<(Size, Weight)>>) {}
+
+    // #[traced_test]
+    #[test]
+    fn state() {
+        // let mut world = World::default();
+
+        // let mut scheduler = Scheduler::default();
+        // scheduler.add_systems(Schedule::Update, test_query);
+        // scheduler.build_schedule(&mut world);
+        //
+        // world.spawn((Health(0), Size(0), Weight(0)));
+        // world.spawn(Health(0));
+
+        // let system = &mut scheduler.executers[5].systems[0];
+        // system.new_archetype(world.archetypes.get(ArchId::new(0)).unwrap());
+        // system.new_archetype(world.archetypes.get(ArchId::new(1)).unwrap());
+
+        // println!("{:#?}", system.access(&mut world));
+        // println!("{:#?}", scheduler);
+        // println!("{:#?}", world.archetypes);
+
+        // assert!(world.entities.len() == 2);
+
+        // println!("exiting scope");
     }
 }
