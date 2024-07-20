@@ -8,6 +8,8 @@ use ecs::WinnyResource;
 use plugins::Plugin;
 use prelude::{KeyInput, MouseInput};
 
+pub extern crate winit;
+
 #[derive(Debug, WinnyResource, Clone, Copy)]
 pub struct WindowPlugin {
     pub title: &'static str,
@@ -30,10 +32,15 @@ impl Default for WindowPlugin {
 impl Plugin for WindowPlugin {
     fn build(&mut self, app: &mut crate::app::App) {
         app.insert_resource(self.clone())
+            .register_resource::<WinitWindow>()
+            .register_resource::<WindowResized>()
             .register_event::<MouseInput>()
             .register_event::<KeyInput>();
     }
 }
+
+#[derive(Debug, WinnyResource)]
+pub struct WindowResized(pub u32, pub u32);
 
 #[derive(WinnyResource)]
 pub struct WinitWindow(pub Arc<winit::window::Window>);

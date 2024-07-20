@@ -65,6 +65,44 @@ impl SystemAccess {
         }
     }
 
+    pub fn is_valid(&self) -> bool {
+        let mutable_access: Vec<_> = self.components.iter().filter(|c| c.is_mutable()).collect();
+        let immutable_access: Vec<_> = self
+            .components
+            .iter()
+            .filter(|c| c.is_immutable())
+            .collect();
+
+        for m in mutable_access.iter() {
+            for i in immutable_access.iter() {
+                if i.meta.id == m.meta.id {
+                    util::tracing::error!(
+                        "Query attemps to access the same Component mutably and immutably: {:#?}, {:#?}",
+                        i, m
+                    );
+                    return false;
+                }
+            }
+        }
+
+        let mutable_access: Vec<_> = self.resources.iter().filter(|c| c.is_mutable()).collect();
+        let immutable_access: Vec<_> = self.resources.iter().filter(|c| c.is_immutable()).collect();
+
+        for m in mutable_access.iter() {
+            for i in immutable_access.iter() {
+                if i.id == m.id {
+                    util::tracing::error!(
+                        "System attemps to access the same Resource mutably and immutably: {:#?}, {:#?}",
+                        i, m
+                    );
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     pub fn is_read_only(&self) -> bool {
         !self.components.iter().any(|c| c.is_mutable())
             && !self.resources.iter().any(|r| r.is_mutable())

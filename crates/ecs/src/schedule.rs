@@ -7,17 +7,9 @@ struct SchedulerBuilder {
 
 impl Default for SchedulerBuilder {
     fn default() -> Self {
-        Self {
-            schedules: vec![
-                ScheduleBuilder::new(Schedule::StartUp),
-                ScheduleBuilder::new(Schedule::Exit),
-                ScheduleBuilder::new(Schedule::FlushEvents),
-                ScheduleBuilder::new(Schedule::Platform),
-                ScheduleBuilder::new(Schedule::PreUpdate),
-                ScheduleBuilder::new(Schedule::Update),
-                ScheduleBuilder::new(Schedule::PostUpdate),
-            ],
-        }
+        let schedules = Schedule::VALUES().map(ScheduleBuilder::new).collect();
+
+        Self { schedules }
     }
 }
 
@@ -45,11 +37,66 @@ impl SchedulerBuilder {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct OneShotSystems {
+    systems: SparseArray<usize, (StoredSystem, StoredCondition)>,
+    // SparseArray does not track `alive` values
+    num_systems: usize,
+}
+
+impl OneShotSystems {
+    pub fn len(&self) -> usize {
+        self.num_systems
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn insert<S, C>(
+        &mut self,
+        system: impl System<Out = ()>,
+        condition: impl System<Out = bool>,
+    ) {
+        self.num_systems += 1;
+        self.systems
+            .insert_in_first_empty((Box::new(system), Box::new(condition)));
+    }
+
+    pub fn new_archetype(&mut self, arch: &Archetype) {
+        for (_, condition) in self.systems.iter_mut() {
+            condition.new_archetype(arch);
+        }
+    }
+
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (usize, (&mut StoredSystem, &mut StoredCondition))> {
+        self.systems
+            .iter_indexed_mut()
+            .map(|(i, t)| (i, (&mut t.0, &mut t.1)))
+    }
+
+    pub fn remove_indexes(&mut self, indexes: impl Iterator<Item = usize>) {
+        for index in indexes {
+            self.num_systems -= 1;
+            let _ = self.systems.take(index);
+        }
+    }
+
+    pub fn append(&mut self, other: OneShotSystems) {
+        for set in other.systems.into_iter() {
+            self.systems.push(set);
+        }
+    }
+}
+
 // TODO: fix system tree
 #[derive(Debug, Default)]
 pub struct Scheduler {
-    builder: SchedulerBuilder,
     pub(crate) executers: Vec<ScheduleExecuter>,
+    one_shot_systems: OneShotSystems,
+    builder: SchedulerBuilder,
 }
 
 impl Scheduler {
@@ -74,51 +121,68 @@ impl Scheduler {
 
     pub fn new_archetype(&mut self, archetype: &Archetype) {
         for executer in self.executers.iter_mut() {
-            executer.new_archetype(archetype);
+            executer.new_archetype(archetype, &mut self.one_shot_systems);
         }
     }
 
     pub fn run(&mut self, world: &mut World) {
-        for executer in self.executers.iter_mut().skip(3) {
-            let _span = util::tracing::trace_span!("schedule", name = ?executer.tag).entered();
-            executer.run(world);
-            executer.apply_deffered(world);
-        }
+        self.run_schedule(world, Schedule::Platform);
+        self.run_schedule(world, Schedule::PreUpdate);
+        self.run_schedule(world, Schedule::Update);
+        self.run_schedule(world, Schedule::PostUpdate);
     }
 
     pub fn startup(&mut self, world: &mut World) {
-        let startup = &mut self.executers[Schedule::StartUp as usize];
-        let _span = util::tracing::trace_span!("schedule", name = ?startup.tag).entered();
-        startup.run(world);
-        startup.apply_deffered(world);
+        self.run_schedule(world, Schedule::PreStartUp);
+        self.run_schedule(world, Schedule::StartUp);
     }
 
     pub fn flush_events(&mut self, world: &mut World) {
-        let flush_events = &mut self.executers[Schedule::FlushEvents as usize];
-        let _span = util::tracing::trace_span!("schedule", name = ?flush_events.tag).entered();
-        flush_events.run(world);
-        // NOTE: flush_events is a platform driven schedule that cannot be added to, meaning
-        // that there is no need to apply deffered commands
+        self.run_schedule(world, Schedule::FlushEvents);
+    }
+
+    pub fn resized(&mut self, world: &mut World) {
+        self.run_schedule(world, Schedule::Resized);
+    }
+
+    pub fn render(&mut self, world: &mut World) {
+        self.run_schedule(world, Schedule::PrepareRender);
+        self.run_schedule(world, Schedule::PreRender);
+        self.run_schedule(world, Schedule::Render);
+        self.run_schedule(world, Schedule::PostRender);
+        self.run_schedule(world, Schedule::Present);
     }
 
     pub fn exit(&mut self, world: &mut World) {
-        let exit = &mut self.executers[Schedule::Exit as usize];
-        let _span = util::tracing::trace_span!("schedule", name = ?exit.tag).entered();
-        exit.run(world);
-        exit.apply_deffered(world);
+        self.run_schedule(world, Schedule::Exit);
+    }
+
+    fn run_schedule(&mut self, world: &mut World, schedule: Schedule) {
+        let executer = &mut self.executers[schedule as usize];
+        let _span = util::tracing::trace_span!("schedule", name = ?executer.tag).entered();
+        executer.run(world, &mut self.one_shot_systems);
+        executer.apply_deffered(world, &mut self.one_shot_systems);
     }
 }
 
 // TODO: pull out backend schedules
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
 pub enum Schedule {
-    StartUp,
-    Exit,
-    FlushEvents,
     Platform,
     PreUpdate,
     Update,
     PostUpdate,
+    PreStartUp,
+    StartUp,
+    Exit,
+    FlushEvents,
+    Resized,
+    SubmitEncoder,
+    PrepareRender,
+    PreRender,
+    Render,
+    PostRender,
+    Present,
 }
 
 #[derive(Debug)]
@@ -160,35 +224,57 @@ impl ScheduleExecuter {
         }
     }
 
-    pub fn apply_deffered(&mut self, world: &mut World) {
-        for system in self.systems.iter_mut() {
-            system.apply_deffered(world);
-        }
+    pub fn apply_deffered(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems) {
+        // for system in self.systems.iter_mut() {
+        //     system.apply_deffered(world);
+        // }
 
         while self.archetypes_len < world.archetypes.len() {
             let arch = world
                 .archetypes
                 .get(ArchId::new(self.archetypes_len))
                 .expect("valid id");
-            self.new_archetype(arch);
+            self.new_archetype(arch, one_shot_systems);
             self.archetypes_len += 1;
         }
+
+        if one_shot_systems.is_empty() {
+            return;
+        }
+
+        let mut indexes = Vec::with_capacity(one_shot_systems.len());
+        let mut temp = OneShotSystems::default();
+        for (index, (one_shot, condition)) in one_shot_systems.iter_mut() {
+            if condition.run_unsafe(unsafe { world.as_unsafe_world() }) {
+                indexes.push(index);
+                one_shot.init_state(world);
+                one_shot.run_unsafe(unsafe { world.as_unsafe_world() });
+                one_shot.apply_deffered(world, &mut temp);
+            }
+        }
+        one_shot_systems.remove_indexes(indexes.into_iter());
+        one_shot_systems.append(temp);
     }
 
-    pub fn new_archetype(&mut self, arch: &Archetype) {
+    pub fn new_archetype(&mut self, arch: &Archetype, one_shot_systems: &mut OneShotSystems) {
         for system in self.systems.iter_mut() {
             system.new_archetype(arch);
         }
+        one_shot_systems.new_archetype(arch);
     }
 
-    pub fn run(&mut self, world: &mut World) {
-        let world = unsafe { world.as_unsafe_world() };
+    pub fn run(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems) {
         for (sys, cond) in self.systems.iter_mut().zip(self.conditions.iter_mut()) {
             if let Some(cond) = cond {
-                cond.run_unsafe(world).then(|| sys.run_unsafe(world));
+                cond.run_unsafe(unsafe { world.as_unsafe_world() })
+                    .then(|| sys.run_unsafe(unsafe { world.as_unsafe_world() }));
             } else {
-                sys.run_unsafe(world);
+                sys.run_unsafe(unsafe { world.as_unsafe_world() });
             }
+
+            // TODO: either redo the render system so that is does not rely on commands or change
+            // the deffered system. It could be more efficient to only apply deffered if necessary
+            sys.apply_deffered(world, one_shot_systems);
         }
     }
 }

@@ -10,7 +10,10 @@ use super::*;
     label = "invalid `Resource`",
     note = "consider annotating `{Self}` with `#[derive(Resource)]`"
 )]
+#[cfg(not(target_arch = "wasm32"))]
 pub trait Resource: Send + Sync + 'static {}
+#[cfg(target_arch = "wasm32")]
+pub trait Resource: 'static {}
 
 #[derive(Debug)]
 pub struct Res<'a, R> {
@@ -68,6 +71,37 @@ impl<R: Resource> AsMut<R> for ResMut<'_, R> {
     }
 }
 
+pub struct Take<R: Resource> {
+    value: R
+}
+
+impl<R: Resource> Deref for Take<R> {
+    type Target = R;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<R: Resource> DerefMut for Take<R> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
+    }
+}
+
+impl<R: Resource> Take<R> {
+    pub fn new(value: R) -> Self {
+        Self {
+            value,
+        }
+    }
+
+    pub fn into_inner(self) -> R {
+        self.value
+    }
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceId(usize);
 
@@ -89,17 +123,17 @@ impl SparseArrayIndex for ResourceId {
 
 #[derive(Debug)]
 pub struct Resources {
-    resources: SparseSet<ResourceId, DumbVec>,
-    next_id: usize,
+    resources: SparseArray<ResourceId, DumbVec>,
     id_table: fxhash::FxHashMap<std::any::TypeId, ResourceId>,
+    next_id: usize,
 }
 
 impl Default for Resources {
     fn default() -> Self {
         Self {
-            resources: SparseSet::new(),
-            next_id: 0,
+            resources: SparseArray::new(),
             id_table: fxhash::FxHashMap::default(),
+            next_id: 0,
         }
     }
 }
@@ -107,28 +141,40 @@ impl Default for Resources {
 impl Resources {
     pub fn register<R: Resource>(&mut self) -> ResourceId {
         let type_id = std::any::TypeId::of::<R>();
-        if let Some(id) = self.id_table.get(&type_id) {
-            *id
-        } else {
-            let id = self.new_id();
-            self.id_table.insert(type_id, id);
-
+        *self.id_table.entry(type_id).or_insert_with(|| {
             trace!("Registering resource: {}", std::any::type_name::<R>(),);
 
+            let id = ResourceId::new(self.next_id);
+            self.next_id += 1;
+
             id
-        }
+        })
     }
 
     pub fn insert<R: Resource>(&mut self, res: R, id: ResourceId) {
         if let Some(storage) = self.resources.get_mut(&id) {
             // caller promises that R and ResourceId match
-            unsafe { storage.replace_drop::<R>(res, 0) };
+            unsafe {
+                if !storage.is_empty() {
+                    storage.replace_drop::<R>(res, 0);
+                } else {
+                    storage.push::<R>(res);
+                }
+            }
         } else {
             let mut storage = DumbVec::with_capacity::<R>(1);
             // storage newly created with type
             unsafe { storage.push(res) };
 
-            self.resources.insert(id, storage);
+            self.resources.insert(id.index(), storage);
+        }
+    }
+
+    pub fn take<R: Resource> (&mut self, id: ResourceId) -> Option<R> {
+        if let Some(res) = self.resources.get_mut(&id) {
+            Self::is_valid(res).then(|| unsafe {res.pop::<R>()})
+        } else {
+            panic!("tried to take resource that does not exist");
         }
     }
 
@@ -148,12 +194,5 @@ impl Resources {
 
     fn is_valid(res: &DumbVec) -> bool {
         res.len() == 1
-    }
-
-    fn new_id(&mut self) -> ResourceId {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        ResourceId(id)
     }
 }

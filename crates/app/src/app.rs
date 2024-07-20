@@ -3,7 +3,6 @@ use std::{
     collections::VecDeque,
     sync::{mpsc::channel, Arc},
     thread::JoinHandle,
-    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use ecs::{prelude::*, Events, Scheduler, UnsafeWorldCell, WinnyEvent, WinnyResource, World};
@@ -19,11 +18,10 @@ use winit::{
 use crate::{
     plugins::{Plugin, PluginSet},
     prelude::KeyState,
-    renderer::{RenderConfig, RenderDevice, RenderPasses, RenderQueue},
+    window::WindowResized,
 };
 use crate::{
     prelude::{KeyCode, KeyInput, MouseInput, WindowPlugin},
-    renderer::Renderer,
     window::WinitWindow,
 };
 
@@ -33,7 +31,6 @@ pub struct AppExit;
 pub struct App {
     world: World,
     scheduler: Scheduler,
-    render_passes: Vec<Box<dyn RenderPass>>,
     plugins: VecDeque<Box<dyn Plugin>>,
 }
 
@@ -45,7 +42,6 @@ impl Default for App {
 
         App {
             world,
-            render_passes: Vec::new(),
             scheduler: Scheduler::default(),
             plugins: VecDeque::new(),
         }
@@ -56,7 +52,6 @@ impl App {
     pub(crate) fn empty() -> Self {
         Self {
             world: World::default(),
-            render_passes: Vec::new(),
             scheduler: Scheduler::default(),
             plugins: VecDeque::new(),
         }
@@ -88,7 +83,7 @@ impl App {
 
     // Should be used for plugins that are dependencies of child plugins
     pub fn add_plugins_priority<T: PluginSet>(&mut self, plugins: T) -> &mut Self {
-        for p in plugins.get().into_iter() {
+        for p in plugins.get().into_iter().rev() {
             self.add_plugin_priority_boxed(p);
         }
 
@@ -97,6 +92,12 @@ impl App {
 
     pub fn insert_resource<R: Resource>(&mut self, resource: R) -> &mut Self {
         self.world.insert_resource(resource);
+
+        self
+    }
+
+    pub fn register_resource<R: Resource>(&mut self) -> &mut Self {
+        self.world.register_resource::<R>();
 
         self
     }
@@ -146,13 +147,10 @@ impl App {
             plugin.build(self);
         }
 
-        // NOTE: see 'resumed' for rationale
-        self.world.register_resource::<RenderPasses>();
-        self.world.register_resource::<RenderQueue>();
-        self.world.register_resource::<RenderDevice>();
-        self.world.register_resource::<RenderConfig>();
-
         self.scheduler.build_schedule(&mut self.world);
+
+        // println!("{:#?}", self.scheduler);
+        // panic!();
 
         let mut app = App::empty();
         std::mem::swap(self, &mut app);
@@ -185,30 +183,43 @@ fn flush_event_queue<E: Event>(queue: EventReader<E>) {
     queue.flush();
 }
 
-pub trait RenderPass: 'static + Send + Sync {
-    fn render_pass(
-        &self,
-        output: &wgpu::SurfaceTexture,
-        view: &wgpu::TextureView,
-        encoder: &mut wgpu::CommandEncoder,
-        world: &World,
-    );
-    fn update_for_render_pass(&self, world: &mut World) {}
-    fn resized(&self, renderer: &Renderer, world: &mut World) {}
-}
-
 #[derive(Debug, WinnyResource)]
 pub struct DeltaT(pub f64);
 
 fn update_ecs(world: &mut World, scheduler: &mut Scheduler) -> Result<(), ExitCode> {
+    run_and_handle_panic(world, scheduler, |world, scheduler| {
+        scheduler.run(world);
+        check_for_exit(world, scheduler)
+    })
+}
+
+fn resize_ecs(world: &mut World, scheduler: &mut Scheduler) -> Result<(), ExitCode> {
+    run_and_handle_panic(world, scheduler, |world, scheduler| {
+        scheduler.resized(world);
+        false
+    })
+}
+
+fn render_ecs(world: &mut World, scheduler: &mut Scheduler) -> Result<(), ExitCode> {
+    run_and_handle_panic(world, scheduler, |world, scheduler| {
+        scheduler.render(world);
+        check_for_exit(world, scheduler)
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_and_handle_panic<F>(
+    world: &mut World,
+    scheduler: &mut Scheduler,
+    f: F,
+) -> Result<(), ExitCode>
+where
+    F: FnOnce(&mut World, &mut Scheduler) -> bool + Send,
+{
     let mut exit = false;
     let mut panicking = false;
     std::thread::scope(|s| {
-        let h = s.spawn(|| {
-            scheduler.run(world);
-            exit = check_for_exit(world, scheduler);
-            scheduler.flush_events(world);
-        });
+        let h = s.spawn(|| exit = f(world, scheduler));
 
         if let Err(_) = h.join() {
             panicking = true;
@@ -218,6 +229,22 @@ fn update_ecs(world: &mut World, scheduler: &mut Scheduler) -> Result<(), ExitCo
     if panicking {
         Err(ExitCode::Panicking)
     } else if exit {
+        Err(ExitCode::ExitApp)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn run_and_handle_panic<F>(
+    world: &mut World,
+    scheduler: &mut Scheduler,
+    f: F,
+) -> Result<(), ExitCode>
+where
+    F: FnOnce(&mut World, &mut Scheduler) -> bool,
+{
+    if f(world, scheduler) {
         Err(ExitCode::ExitApp)
     } else {
         Ok(())
@@ -241,11 +268,11 @@ pub enum WinitEvent {
 
 struct WinitApp {
     app: App,
-    renderer: Option<Renderer>,
     exit_requested: bool,
+    created_window: bool,
     startup: bool,
     presented_frames: u32,
-    clock: SystemTime,
+    clock: chrono::DateTime<chrono::Local>,
 }
 
 enum ExitCode {
@@ -257,11 +284,11 @@ impl WinitApp {
     pub fn new(app: App) -> Self {
         Self {
             app,
-            renderer: None,
             exit_requested: false,
+            created_window: false,
             startup: false,
             presented_frames: 0,
-            clock: SystemTime::now(),
+            clock: chrono::Local::now(),
         }
     }
 
@@ -269,14 +296,19 @@ impl WinitApp {
         self.app.update()
     }
 
-    pub fn render(&mut self) {
-        self.renderer.as_mut().unwrap().render(&mut self.app.world)
+    pub fn render(&mut self) -> Result<(), ExitCode> {
+        render_ecs(&mut self.app.world, &mut self.app.scheduler)
     }
 }
 
 // impl ApplicationHandler<ControlFlowEvent> for WinitApp {
 impl ApplicationHandler for WinitApp {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        if self.created_window {
+            return;
+        }
+
+        util::tracing::info!("App resumed: Initializing");
         let window_plugin = self.app.world().resource::<WindowPlugin>();
         let window_attributes = Window::default_attributes()
             .with_title(window_plugin.title)
@@ -289,25 +321,37 @@ impl ApplicationHandler for WinitApp {
                 window_plugin.position.1,
             ));
         let window = event_loop.create_window(window_attributes).unwrap();
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            use crate::window::winit;
+            use winit::platform::web::WindowExtWebSys;
+            web_sys::window()
+                .and_then(|win| win.document())
+                .and_then(|doc| {
+                    let dst = doc.get_element_by_id("winny-wasm")?;
+                    let canvas = web_sys::Element::from(window.canvas()?);
+                    dst.append_child(&canvas).ok()?;
+                    Some(())
+                })
+                .expect("Couldn't append canvas to document body.");
+
+            use winit::dpi::PhysicalSize;
+            if let Some(size) = window.request_inner_size(PhysicalSize::new(16 * 60, 16 * 60)) {
+                util::tracing::info!("requested inner window size: {size:?}");
+            } else {
+                util::tracing::info!("failed to request size, awaiting resized event");
+                let window = WinitWindow(Arc::new(window));
+                self.app.insert_resource(window);
+                self.created_window = true;
+                return;
+            }
+        }
+
         let window = WinitWindow(Arc::new(window));
-
-        let (rp_tx, rp_rx) = channel::<Box<dyn RenderPass>>();
-        let (device, queue, renderer) = Renderer::new(
-            Arc::clone(&window),
-            self.app.render_passes.drain(..).collect(),
-            rp_rx,
-        );
-
-        self.app
-            // NOTE: these are registered before the schedule is built such that systems can query
-            // these as it is ecpexted that the renderer is initialized by startup
-            .insert_resource(RenderQueue(queue))
-            .insert_resource(RenderDevice(device))
-            .insert_resource(RenderPasses::new(rp_tx))
-            .insert_resource(renderer.config())
-            .insert_resource(window);
+        self.app.insert_resource(window);
+        self.created_window = true;
         self.app.startup();
-        self.renderer = Some(renderer);
         self.startup = true;
     }
 
@@ -322,12 +366,16 @@ impl ApplicationHandler for WinitApp {
                 self.exit_requested = true;
             }
             winit::event::WindowEvent::Resized(size) => {
-                let world = self.app.world_mut();
-                self.renderer
-                    .as_mut()
-                    .unwrap()
-                    .resize(world, size.width, size.height);
-                world.insert_resource(self.renderer.as_ref().unwrap().config());
+                #[cfg(target_arch = "wasm32")]
+                if !self.startup {
+                    self.app.startup();
+                    self.startup = true;
+                }
+                self.app
+                    .world
+                    .insert_resource(WindowResized(size.width, size.height));
+                resize_ecs(&mut self.app.world, &mut self.app.scheduler);
+                self.app.world.take_resource::<WindowResized>();
             }
             winit::event::WindowEvent::KeyboardInput { event, .. } => self
                 .app
@@ -345,29 +393,34 @@ impl ApplicationHandler for WinitApp {
         }
 
         let app = &mut self.app;
-        let start = SystemTime::now();
+        let start = chrono::Local::now();
         if let Err(e) = self.update() {
             match e {
                 ExitCode::ExitApp => self.exit_requested = true,
                 ExitCode::Panicking => {
-                    drop(self.renderer.take());
                     event_loop.exit();
                     return;
                 }
             }
         }
-        let update_end = SystemTime::now().duration_since(start).unwrap_or_default();
+        let update_end = chrono::Local::now().signed_duration_since(start);
 
-        let start = SystemTime::now();
-        self.render();
-        let mut render_end = SystemTime::now().duration_since(start).unwrap_or_default();
+        let start = chrono::Local::now();
+        if let Err(e) = self.render() {
+            match e {
+                ExitCode::ExitApp => self.exit_requested = true,
+                ExitCode::Panicking => {
+                    event_loop.exit();
+                    return;
+                }
+            }
+        }
+        let render_end = chrono::Local::now().signed_duration_since(start);
         self.presented_frames += 1;
 
-        if SystemTime::now()
-            .duration_since(self.clock)
-            .unwrap_or_default()
-            >= Duration::from_secs(1)
-        {
+        self.app.scheduler.flush_events(&mut self.app.world);
+
+        if chrono::Local::now().signed_duration_since(self.clock) >= chrono::TimeDelta::seconds(1) {
             let fps = self.presented_frames;
             let title = self.app.world().resource::<WindowPlugin>().title;
             let window = self.app.world().resource::<WinitWindow>();
@@ -376,13 +429,13 @@ impl ApplicationHandler for WinitApp {
                     "{} - {} - {}ms - {}ms",
                     title,
                     fps,
-                    update_end.as_millis(),
-                    render_end.as_millis()
+                    update_end.num_milliseconds(),
+                    render_end.num_milliseconds()
                 )
                 .as_str(),
             );
             self.presented_frames = 0;
-            self.clock = SystemTime::now();
+            self.clock = chrono::Local::now();
         }
 
         if self.exit_requested {

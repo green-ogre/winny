@@ -14,10 +14,19 @@ impl SparseArrayIndex for usize {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SparseArray<I: SparseArrayIndex, V> {
     values: Vec<Option<V>>,
     _phantom: PhantomData<I>,
+}
+
+impl<I: SparseArrayIndex, V> Default for SparseArray<I, V> {
+    fn default() -> Self {
+        Self {
+            values: Vec::new(),
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<I: SparseArrayIndex, V> SparseArray<I, V> {
@@ -109,7 +118,7 @@ impl<I: SparseArrayIndex, V> SparseArray<I, V> {
         self.len() - 1
     }
 
-    pub fn remove(&mut self, index: usize) -> Option<V> {
+    pub fn take(&mut self, index: usize) -> Option<V> {
         self.values[index].take()
     }
 
@@ -128,6 +137,18 @@ impl<I: SparseArrayIndex, V> SparseArray<I, V> {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut V> {
         self.values.iter_mut().filter_map(|v| v.as_mut())
     }
+
+    pub fn iter_indexed_mut(&mut self) -> impl Iterator<Item = (usize, &mut V)> {
+        self.values
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, v)| v.as_ref().is_some())
+            .map(|(i, v)| (i, unsafe { v.as_mut().unwrap_unchecked() }))
+    }
+
+    pub fn into_iter(self) -> impl Iterator<Item = V> {
+        self.values.into_iter().filter_map(|f| f)
+    }
 }
 
 #[derive(Default, Debug)]
@@ -137,6 +158,7 @@ pub struct SparseSet<I: SparseArrayIndex, V> {
     sparse: SparseArray<I, usize>,
 }
 
+#[allow(clippy::missing_safety_doc)]
 impl<I: SparseArrayIndex, V> SparseSet<I, V> {
     // Required for AnyVec
     pub fn new() -> Self {
@@ -215,7 +237,7 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
         let index = *index;
 
         self.dense.remove(index);
-        self.sparse.remove(index);
+        self.sparse.take(index);
     }
 
     pub fn get_single(&self) -> Option<&V> {
@@ -247,7 +269,7 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
     }
 
     pub fn contains_key(&self, index: &I) -> bool {
-        self.get(&index).is_some()
+        self.get(index).is_some()
     }
 
     pub fn dense_len(&self) -> usize {

@@ -28,48 +28,36 @@ impl TableId {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct TableRow(pub usize);
 
+#[derive(Debug, Default)]
 pub struct Tables {
-    tables: SparseSet<TableId, Table>,
+    tables: Vec<Table>,
 }
 
-impl Debug for Tables {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let tables = self.tables.iter().collect::<Vec<_>>();
-        f.debug_struct("Tables").field("tables", &tables).finish()
-    }
-}
-
-impl Default for Tables {
-    fn default() -> Self {
-        Self {
-            tables: SparseSet::new(),
-        }
-    }
-}
-
+#[allow(clippy::missing_safety_doc)]
 impl Tables {
     pub fn push(&mut self, table: Table) -> TableId {
-        TableId(self.tables.insert_in_first_empty(table))
+        self.tables.push(table);
+        TableId(self.tables.len() - 1)
     }
 
     pub unsafe fn get_unchecked(&self, id: TableId) -> &Table {
         // Safety:
         // Cannot obtain a ['TableId'] other than from Tables. Depends on the Immutability of ['Tables']
-        unsafe { self.tables.get_unchecked(&id) }
+        unsafe { self.tables.get_unchecked(id.index()) }
     }
 
     pub unsafe fn get_mut_unchecked(&mut self, id: TableId) -> &mut Table {
         // Safety:
         // Cannot obtain a ['TableId'] other than from Tables. Depends on the Immutability of ['Tables']
-        unsafe { self.tables.get_mut_unchecked(&id) }
+        unsafe { self.tables.get_unchecked_mut(id.index()) }
     }
 
     pub fn get(&self, id: TableId) -> Option<&Table> {
-        self.tables.get(&id)
+        self.tables.get(id.index())
     }
 
     pub fn get_mut(&mut self, id: TableId) -> Option<&mut Table> {
-        self.tables.get_mut(&id)
+        self.tables.get_mut(id.index())
     }
 }
 
@@ -92,6 +80,7 @@ impl Default for Table {
     }
 }
 
+#[allow(clippy::missing_safety_doc)]
 impl Table {
     pub fn with_capacity(cap: usize) -> Self {
         Self {
@@ -242,6 +231,7 @@ pub struct Column {
     components: DumbVec,
 }
 
+#[allow(clippy::missing_safety_doc)]
 impl Column {
     pub fn new<T>() -> Self {
         Self {

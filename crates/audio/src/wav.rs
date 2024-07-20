@@ -1,4 +1,4 @@
-use std::{fs::File, io::Cursor};
+use std::io::{Cursor, Read};
 
 use asset::reader::ByteReader;
 use util::tracing::warn;
@@ -18,7 +18,7 @@ pub enum Error {
     EndOfBuf,
 }
 
-pub fn load_from_bytes(mut reader: ByteReader<File>) -> Result<(Vec<u8>, WavFormat), Error> {
+pub fn load_from_bytes<T: Read>(mut reader: ByteReader<T>) -> Result<(Vec<u8>, WavFormat), Error> {
     let parser = WavParser::new(&mut reader)?;
     parser.parse_to_bytes()
 }
@@ -30,7 +30,7 @@ struct WavParser {
 }
 
 impl WavParser {
-    pub fn new(reader: &mut ByteReader<File>) -> Result<Self, Error> {
+    pub fn new<T: Read>(reader: &mut ByteReader<T>) -> Result<Self, Error> {
         parse_wav_header(reader)?;
         let fmt_chunk = Chunk::new(reader)?;
         let format = WavFormat::from_fmt_chunk(fmt_chunk)?;
@@ -202,7 +202,7 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    pub fn new(file_reader: &mut ByteReader<File>) -> Result<Self, Error> {
+    pub fn new<T: Read>(file_reader: &mut ByteReader<T>) -> Result<Self, Error> {
         let chunk_id = file_reader.read_string_le(4)?;
         let length = file_reader.read_u32_le()?;
         let data = file_reader.read_bytes(length as usize)?;
@@ -237,7 +237,7 @@ impl std::fmt::Debug for Chunk {
     }
 }
 
-fn parse_wav_header(reader: &mut ByteReader<File>) -> Result<(), Error> {
+fn parse_wav_header<T: Read>(reader: &mut ByteReader<T>) -> Result<(), Error> {
     let _id = reader.read_string_le(4)?;
     let _size = reader.read_u32_le()?;
     let _wave_id = reader.read_string_le(4)?;

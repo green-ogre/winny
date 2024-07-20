@@ -8,8 +8,10 @@ util = { path = "../util" }
 asset = { path = "../asset" }
 app = { path = "../app" }
 ecs = { path = "../ecs" }
+# for asset loading, not actually used
+render = { path = "../render" }
 
-cpal = "0.15.3"
+cpal = { version = "0.15.3", features = ["wasm-bindgen"] }
 
 [dev-dependencies]
 tracing-test = "0.2.5"

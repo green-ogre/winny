@@ -3,27 +3,48 @@ name = "gfx"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 util = { path = "../util" }
 ecs = { path = "../ecs" }
 winny_math = { path = "../winny_math" }
 app = { path = "../app" }
 asset = { path = "../asset" }
+render = { path = "../render" }
 
 wgpu = "0.20.1"
-winit = "0.30.3"
+# winit = "0.30.3"
 cgmath = "0.18"
 tobj = { version = "4.0.2", features = ["async"] }
 image = "0.25.1"
+cfg-if = "1"
 
 pollster = "0.3.0"
 bytemuck = { version = "1.12", features = ["derive"] }
 
-libflate = { version = "2.1.0", optional = false }
 egui = { version = "0.27.2", optional = true }
 egui-wgpu = { version = "0.27.2", optional = true }
 egui-winit = { version = "0.27.2", optional = true }
 
+async-channel = "2.3.1"
+
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.30"
+reqwest = "0.12.5"
+wgpu = { version = "0.20.1", features = ["webgl"] }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+  "Document",
+  "Window",
+  "Element",
+  "Location",
+] }
+# winit depends on getrandom without the js binding, causing wasm-pack to fail
+getrandom = { version = "0.2.15", features = ["js"] }
+
+
 [features]
 egui = ["dep:egui", "dep:egui-wgpu", "dep:egui-winit"]
-# png = ["dep:libflate"]

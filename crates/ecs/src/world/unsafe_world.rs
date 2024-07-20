@@ -189,6 +189,10 @@ impl<'w> UnsafeWorldCell<'w> {
             .map(|mut ptr| ResMut::new(ptr.as_mut()))
     }
 
+    pub unsafe fn take_resource_by_id<R: Resource>(self, id: ResourceId) -> Option<R> {
+        self.world_mut().resources.take::<R>(id)
+    }
+
     pub unsafe fn spawn_bundle<B: Bundle>(self, bundle: B) -> Entity {
         let _span = trace_span!("spawn bundle").entered();
         let bundle_meta = if let Some(meta) = self.world().bundles.meta::<B>() {
