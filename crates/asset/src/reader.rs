@@ -14,6 +14,22 @@ impl<R: Read> ByteReader<R> {
         Self { buf_reader }
     }
 
+    pub fn read_all(&mut self) -> Result<Vec<u8>, Error> {
+        let mut buf = Vec::new();
+        self.buf_reader
+            .read_to_end(&mut buf)
+            .map_err(|_| Error::Interrupted)?;
+        Ok(buf)
+    }
+
+    pub fn read_all_to_string(&mut self) -> Result<String, Error> {
+        let mut buf = String::new();
+        self.buf_reader
+            .read_to_string(&mut buf)
+            .map_err(|_| Error::Interrupted)?;
+        Ok(buf)
+    }
+
     pub fn read_bytes(&mut self, bytes_to_read: usize) -> Result<Vec<u8>, Error> {
         if bytes_to_read == 0 {
             return Ok(vec![]);

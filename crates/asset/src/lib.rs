@@ -1,20 +1,24 @@
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    fs::File,
-    io::BufReader,
+    io::{BufReader, Cursor},
     marker::PhantomData,
     path::Path,
-    sync::{mpsc::TryRecvError, Arc, Mutex},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        mpsc::TryRecvError,
+        Arc,
+    },
 };
 
 use app::{app::App, plugins::Plugin};
 use ecs::{
-    DumbVec, EventWriter, ResMut, SparseArrayIndex, SparseSet, WinnyComponent, WinnyEvent,
+    DumbVec, EventWriter, Res, ResMut, SparseArrayIndex, SparseSet, WinnyComponent, WinnyEvent,
     WinnyResource,
 };
 use reader::ByteReader;
 
+use render::{RenderConfig, RenderContext, RenderDevice, RenderQueue};
 use util::tracing::{error, info, trace, trace_span};
 
 pub mod prelude;
@@ -37,6 +41,12 @@ impl<A: Asset> Debug for Handle<A> {
 impl<A: Asset> Clone for Handle<A> {
     fn clone(&self) -> Self {
         Handle::new(self.id())
+    }
+}
+
+impl<A: Asset> PartialEq for Handle<A> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
     }
 }
 
@@ -197,7 +207,7 @@ where
 
 struct InternalAssetLoader {
     loader: Box<dyn ErasedAssetLoader>,
-    async_dispatch: Arc<Mutex<AsyncAssetSender>>,
+    async_dispatch: AssetFuture,
     handler: AssetHandleCreator,
 }
 
@@ -208,34 +218,56 @@ impl Debug for InternalAssetLoader {
 }
 
 impl InternalAssetLoader {
-    pub fn new(loader: impl ErasedAssetLoader, dispatch: AsyncAssetSender) -> Self {
+    pub fn new(loader: impl ErasedAssetLoader, async_dispatch: AssetFuture) -> Self {
         Self {
             handler: AssetHandleCreator::new(),
-            async_dispatch: Arc::new(Mutex::new(dispatch)),
+            async_dispatch,
             loader: Box::new(loader),
         }
     }
 }
 
+#[derive(Clone)]
+pub struct AssetFuture {
+    future: Arc<AsyncAssetSender>,
+}
+
+impl AssetFuture {
+    pub fn new(
+        future: impl Fn(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>) + 'static,
+    ) -> Self {
+        Self {
+            future: Arc::new(AsyncAssetSender::new(future)),
+        }
+    }
+
+    pub fn send_result<A: Asset>(
+        &self,
+        handle: ErasedHandle,
+        result: Result<LoadedAsset<A>, (String, AssetLoaderError)>,
+    ) {
+        self.future.send_result(handle, result);
+    }
+}
+
 pub struct AssetHandleCreator {
-    next_id: u32,
+    next_id: AtomicU32,
     freed_indexes: Vec<u32>,
 }
 
 impl AssetHandleCreator {
     pub fn new() -> Self {
         Self {
-            next_id: 0,
+            next_id: AtomicU32::new(0),
             freed_indexes: Vec::new(),
         }
     }
 
-    pub fn new_id(&mut self) -> ErasedHandle {
+    pub fn new_id(&self) -> ErasedHandle {
         let index = if let Some(index) = self.freed_indexes.iter().next() {
             *index
         } else {
-            let index = self.next_id;
-            self.next_id += 1;
+            let index = self.next_id.fetch_add(1, Ordering::AcqRel);
             index
         };
 
@@ -260,20 +292,18 @@ impl AssetLoaders {
         }
     }
 
-    pub fn register_loader(
-        &mut self,
-        loader: impl ErasedAssetLoader,
-        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
-    ) {
+    pub fn register_loader(&mut self, loader: impl ErasedAssetLoader, future: AssetFuture) {
         self.ext_to_loader
             .push((loader.extensions(), self.loaders.len()));
-        self.loaders.push(InternalAssetLoader::new(
-            loader,
-            AsyncAssetSender::new(Box::new(result)),
-        ));
+        self.loaders.push(InternalAssetLoader::new(loader, future));
     }
 
-    pub fn load<A: Asset, P: AsRef<Path>>(&mut self, asset_folder: String, path: P) -> Handle<A> {
+    pub fn load<A: Asset, P: AsRef<Path>>(
+        &self,
+        _asset_folder: String,
+        path: P,
+        context: RenderContext,
+    ) -> Handle<A> {
         if let Some(handle) = self.loaded_assets.get(path.as_ref().to_str().unwrap()) {
             trace!("found loaded asset, returning");
             return handle.into_typed_handle();
@@ -292,20 +322,17 @@ impl AssetLoaders {
             .iter()
             .find(|(ext, _)| ext.contains(&file_ext.to_str().unwrap()))
             .map(|(_, i)| i)
-            .expect("valid ext");
-        let f = std::fs::File::open(Path::new(&asset_folder).join(path.clone()))
-            .expect(format!("valid file: {}", path).as_str());
-        let reader = ByteReader::new(BufReader::new(f));
-        let internal_loader = &mut self.loaders[*loader_index];
-
+            .expect("unsupported file type");
+        // TODO: handle error
+        let internal_loader = &self.loaders[*loader_index];
         let handle = internal_loader.loader.load(
-            reader,
+            context,
             internal_loader.async_dispatch.clone(),
-            &mut internal_loader.handler,
+            &internal_loader.handler,
             path.clone(),
             file_ext.to_str().unwrap().to_owned(),
         );
-        self.loaded_assets.insert(path, handle.clone());
+        // TODO: add loaded assets
 
         handle.into()
     }
@@ -315,6 +342,7 @@ impl AssetLoaders {
 pub struct AssetServer {
     asset_folder: String,
     loaders: AssetLoaders,
+    render_context: Option<RenderContext>,
 }
 
 impl AssetServer {
@@ -322,21 +350,43 @@ impl AssetServer {
         Self {
             asset_folder,
             loaders: AssetLoaders::new(),
+            render_context: None,
         }
     }
 
-    pub fn register_loader(
-        &mut self,
-        loader: impl ErasedAssetLoader,
-        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
-    ) {
-        self.loaders.register_loader(loader, result);
+    pub fn register_loader(&mut self, loader: impl ErasedAssetLoader, future: AssetFuture) {
+        self.loaders.register_loader(loader, future);
     }
 
-    pub fn load<A: Asset, P: AsRef<Path>>(&mut self, path: P) -> Handle<A> {
+    pub fn load<A: Asset, P: AsRef<Path>>(&self, path: P) -> Handle<A> {
         let _span = trace_span!("asset load").entered();
-        self.loaders.load(self.asset_folder.clone(), path)
+        self.loaders.load(
+            self.asset_folder.clone(),
+            path,
+            self.render_context
+                .as_ref()
+                .expect("Do not load assets before the `StartUp` schedule")
+                .clone(),
+        )
     }
+
+    fn insert_context(&mut self, context: RenderContext) {
+        self.render_context = Some(context);
+    }
+}
+
+fn update_asset_server_context(
+    mut server: ResMut<AssetServer>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+    config: Res<RenderConfig>,
+) {
+    // cheap to make
+    server.insert_context(RenderContext {
+        queue: queue.clone(),
+        device: device.clone(),
+        config: config.clone(),
+    })
 }
 
 pub trait AssetApp {
@@ -409,7 +459,7 @@ impl AssetApp for App {
             };
 
         let mut server = self.world_mut().resource_mut::<AssetServer>();
-        server.register_loader(loader, Box::new(result));
+        server.register_loader(loader, AssetFuture::new(result));
         drop(server);
 
         self
@@ -447,6 +497,7 @@ pub enum AssetLoaderError {
     UnsupportedFileExtension,
     FileNotFound,
     FailedToParse,
+    FailedToBuild,
 }
 
 impl Display for AssetLoaderError {
@@ -461,6 +512,9 @@ impl Display for AssetLoaderError {
             Self::FailedToParse => {
                 write!(f, "File parser failed")
             }
+            Self::FailedToBuild => {
+                write!(f, "Asset builder failed")
+            }
         }
     }
 }
@@ -470,8 +524,9 @@ impl std::error::Error for AssetLoaderError {}
 pub trait AssetLoader: Send + Sync + 'static {
     type Asset: Asset;
 
-    fn load(
-        reader: ByteReader<File>,
+    async fn load(
+        context: RenderContext,
+        reader: ByteReader<Cursor<Vec<u8>>>,
         path: String,
         ext: &str,
     ) -> Result<Self::Asset, AssetLoaderError>;
@@ -481,9 +536,9 @@ pub trait AssetLoader: Send + Sync + 'static {
 pub trait ErasedAssetLoader: Send + Sync + 'static {
     fn load(
         &self,
-        reader: ByteReader<File>,
-        sender: Arc<Mutex<AsyncAssetSender>>,
-        handler: &mut AssetHandleCreator,
+        context: RenderContext,
+        sender: AssetFuture,
+        handler: &AssetHandleCreator,
         path: String,
         ext: String,
     ) -> ErasedHandle;
@@ -491,18 +546,20 @@ pub trait ErasedAssetLoader: Send + Sync + 'static {
 }
 
 pub struct AsyncAssetSender {
-    result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
+    result: Box<dyn Fn(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
 }
 
 impl AsyncAssetSender {
     pub fn new(
-        result: Box<dyn FnMut(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
+        result: impl Fn(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>) + 'static,
     ) -> Self {
-        Self { result }
+        Self {
+            result: Box::new(result),
+        }
     }
 
     pub fn send_result<A: Asset>(
-        &mut self,
+        &self,
         handle: ErasedHandle,
         result: Result<LoadedAsset<A>, (String, AssetLoaderError)>,
     ) {
@@ -513,12 +570,13 @@ impl AsyncAssetSender {
 unsafe impl Sync for AsyncAssetSender {}
 unsafe impl Send for AsyncAssetSender {}
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<L: AssetLoader> ErasedAssetLoader for L {
     fn load(
         &self,
-        reader: ByteReader<File>,
-        sender: Arc<Mutex<AsyncAssetSender>>,
-        handler: &mut AssetHandleCreator,
+        context: RenderContext,
+        sender: AssetFuture,
+        handler: &AssetHandleCreator,
         path: String,
         ext: String,
     ) -> ErasedHandle {
@@ -526,12 +584,43 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
 
         std::thread::spawn(move || {
             let _span = trace_span!("load thread").entered();
-            let result = L::load(reader, path.clone(), ext.as_str())
+            let binary = pollster::block_on(load_binary(path.as_str())).unwrap();
+            let reader = ByteReader::new(BufReader::new(Cursor::new(binary)));
+
+            let result = pollster::block_on(L::load(context, reader, path.clone(), ext.as_str()))
                 .map(|asset| LoadedAsset::new(asset, path.clone(), handle.clone()));
-            sender
-                .lock()
-                .unwrap()
-                .send_result(handle, result.map_err(|e| (path, e)));
+            sender.send_result(handle, result.map_err(|e| (path, e)));
+        });
+
+        handle
+    }
+
+    fn extensions(&self) -> Vec<&'static str> {
+        self.extensions()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<L: AssetLoader> ErasedAssetLoader for L {
+    fn load(
+        &self,
+        context: RenderContext,
+        sender: AssetFuture,
+        handler: &AssetHandleCreator,
+        path: String,
+        ext: String,
+    ) -> ErasedHandle {
+        let handle = handler.new_id();
+
+        wasm_bindgen_futures::spawn_local(async move {
+            info!("reading file: {:?}", path);
+            let binary = load_binary(path.as_str()).await.unwrap();
+            info!("finished reading file: {:?}", path);
+            let reader = ByteReader::new(BufReader::new(Cursor::new(binary)));
+            let result = L::load(context, reader, path.clone(), ext.as_str())
+                .await
+                .map(|asset| LoadedAsset::new(asset, path.clone(), handle.clone()));
+            sender.send_result(handle, result.map_err(|e| (path, e)));
         });
 
         handle
@@ -550,6 +639,63 @@ pub struct AssetLoaderPlugin {
 impl Plugin for AssetLoaderPlugin {
     fn build(&mut self, app: &mut App) {
         let server = AssetServer::new(self.asset_folder.clone());
-        app.insert_resource(server);
+        app.insert_resource(server)
+            .add_systems(ecs::Schedule::PreStartUp, update_asset_server_context)
+            .add_systems(ecs::Schedule::Platform, update_asset_server_context);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn format_url(file_name: &str) -> reqwest::Url {
+    let window = web_sys::window().unwrap();
+    let location = window.location();
+    let mut origin = location.origin().unwrap();
+    if !origin.ends_with("res") {
+        origin = format!("{}/res", origin);
+    }
+    let base = reqwest::Url::parse(&format!("{}/", origin,)).unwrap();
+    base.join(file_name).unwrap()
+}
+
+pub async fn load_string(file_name: &str) -> Result<String, ()> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let url = format_url(file_name);
+        Ok(reqwest::get(url)
+            .await
+            .map_err(|_| ())?
+            .text()
+            .await
+            .map_err(|_| ()))?
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::env::current_dir;
+        let path = std::path::Path::new(current_dir().unwrap().to_str().unwrap())
+            .join("res")
+            .join(file_name);
+        std::fs::read_to_string(path).map_err(|_| ())
+    }
+}
+
+pub async fn load_binary(file_name: &str) -> Result<Vec<u8>, ()> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let url = format_url(file_name);
+        Ok(reqwest::get(url)
+            .await
+            .map_err(|_| ())?
+            .bytes()
+            .await
+            .map_err(|_| ())?
+            .to_vec())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::env::current_dir;
+        let path = std::path::Path::new(current_dir().unwrap().to_str().unwrap())
+            .join("res")
+            .join(file_name);
+        std::fs::read(path).map_err(|_| ())
     }
 }

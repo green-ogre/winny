@@ -15,8 +15,10 @@ pub extern crate asset;
 pub extern crate audio;
 pub extern crate ecs;
 pub extern crate gfx;
+#[cfg(feature = "hot_reload")]
 pub extern crate hot_reload;
 pub extern crate log;
+pub extern crate render;
 pub extern crate util;
 pub extern crate winny_math as math;
 
@@ -26,6 +28,7 @@ pub mod prelude {
     pub use audio::prelude::*;
     pub use ecs::prelude::*;
     pub use gfx::prelude::*;
+    #[cfg(feature = "hot_reload")]
     pub use hot_reload::prelude::*;
     pub use log::*;
     pub use util::prelude::*;
@@ -69,10 +72,12 @@ impl Default for DefaultPlugins {
 
 impl Plugin for DefaultPlugins {
     fn build(&mut self, app: &mut app::app::App) {
-        app.add_plugins((
+        app.add_plugins_priority((
             self.window.clone(),
+            render::RendererPlugin,
             self.asset_loader.clone(),
             gfx::texture::TexturePlugin,
+            gfx::model::ModelPlugin,
             log::LogPlugin,
             CloseOnEscape,
             audio::AudioPlugin,

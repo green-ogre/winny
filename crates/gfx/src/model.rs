@@ -1,13 +1,14 @@
 use std::{
-    env::current_dir,
     io::{BufReader, Cursor},
     path::Path,
+    sync::Arc,
 };
 
 use std::ops::Range;
 
-use app::renderer::{RenderConfig, RenderDevice, RenderQueue};
+use asset::{load_binary, load_string, reader::ByteReader, AssetApp, AssetLoaderError};
 use image::GenericImageView;
+use render::{RenderConfig, RenderContext, RenderDevice, RenderQueue};
 use wgpu::util::DeviceExt;
 
 use util::tracing::{info, trace};
@@ -140,6 +141,11 @@ pub struct Model {
     pub materials: Vec<Material>,
 }
 
+#[cfg(target_arch = "wasm32")]
+unsafe impl Send for Model {}
+#[cfg(target_arch = "wasm32")]
+unsafe impl Sync for Model {}
+
 pub struct Material {
     pub name: String,
     pub diffuse_texture: Texture,
@@ -224,42 +230,45 @@ pub struct PointLightStorage {
     pub points: [PointLightUniform; 2],
 }
 
-pub fn load_normal(
+pub async fn load_normal(
     file_name: &str,
     device: &RenderDevice,
     queue: &RenderQueue,
 ) -> Result<NormalTexture, ()> {
     info!("Loading texture: {:?}", file_name);
-    let data = load_binary(file_name).unwrap();
+    let data = load_binary(file_name).await.unwrap();
     let img = image::load_from_memory(&data).map_err(|_| ())?;
     Ok(NormalTexture::from_image(&img, device, queue))
 }
 
-pub fn load_model(
-    path: &str,
+async fn load_model(
+    path: String,
+    obj_string: Arc<String>,
     device: &RenderDevice,
     queue: &RenderQueue,
     layout: &wgpu::BindGroupLayout,
 ) -> Result<Model, ()> {
+    use util::tracing::error;
+
     info!("Loading model: {}", path);
-    let obj_text = load_string(path).unwrap();
-    let obj_cursor = Cursor::new(obj_text);
+    let obj_cursor = Cursor::new(obj_string.as_ref());
     let mut obj_reader = BufReader::new(obj_cursor);
 
-    let (models, obj_materials) = tobj::load_obj_buf(
+    let (models, obj_materials) = tobj::load_obj_buf_async(
         &mut obj_reader,
         &tobj::LoadOptions {
             triangulate: true,
             single_index: true,
             ..Default::default()
         },
-        move |p| {
+        |p| async move {
             trace!("{:?}", &p);
-            let mat_text = load_string(&p.to_str().unwrap()).unwrap();
+            let mat_text = load_string(&p.as_str()).await.unwrap();
             tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
         },
     )
-    .map_err(|_| ())?;
+    .await
+    .map_err(|e| error!("{e}"))?;
 
     let mut materials = Vec::new();
     for m in obj_materials.unwrap() {
@@ -275,23 +284,23 @@ pub fn load_model(
                 .unwrap()
                 .to_str()
                 .unwrap(),
-            device,
-            queue,
+            &device,
+            &queue,
         )
-        .unwrap();
+        .await?;
         let normal_texture = load_normal(
             Path::new::<String>(&m.normal_texture.unwrap())
                 .file_name()
                 .unwrap()
                 .to_str()
                 .unwrap(),
-            device,
-            queue,
+            &device,
+            &queue,
         )
-        .unwrap();
+        .await?;
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout,
+            layout: &layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -318,7 +327,7 @@ pub fn load_model(
             diffuse_texture,
             normal_texture,
             bind_group,
-        })
+        });
     }
 
     let meshes = models
@@ -435,20 +444,6 @@ pub fn load_model(
         .collect::<Vec<_>>();
 
     Ok(Model { meshes, materials })
-}
-
-pub fn load_string(file_name: &str) -> Result<String, ()> {
-    let path = std::path::Path::new(current_dir().unwrap().to_str().unwrap())
-        .join("res")
-        .join(file_name);
-    std::fs::read_to_string(path).map_err(|_| ())
-}
-
-pub fn load_binary(file_name: &str) -> Result<Vec<u8>, ()> {
-    let path = std::path::Path::new(current_dir().unwrap().to_str().unwrap())
-        .join("res")
-        .join(file_name);
-    std::fs::read(path).map_err(|_| ())
 }
 
 pub trait DrawModel<'a> {
@@ -729,7 +724,7 @@ impl DepthTexture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
     pub fn new(device: &RenderDevice, config: &RenderConfig, label: &str) -> Self {
-        trace!("new DepthTexture");
+        info!("creating new depth texture: {:?}, {:?}", config, device);
         let size = wgpu::Extent3d {
             width: config.width(),
             height: config.height(),
@@ -767,16 +762,317 @@ impl DepthTexture {
     }
 }
 
-// struct ModelAssetLoader;
+struct ModelAssetLoader;
+
+impl asset::AssetLoader for ModelAssetLoader {
+    type Asset = Model;
+
+    fn extensions(&self) -> Vec<&'static str> {
+        vec!["obj"]
+    }
+
+    async fn load(
+        context: RenderContext,
+        reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
+        path: String,
+        ext: &str,
+    ) -> Result<Self::Asset, AssetLoaderError> {
+        match ext {
+            "obj" => {
+                let source = ModelSource::new(reader)?;
+                let layout =
+                    context
+                        .device
+                        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                            entries: &[
+                                wgpu::BindGroupLayoutEntry {
+                                    binding: 0,
+                                    visibility: wgpu::ShaderStages::FRAGMENT,
+                                    ty: wgpu::BindingType::Texture {
+                                        multisampled: false,
+                                        sample_type: wgpu::TextureSampleType::Float {
+                                            filterable: true,
+                                        },
+                                        view_dimension: wgpu::TextureViewDimension::D2,
+                                    },
+                                    count: None,
+                                },
+                                wgpu::BindGroupLayoutEntry {
+                                    binding: 1,
+                                    visibility: wgpu::ShaderStages::FRAGMENT,
+                                    ty: wgpu::BindingType::Sampler(
+                                        wgpu::SamplerBindingType::Filtering,
+                                    ),
+                                    count: None,
+                                },
+                                // normal map
+                                wgpu::BindGroupLayoutEntry {
+                                    binding: 2,
+                                    visibility: wgpu::ShaderStages::FRAGMENT,
+                                    ty: wgpu::BindingType::Texture {
+                                        multisampled: false,
+                                        sample_type: wgpu::TextureSampleType::Float {
+                                            filterable: true,
+                                        },
+                                        view_dimension: wgpu::TextureViewDimension::D2,
+                                    },
+                                    count: None,
+                                },
+                                wgpu::BindGroupLayoutEntry {
+                                    binding: 3,
+                                    visibility: wgpu::ShaderStages::FRAGMENT,
+                                    ty: wgpu::BindingType::Sampler(
+                                        wgpu::SamplerBindingType::Filtering,
+                                    ),
+                                    count: None,
+                                },
+                            ],
+                            label: Some("texture_bind_group_layout"),
+                        });
+                load_model(
+                    path,
+                    source.string,
+                    &context.device,
+                    &context.queue,
+                    &layout,
+                )
+                .await
+                .map_err(|_| AssetLoaderError::FailedToBuild)
+            }
+            _ => Err(AssetLoaderError::UnsupportedFileExtension),
+        }
+    }
+}
+
+// #[derive(WinnyResource)]
+// pub struct Models {
+//     storage: SparseSet<AssetId, Model>,
+// }
 //
-// impl AssetLoader for ModelAssetLoader {
-//     type Asset = Model;
-//
-//     fn extensions(&self) -> Vec<String> {
-//         vec!["obj".into()]
-//     }
-//
-//     fn load(reader: asset::reader::ByteReader<std::fs::File>, ext: &str) -> Result<Self::Asset, ()> {
-//
+// impl Default for Models {
+//     fn default() -> Self {
+//         Self {
+//             storage: SparseSet::new(),
+//         }
 //     }
 // }
+//
+// impl Models {
+//     pub fn insert(&mut self, handle: Handle<ModelSource>, model: Model) {
+//         self.storage.insert(handle.id(), model);
+//     }
+//
+//     pub fn get(&self, handle: &Handle<ModelSource>) -> Option<&Model> {
+//         self.storage.get(&handle.id())
+//     }
+// }
+//
+// #[derive(Debug, WinnyEvent)]
+// pub struct ModelCreated {
+//     pub handle: Handle<ModelSource>,
+// }
+
+pub struct ModelPlugin;
+
+impl app::plugins::Plugin for ModelPlugin {
+    fn build(&mut self, app: &mut app::app::App) {
+        // app.add_systems(
+        //     ecs::Schedule::PreUpdate,
+        //     move |mut commands: Commands,
+        //           assets: Res<Assets<ModelSource>>,
+        //           events: EventReader<AssetLoaderEvent<ModelSource>>,
+        //           device: Res<RenderDevice>,
+        //           queue: Res<RenderQueue>| {
+        //         for event in events.read() {
+        //             match event {
+        //                 AssetLoaderEvent::Loaded { handle } => {
+        //                     println!("hello");
+        //                     let model_source = assets.get(&handle).unwrap();
+        //
+        //                     #[cfg(target_arch = "wasm32")]
+        //                     {
+        //                         let path = model_source.path.clone();
+        //                         let obj_str = model_source.string.clone();
+        //                         let device = device.clone();
+        //                         let queue = queue.clone();
+        //                         let receiver = load_model(
+        //                             handle.clone(),
+        //                             path,
+        //                             obj_str,
+        //                             device.clone(),
+        //                             queue,
+        //                             device.create_bind_group_layout(
+        //                                 &wgpu::BindGroupLayoutDescriptor {
+        //                                     entries: &[
+        //                                         wgpu::BindGroupLayoutEntry {
+        //                                             binding: 0,
+        //                                             visibility: wgpu::ShaderStages::FRAGMENT,
+        //                                             ty: wgpu::BindingType::Texture {
+        //                                                 multisampled: false,
+        //                                                 sample_type:
+        //                                                     wgpu::TextureSampleType::Float {
+        //                                                         filterable: true,
+        //                                                     },
+        //                                                 view_dimension:
+        //                                                     wgpu::TextureViewDimension::D2,
+        //                                             },
+        //                                             count: None,
+        //                                         },
+        //                                         wgpu::BindGroupLayoutEntry {
+        //                                             binding: 1,
+        //                                             visibility: wgpu::ShaderStages::FRAGMENT,
+        //                                             ty: wgpu::BindingType::Sampler(
+        //                                                 wgpu::SamplerBindingType::Filtering,
+        //                                             ),
+        //                                             count: None,
+        //                                         },
+        //                                         // normal map
+        //                                         wgpu::BindGroupLayoutEntry {
+        //                                             binding: 2,
+        //                                             visibility: wgpu::ShaderStages::FRAGMENT,
+        //                                             ty: wgpu::BindingType::Texture {
+        //                                                 multisampled: false,
+        //                                                 sample_type:
+        //                                                     wgpu::TextureSampleType::Float {
+        //                                                         filterable: true,
+        //                                                     },
+        //                                                 view_dimension:
+        //                                                     wgpu::TextureViewDimension::D2,
+        //                                             },
+        //                                             count: None,
+        //                                         },
+        //                                         wgpu::BindGroupLayoutEntry {
+        //                                             binding: 3,
+        //                                             visibility: wgpu::ShaderStages::FRAGMENT,
+        //                                             ty: wgpu::BindingType::Sampler(
+        //                                                 wgpu::SamplerBindingType::Filtering,
+        //                                             ),
+        //                                             count: None,
+        //                                         },
+        //                                     ],
+        //                                     label: Some("texture_bind_group_layout"),
+        //                                 },
+        //                             ),
+        //                         );
+        //                     }
+        //                     #[cfg(not(target_arch = "wasm32"))]
+        //                     {
+        //                         let receiver = load_model(
+        //                             handle.clone(),
+        //                             model_source.path.clone(),
+        //                             model_source.asset.string.clone(),
+        //                             device.clone(),
+        //                             queue.clone(),
+        //                             device.create_bind_group_layout(
+        //                                 &wgpu::BindGroupLayoutDescriptor {
+        //                                     entries: &[
+        //                                         wgpu::BindGroupLayoutEntry {
+        //                                             binding: 0,
+        //                                             visibility: wgpu::ShaderStages::FRAGMENT,
+        //                                             ty: wgpu::BindingType::Texture {
+        //                                                 multisampled: false,
+        //                                                 sample_type:
+        //                                                     wgpu::TextureSampleType::Float {
+        //                                                         filterable: true,
+        //                                                     },
+        //                                                 view_dimension:
+        //                                                     wgpu::TextureViewDimension::D2,
+        //                                             },
+        //                                             count: None,
+        //                                         },
+        //                                         wgpu::BindGroupLayoutEntry {
+        //                                             binding: 1,
+        //                                             visibility: wgpu::ShaderStages::FRAGMENT,
+        //                                             ty: wgpu::BindingType::Sampler(
+        //                                                 wgpu::SamplerBindingType::Filtering,
+        //                                             ),
+        //                                             count: None,
+        //                                         },
+        //                                         // normal map
+        //                                         wgpu::BindGroupLayoutEntry {
+        //                                             binding: 2,
+        //                                             visibility: wgpu::ShaderStages::FRAGMENT,
+        //                                             ty: wgpu::BindingType::Texture {
+        //                                                 multisampled: false,
+        //                                                 sample_type:
+        //                                                     wgpu::TextureSampleType::Float {
+        //                                                         filterable: true,
+        //                                                     },
+        //                                                 view_dimension:
+        //                                                     wgpu::TextureViewDimension::D2,
+        //                                             },
+        //                                             count: None,
+        //                                         },
+        //                                         wgpu::BindGroupLayoutEntry {
+        //                                             binding: 3,
+        //                                             visibility: wgpu::ShaderStages::FRAGMENT,
+        //                                             ty: wgpu::BindingType::Sampler(
+        //                                                 wgpu::SamplerBindingType::Filtering,
+        //                                             ),
+        //                                             count: None,
+        //                                         },
+        //                                     ],
+        //                                     label: Some("texture_bind_group_layout"),
+        //                                 },
+        //                             ),
+        //                         );
+        //
+        //                         commands.insert_resource(AsyncChannelReceiver(receiver));
+        //                     }
+        //                 }
+        //                 AssetLoaderEvent::Err { .. } => {
+        //                     util::tracing::error!("failed to load model source");
+        //                 }
+        //             }
+        //         }
+        //     },
+        // );
+        //
+        // app.add_systems(
+        //     ecs::Schedule::PreUpdate,
+        //     |model_result_rx: Option<Res<AsyncChannelReceiver<(Handle<ModelSource>, Model)>>>,
+        //      mut models: ResMut<Models>,
+        //      mut model_created: EventWriter<ModelCreated>| {
+        //         let Some(model_result_rx) = model_result_rx else {
+        //             return;
+        //         };
+        //
+        //         match model_result_rx.0.try_recv() {
+        //             Ok((handle, model)) => {
+        //                 info!("model created: {handle:?}");
+        //                 models.insert(handle.clone(), model);
+        //                 model_created.send(ModelCreated { handle });
+        //             }
+        //             Err(e) => match e {
+        //                 async_channel::TryRecvError::Empty => (),
+        //                 async_channel::TryRecvError::Closed => {
+        //                     util::tracing::error!("model sender channel closed");
+        //                 }
+        //             },
+        //         }
+        //     },
+        // );
+
+        let loader = ModelAssetLoader {};
+        app.register_asset_loader::<Model>(loader);
+    }
+}
+
+pub struct ModelSource {
+    pub string: Arc<String>,
+}
+
+impl asset::Asset for Model {}
+
+impl ModelSource {
+    pub fn new(mut reader: ByteReader<Cursor<Vec<u8>>>) -> Result<Self, AssetLoaderError> {
+        // TODO: loading binary, then loading into string, then parsing...
+        let data = reader
+            .read_all_to_string()
+            .map_err(|_| AssetLoaderError::FailedToParse)?;
+
+        Ok(Self {
+            string: Arc::new(data),
+        })
+    }
+}

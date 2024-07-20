@@ -102,6 +102,37 @@ impl LinkedLib {
             return;
         }
 
+        // let s: String = rand::thread_rng()
+        //     .sample_iter(&Alphanumeric)
+        //     .take(7)
+        //     .map(char::from)
+        //     .collect();
+        //
+        // #[cfg(target_os = "linux")]
+        // {
+        //     let old_path_to_write = self.path_to_write.clone();
+        //     self.path_to_write = [
+        //         format!("{}", current_dir().unwrap().to_str().unwrap()),
+        //         self.lib_name.clone(),
+        //         "target".into(),
+        //         #[cfg(debug_assertions)]
+        //         "debug".into(),
+        //         #[cfg(not(debug_assertions))]
+        //         "release".into(),
+        //         format!("libtemp{}.so", s),
+        //     ]
+        //     .iter()
+        //     .collect::<PathBuf>()
+        //     .into();
+        //
+        //     self.linked_lib
+        //         .refresh(&self.path_to_lib, &self.path_to_write)
+        //         .unwrap();
+        //     self.last_refresh = last_mod;
+        //
+        //     let _ = std::fs::remove_file(old_path_to_write);
+        // }
+
         self.linked_lib
             .refresh(&self.path_to_lib, &self.path_to_write)
             .unwrap();
@@ -117,7 +148,13 @@ pub struct HotReloadPlugin {
 
 impl Plugin for HotReloadPlugin {
     fn build(&mut self, app: &mut App) {
-        if cfg!(windows) {
+        if cfg!(target_os = "windows") {
+            // let s: String = rand::thread_rng()
+            //     .sample_iter(&Alphanumeric)
+            //     .take(7)
+            //     .map(char::from)
+            //     .collect();
+
             let lib_path: PathBuf = [
                 format!("{}", current_dir().unwrap().to_str().unwrap()),
                 self.crate_name.clone(),
@@ -126,7 +163,10 @@ impl Plugin for HotReloadPlugin {
                 "debug".into(),
                 #[cfg(not(debug_assertions))]
                 "release".into(),
+                #[cfg(target_os = "windows")]
                 format!("{}.dll", self.crate_name.clone()),
+                #[cfg(target_os = "linux")]
+                format!("lib{}.so", self.crate_name.clone()),
             ]
             .iter()
             .collect();
@@ -139,7 +179,11 @@ impl Plugin for HotReloadPlugin {
                 "debug".into(),
                 #[cfg(not(debug_assertions))]
                 "release".into(),
+                #[cfg(target_os = "windows")]
                 "libtemp.dll".into(),
+                #[cfg(target_os = "linux")]
+                // format!("libtemp{}.so", s),
+                "libtemp.so".into(),
             ]
             .iter()
             .collect();

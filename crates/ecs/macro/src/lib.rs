@@ -287,3 +287,31 @@ pub fn all_tuples_with_size(input: TokenStream) -> TokenStream {
         )*
     })
 }
+
+#[proc_macro_derive(EnumIter)]
+pub fn enum_iter(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let data = &input.data;
+
+    let variants = match data {
+        syn::Data::Enum(data) => &data.variants.iter().collect::<Vec<_>>(),
+        syn::Data::Union(_) => {
+            panic!("enum_iter not supported on union");
+        }
+        syn::Data::Struct(_) => {
+            panic!("enum_iter not supported on struct");
+        }
+    };
+
+    quote! {
+        impl #name {
+            pub fn VALUES() -> impl Iterator<Item = Self> {
+                [
+                    #(Self::#variants,)*
+                ].into_iter()
+            }
+        }
+    }
+    .into()
+}

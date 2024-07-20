@@ -6,7 +6,7 @@ use access::SystemAccess;
 use ecs_macro::all_tuples;
 use system_param::SystemParam;
 
-use crate::{unsafe_world::UnsafeWorldCell, Archetype, Schedule, World};
+use crate::{unsafe_world::UnsafeWorldCell, Archetype, OneShotSystems, Schedule, World};
 
 pub mod access;
 pub mod system_param;
@@ -230,16 +230,17 @@ impl SystemSet {
         // }
     }
 
-    pub fn apply_deffered(&mut self, world: &mut World) {
-        for node in self.nodes.iter_mut() {
-            match node {
-                Node::Leaf(system) => system.apply_deffered(world),
-                Node::Branch(set) => set.apply_deffered(world),
-            }
-        }
+    pub fn apply_deffered(&mut self, _world: &mut World) {
+        // for node in self.nodes.iter_mut() {
+        //     match node {
+        //         Node::Leaf(system) => // system.apply_deffered(world),
+        //         Node::Branch(set) => set.apply_deffered(world),
+        //     }
+        // }
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub trait System: Send + Sync + 'static {
     type Out;
 
@@ -248,7 +249,19 @@ pub trait System: Send + Sync + 'static {
     fn init_state(&mut self, world: &mut World);
     fn new_archetype(&mut self, archetype: &Archetype);
     fn run_unsafe(&mut self, world: UnsafeWorldCell<'_>) -> Self::Out;
-    fn apply_deffered(&mut self, world: &mut World);
+    fn apply_deffered(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems);
+}
+
+#[cfg(target_arch = "wasm32")]
+pub trait System: 'static {
+    type Out;
+
+    fn access(&self, world: &mut World) -> SystemAccess;
+    fn name(&self) -> &str;
+    fn init_state(&mut self, world: &mut World);
+    fn new_archetype(&mut self, archetype: &Archetype);
+    fn run_unsafe(&mut self, world: UnsafeWorldCell<'_>) -> Self::Out;
+    fn apply_deffered(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems);
 }
 
 pub trait SystemParamFunc<Marker, Out>: 'static + Send + Sync {
@@ -325,9 +338,9 @@ where
         out
     }
 
-    fn apply_deffered(&mut self, world: &mut World) {
+    fn apply_deffered(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems) {
         let _span = util::tracing::trace_span!("apply_deffered", name = %self.name).entered();
-        F::Param::apply_deffered(world, self.param_state.as_mut().unwrap());
+        F::Param::apply_deffered(world, self.param_state.as_mut().unwrap(), one_shot_systems);
         trace!("exiting");
     }
 }
@@ -393,70 +406,6 @@ where
         }
     }
 }
-
-macro_rules! expr {
-    ($x:expr) => {
-        $x
-    };
-} // HACK
-macro_rules! tuple_index {
-    ($tuple:expr, $idx:tt) => {
-        expr!($tuple.$idx)
-    };
-}
-
-macro_rules! impl_system_param {
-    (
-        $(($params:ident, $idx:tt))*
-    ) => {
-        impl<$($params: SystemParam),*> SystemParam for ($($params,)*) {
-            type State = ($($params::State,)*);
-            type Item<'w, 's> = ($($params::Item<'w, 's>,)*);
-
-            fn access(world: &mut World) -> SystemAccess {
-        let mut access = SystemAccess::default();
-                $(
-                    access = access.with($params::access(world));
-                )*
-
-        access
-            }
-
-            fn init_state(world: &mut World) -> Self::State {
-                (
-                    $($params::init_state(world),)*
-                )
-            }
-
-            fn new_archetype(archetype: &crate::storage::Archetype, state: &mut Self::State) {
-                    $($params::new_archetype(archetype, &mut tuple_index!(state, $idx));)*
-            }
-
-            fn to_param<'w, 's>(state: &'s mut Self::State, world: UnsafeWorldCell<'w>) -> Self::Item<'w, 's> {
-                (
-                    $($params::to_param(&mut tuple_index!(state, $idx), world),)*
-                )
-            }
-
-    fn apply_deffered(world: &'_ mut World, state: &'_ mut Self::State) {
-                    $(
-        $params::apply_deffered(world, &mut tuple_index!(state, $idx));
-        )*
-        }
-        }
-    }
-}
-
-impl_system_param!((A, 0));
-impl_system_param!((A, 0)(B, 1));
-impl_system_param!((A, 0)(B, 1)(C, 2));
-impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3));
-impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4));
-impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5));
-impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6));
-impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7));
-impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8));
-impl_system_param!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8)(K, 9));
 
 pub trait IntoSystemStorage<Marker>
 where

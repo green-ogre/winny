@@ -1,16 +1,17 @@
-use app::renderer::RenderDevice;
 use ecs::WinnyComponent;
+use render::RenderDevice;
 use winny_math::vector::Vec2f;
 
 #[cfg(feature = "egui")]
 pub mod gui;
 pub mod model;
-pub mod png;
 pub mod prelude;
 pub mod sprite;
 pub mod texture;
 
+pub extern crate bytemuck;
 pub extern crate cgmath;
+pub extern crate wgpu;
 
 #[derive(Debug, WinnyComponent)]
 pub struct Transform2D {
@@ -110,6 +111,37 @@ pub fn create_uniform_bind_group(
     (layout, bg)
 }
 
+pub fn create_read_only_storage_bind_group(
+    label: Option<&str>,
+    device: &RenderDevice,
+    buffer: &wgpu::Buffer,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+
+    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label,
+        layout: &layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+
+    (layout, bg)
+}
+
 pub trait VertexLayout {
     fn layout() -> wgpu::VertexBufferLayout<'static>;
 }
@@ -169,6 +201,16 @@ pub struct VertexUv {
     pub position: [f32; 4],
     pub uv: [f32; 2],
     pub _padding: [f32; 2],
+}
+
+impl std::ops::Mul<Vec2f> for VertexUv {
+    type Output = Self;
+
+    fn mul(mut self, rhs: Vec2f) -> Self::Output {
+        self.position[0] *= rhs.x;
+        self.position[1] *= rhs.y;
+        self
+    }
 }
 
 impl VertexLayout for VertexUv {
@@ -243,6 +285,7 @@ pub fn create_render_pipeline(
     depth_format: Option<wgpu::TextureFormat>,
     vertex_layouts: &[wgpu::VertexBufferLayout],
     shader: wgpu::ShaderModuleDescriptor,
+    blend_alpha: bool,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(shader);
 
@@ -260,10 +303,11 @@ pub fn create_render_pipeline(
             entry_point: "fs_main",
             targets: &[Some(wgpu::ColorTargetState {
                 format: color_format,
-                blend: Some(wgpu::BlendState {
-                    alpha: wgpu::BlendComponent::REPLACE,
-                    color: wgpu::BlendComponent::REPLACE,
-                }),
+                blend: if blend_alpha {
+                    Some(wgpu::BlendState::ALPHA_BLENDING)
+                } else {
+                    Some(wgpu::BlendState::REPLACE)
+                },
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),

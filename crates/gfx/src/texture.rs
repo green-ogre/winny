@@ -1,131 +1,118 @@
-use app::renderer::{RenderDevice, RenderQueue};
-// use crate::sprite::{SpriteBinding, SpriteData};
-use asset::{AssetApp, AssetId, AssetLoaderError, AssetLoaderEvent, Assets, Handle};
-use ecs::{EventReader, EventWriter, Res, ResMut, SparseSet, WinnyEvent, WinnyResource};
+use std::io::Cursor;
 
-use image::GenericImageView;
+// use crate::sprite::{SpriteBinding, SpriteData};
+use asset::{load_binary, reader::ByteReader, AssetApp, AssetLoaderError};
+
+use image::{DynamicImage, GenericImageView};
 use util::tracing::info;
 
-use crate::model::load_binary;
+use render::{RenderContext, RenderDevice, RenderQueue};
 
 struct TextureAssetLoader;
 
 impl asset::AssetLoader for TextureAssetLoader {
-    type Asset = TextureSource;
+    type Asset = Texture;
 
     fn extensions(&self) -> Vec<&'static str> {
         vec!["png"]
     }
 
-    fn load(
-        _reader: asset::reader::ByteReader<std::fs::File>,
+    async fn load(
+        context: RenderContext,
+        reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
         path: String,
         ext: &str,
     ) -> Result<Self::Asset, AssetLoaderError> {
         match ext {
-            "png" => TextureSource::new(path),
+            "png" => {
+                let source = TextureSource::new(reader)?;
+                Ok(Texture::from_image(
+                    &context.device,
+                    &context.queue,
+                    &source.image,
+                    Some(path.as_str()),
+                ))
+            }
             _ => Err(AssetLoaderError::UnsupportedFileExtension),
         }
     }
 }
 
-#[derive(Debug, WinnyResource)]
-pub struct Textures {
-    storage: SparseSet<AssetId, Texture>,
-}
+// #[derive(Debug, WinnyResource)]
+// pub struct Textures {
+//     storage: SparseSet<AssetId, Texture>,
+// }
+//
+// impl Default for Textures {
+//     fn default() -> Self {
+//         Self {
+//             storage: SparseSet::new(),
+//         }
+//     }
+// }
+//
+// impl Textures {
+//     pub fn insert(&mut self, handle: Handle<TextureSource>, texture: Texture) {
+//         self.storage.insert(handle.id(), texture);
+//     }
+//
+//     pub fn get(&self, handle: &Handle<TextureSource>) -> Option<&Texture> {
+//         self.storage.get(&handle.id())
+//     }
+// }
 
-impl Default for Textures {
-    fn default() -> Self {
-        Self {
-            storage: SparseSet::new(),
-        }
-    }
-}
+// #[derive(Debug, WinnyEvent)]
+// pub struct TextureCreated {
+//     pub handle: Handle<TextureSource>,
+// }
 
-impl Textures {
-    pub fn insert(&mut self, handle: Handle<TextureSource>, texture: Texture) {
-        self.storage.insert(handle.id(), texture);
-    }
-
-    pub fn get(&self, handle: &Handle<TextureSource>) -> Option<&Texture> {
-        self.storage.get(&handle.id())
-    }
-}
-
-#[derive(Debug, WinnyEvent)]
-pub struct TextureCreated {
-    pub handle: Handle<TextureSource>,
-}
-
-fn insert_new_textures(
-    mut textures: ResMut<Textures>,
-    mut texture_created: EventWriter<TextureCreated>,
-    assets: Res<Assets<TextureSource>>,
-    events: EventReader<AssetLoaderEvent<TextureSource>>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
-) {
-    for event in events.read() {
-        match event {
-            AssetLoaderEvent::Loaded { handle } => {
-                let tex_source = assets.get(&handle).unwrap();
-                let texture =
-                    Texture::from_bytes(&tex_source.bytes, tex_source.dimensions, &device, &queue);
-                textures.insert(handle.clone(), texture);
-                texture_created.send(TextureCreated {
-                    handle: handle.clone(),
-                })
-            }
-            AssetLoaderEvent::Err { .. } => {}
-        }
-    }
-}
+// fn insert_new_textures(
+//     mut textures: ResMut<Textures>,
+//     mut texture_created: EventWriter<TextureCreated>,
+//     assets: Res<Assets<TextureSource>>,
+//     events: EventReader<AssetLoaderEvent<TextureSource>>,
+//     device: Res<RenderDevice>,
+//     queue: Res<RenderQueue>,
+// ) {
+//     for event in events.read() {
+//         match event {
+//             AssetLoaderEvent::Loaded { handle } => {
+//                 let tex_source = assets.get(&handle).unwrap();
+//                 let texture =
+//                     Texture::from_bytes(&tex_source.bytes, tex_source.dimensions, &device, &queue);
+//                 textures.insert(handle.clone(), texture);
+//                 texture_created.send(TextureCreated {
+//                     handle: handle.clone(),
+//                 })
+//             }
+//             AssetLoaderEvent::Err { .. } => {}
+//         }
+//     }
+// }
 
 pub struct TexturePlugin;
 
 impl app::plugins::Plugin for TexturePlugin {
     fn build(&mut self, app: &mut app::app::App) {
         let loader = TextureAssetLoader {};
-        app.register_asset_loader::<TextureSource>(loader)
-            .insert_resource(Textures::default())
-            .register_event::<TextureCreated>()
-            .add_systems(ecs::Schedule::PreUpdate, insert_new_textures);
+        app.register_asset_loader::<Texture>(loader);
     }
 }
 
 pub struct TextureSource {
-    pub bytes: Vec<u8>,
-    pub dimensions: (u32, u32),
+    pub image: DynamicImage,
 }
 
-impl asset::Asset for TextureSource {}
+impl asset::Asset for Texture {}
 
 impl TextureSource {
-    pub fn new(path: String) -> Result<Self, AssetLoaderError> {
-        let data = load_binary(path.as_str()).map_err(|_| AssetLoaderError::FailedToParse)?;
-        let img = image::load_from_memory(&data).map_err(|_| AssetLoaderError::FailedToParse)?;
-        let rgba = img.to_rgba8();
-        let dimensions = img.dimensions();
+    pub fn new(mut reader: ByteReader<Cursor<Vec<u8>>>) -> Result<Self, AssetLoaderError> {
+        let data = reader
+            .read_all()
+            .map_err(|_| AssetLoaderError::FailedToParse)?;
+        let image = image::load_from_memory(&data).map_err(|_| AssetLoaderError::FailedToParse)?;
 
-        // let (bytes, dimensions) = crate::png::to_bytes(reader).map_err(|e| {
-        //     error!("{}", e);
-        //     AssetLoaderError::from(e)
-        // })?;
-
-        Ok(Self {
-            bytes: rgba.into_raw(),
-            dimensions,
-        })
-    }
-}
-
-impl From<crate::png::Error> for AssetLoaderError {
-    fn from(value: crate::png::Error) -> Self {
-        if value == crate::png::Error::InvalidPath {
-            AssetLoaderError::FileNotFound
-        } else {
-            AssetLoaderError::FailedToParse
-        }
+        Ok(Self { image })
     }
 }
 
@@ -136,14 +123,19 @@ pub struct Texture {
     pub sampler: wgpu::Sampler,
 }
 
+#[cfg(target_arch = "wasm32")]
+unsafe impl Send for Texture {}
+#[cfg(target_arch = "wasm32")]
+unsafe impl Sync for Texture {}
+
 impl Texture {
-    pub fn load_texture(
+    pub async fn load_texture(
         file_name: &str,
         device: &RenderDevice,
         queue: &RenderQueue,
     ) -> Result<Texture, ()> {
         info!("Loading texture: {:?}", file_name);
-        let data = load_binary(file_name).map_err(|_| ())?;
+        let data = load_binary(file_name).await.map_err(|_| ())?;
         Texture::from_image_bytes(device, queue, &data, file_name)
     }
 
@@ -154,7 +146,7 @@ impl Texture {
         label: &str,
     ) -> Result<Self, ()> {
         let img = image::load_from_memory(bytes).map_err(|_| ())?;
-        Self::from_image(device, queue, &img, Some(label))
+        Ok(Self::from_image(device, queue, &img, Some(label)))
     }
 
     pub fn from_image(
@@ -162,7 +154,7 @@ impl Texture {
         queue: &RenderQueue,
         img: &image::DynamicImage,
         label: Option<&str>,
-    ) -> Result<Self, ()> {
+    ) -> Self {
         let rgba = img.to_rgba8();
         let dimensions = img.dimensions();
 
@@ -209,11 +201,11 @@ impl Texture {
             ..Default::default()
         });
 
-        Ok(Self {
+        Self {
             tex: texture,
             view,
             sampler,
-        })
+        }
     }
 
     pub fn from_bytes(

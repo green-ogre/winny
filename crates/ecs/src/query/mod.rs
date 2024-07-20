@@ -47,10 +47,7 @@ pub trait WorldQuery: Send + Sync {
 }
 
 macro_rules! impl_query_data {
-    (
-        $(($params:ident, $idx:tt))*
-    ) => {
-
+    ($(($params:ident, $idx:tt))*) => {
         impl<$($params: QueryData + 'static),*> QueryData for ($($params,)*) {
             type ReadOnly = ($($params::ReadOnly,)*);
         }
@@ -61,55 +58,61 @@ macro_rules! impl_query_data {
             type Item<'d> = ($($params::Item<'d>,)*);
             type Fetch<'d> = ($($params::Fetch<'d>,)*);
 
-        type State = ($($params::State,)*);
+            type State = ($($params::State,)*);
 
-        fn init_state(world: UnsafeWorldCell<'_>) -> Self::State {
-            (
-        $($params::init_state(world),)*
-        )
-        }
-
-    fn init_fetch<'d>(
-        world: UnsafeWorldCell<'d>,
-        state: &Self::State,
-    ) -> Self::Fetch<'d> {
-            (
-        $($params::init_fetch(world, &tuple_index!(state, $idx)),)*
-        )
-
-    }
-
-    fn set_table<'d>(
-        fetch: &mut Self::Fetch<'d>,
- state: &Self::State,
-        table: &'d Table,
-    )  {
-        $($params::set_table(&mut tuple_index!(fetch, $idx),&tuple_index!(state, $idx), table);)*
-
-    }
-
-            fn fetch<'d>(fetch: &mut Self::Fetch<'d>, arch_entity: &ArchEntity) -> Self::Item<'d> {
+            fn init_state(world: UnsafeWorldCell<'_>) -> Self::State {
                 (
-                    $($params::fetch(&mut tuple_index!(fetch, $idx), arch_entity),)*
+                    $(
+                        $params::init_state(world),
+                    )*
                 )
             }
 
-    fn system_access(components: &mut Components) -> SystemAccess {
-        let mut access = SystemAccess::default();
-
-                $(access = access.with(
-                        $params::system_access(components)
-                        );
+            fn init_fetch<'d>(
+                world: UnsafeWorldCell<'d>,
+                state: &Self::State,
+            ) -> Self::Fetch<'d> {
+                (
+                    $(
+                        $params::init_fetch(world, &tuple_index!(state, $idx)),
                     )*
+                )
+            }
+
+            fn set_table<'d>(
+                fetch: &mut Self::Fetch<'d>,
+                state: &Self::State,
+                table: &'d Table,
+            )  {
+                $(
+                    $params::set_table(&mut tuple_index!(fetch, $idx),&tuple_index!(state, $idx), table);
+                )*
+            }
+
+            fn fetch<'d>(fetch: &mut Self::Fetch<'d>, arch_entity: &ArchEntity) -> Self::Item<'d> {
+                (
+                    $(
+                        $params::fetch(&mut tuple_index!(fetch, $idx), arch_entity),
+                    )*
+                )
+            }
+
+            fn system_access(components: &mut Components) -> SystemAccess {
+                let mut access = SystemAccess::default();
+                $(
+                    access = access.with($params::system_access(components));
+                )*
+
                 access
             }
 
             fn set_ids() -> Vec<TypeId> {
                 let mut ids = vec![];
-                $(ids.append(
-                        &mut $params::set_ids()
-                        );
-                    )*
+
+                $(
+                    ids.append(&mut $params::set_ids());
+                )*
+
                 ids
             }
         }

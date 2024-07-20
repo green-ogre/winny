@@ -20,8 +20,10 @@ app = { path = "crates/app" }
 winny_math = { path = "crates/winny_math" }
 asset = { path = "crates/asset" }
 gfx = { path = "crates/gfx" }
-hot_reload = { path = "crates/hot_reload" }
+render = { path = "crates/render" }
+hot_reload = { path = "crates/hot_reload", optional = true }
 
 [features]
+hot_reload = ["dep:hot_reload"]
 egui = ["gfx/egui"]
 gilrs = ["app/controller"]

@@ -44,6 +44,11 @@ impl World {
         self.resources.insert(res, id);
     }
 
+    pub fn take_resource<R: Resource>(&mut self) -> Option<R> {
+        let id = self.register_resource::<R>();
+        self.resources.take::<R>(id)
+    }
+
     pub fn get_resource_id<R: Resource>(&self) -> ResourceId {
         unsafe { self.as_unsafe_world_read_only().get_resource_id::<R>() }
     }
