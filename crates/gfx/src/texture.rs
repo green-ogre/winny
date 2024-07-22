@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{future::Future, io::Cursor};
 
 // use crate::sprite::{SpriteBinding, SpriteData};
 use asset::{load_binary, reader::ByteReader, AssetApp, AssetLoaderError};
@@ -17,23 +17,25 @@ impl asset::AssetLoader for TextureAssetLoader {
         vec!["png"]
     }
 
-    async fn load(
+    fn load(
         context: RenderContext,
         reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
         path: String,
         ext: &str,
-    ) -> Result<Self::Asset, AssetLoaderError> {
-        match ext {
-            "png" => {
-                let source = TextureSource::new(reader)?;
-                Ok(Texture::from_image(
-                    &context.device,
-                    &context.queue,
-                    &source.image,
-                    Some(path.as_str()),
-                ))
+    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>> {
+        async move {
+            match ext {
+                "png" => {
+                    let source = TextureSource::new(reader)?;
+                    Ok(Texture::from_image(
+                        &context.device,
+                        &context.queue,
+                        &source.image,
+                        Some(path.as_str()),
+                    ))
+                }
+                _ => Err(AssetLoaderError::UnsupportedFileExtension),
             }
-            _ => Err(AssetLoaderError::UnsupportedFileExtension),
         }
     }
 }

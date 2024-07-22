@@ -35,6 +35,10 @@ impl World {
         unsafe { self.as_unsafe_world().spawn_bundle::<B>(bundle) }
     }
 
+    pub fn despawn(&mut self, entity: Entity) {
+        self.entity_mut(entity).despawn();
+    }
+
     pub fn register_resource<R: Resource>(&mut self) -> ResourceId {
         self.resources.register::<R>()
     }
