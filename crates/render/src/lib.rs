@@ -31,10 +31,29 @@ impl Plugin for RendererPlugin {
             .register_resource::<RenderDevice>()
             .register_resource::<RenderConfig>()
             .add_systems(ecs::Schedule::Resized, resize)
-            .add_systems(ecs::Schedule::SubmitEncoder, submit_encoder)
+            // .add_systems(ecs::Schedule::SubmitEncoder, submit_encoder)
             .add_systems(ecs::Schedule::PreStartUp, startup)
-            .add_systems(ecs::Schedule::PrepareRender, start_render)
+            .add_systems(ecs::Schedule::PrepareRender, (start_render, clear_screen))
             .add_systems(ecs::Schedule::Present, present);
+    }
+}
+
+fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>) {
+    {
+        let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("downscale pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                resolve_target: None,
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
     }
 }
 

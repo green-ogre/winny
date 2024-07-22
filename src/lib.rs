@@ -23,6 +23,7 @@ pub extern crate util;
 pub extern crate winny_math as math;
 
 pub mod prelude {
+    pub use crate::DefaultPlugins;
     pub use app::prelude::*;
     pub use asset::prelude::*;
     pub use audio::prelude::*;
@@ -55,6 +56,7 @@ fn should_exit(mut event_writer: EventWriter<AppExit>, key_input: EventReader<Ke
 pub struct DefaultPlugins {
     pub window: WindowPlugin,
     pub asset_loader: AssetLoaderPlugin,
+    pub log: bool,
 }
 
 impl Default for DefaultPlugins {
@@ -66,6 +68,7 @@ impl Default for DefaultPlugins {
             asset_loader: AssetLoaderPlugin {
                 asset_folder: "res/".into(),
             },
+            log: true,
         }
     }
 }
@@ -78,9 +81,18 @@ impl Plugin for DefaultPlugins {
             self.asset_loader.clone(),
             gfx::texture::TexturePlugin,
             gfx::model::ModelPlugin,
-            log::LogPlugin,
             CloseOnEscape,
             audio::AudioPlugin,
         ));
+        if self.log {
+            app.add_plugins_priority(log::LogPlugin);
+        }
+    }
+}
+
+impl DefaultPlugins {
+    pub fn without_log(mut self) -> Self {
+        self.log = false;
+        self
     }
 }

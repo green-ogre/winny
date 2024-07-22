@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
+    future::Future,
     io::{BufReader, Cursor},
     marker::PhantomData,
     path::Path,
@@ -524,12 +525,12 @@ impl std::error::Error for AssetLoaderError {}
 pub trait AssetLoader: Send + Sync + 'static {
     type Asset: Asset;
 
-    async fn load(
+    fn load(
         context: RenderContext,
         reader: ByteReader<Cursor<Vec<u8>>>,
         path: String,
         ext: &str,
-    ) -> Result<Self::Asset, AssetLoaderError>;
+    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>>;
     fn extensions(&self) -> Vec<&'static str>;
 }
 

@@ -1,19 +1,26 @@
 use std::{
     fmt::Debug,
+    future::Future,
     sync::{
         mpsc::{channel, Receiver, Sender},
         Arc,
     },
 };
 
+use app::app::App;
+#[cfg(target_arch = "wasm32")]
+use app::input::mouse_and_key::KeyInput;
+use app::plugins::Plugin;
 use asset::{Asset, AssetLoaderError, Assets, Handle, LoadedAsset};
+use asset::{AssetApp, AssetLoader};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, SampleFormat, StreamConfig,
 };
+#[cfg(target_arch = "wasm32")]
+use ecs::EventReader;
 use ecs::{
-    Commands, Entity, EventReader, Query, Res, ResMut, WinnyBundle, WinnyComponent, WinnyResource,
-    Without,
+    Commands, Entity, Query, Res, ResMut, WinnyBundle, WinnyComponent, WinnyResource, Without,
 };
 use render::RenderContext;
 use util::tracing::{error, info, trace};
@@ -434,22 +441,20 @@ fn flush_finished_streams(mut commands: Commands, streams: Query<(Entity, AudioP
 
 struct AudioAssetLoader;
 
-use app::plugins::Plugin;
-use app::{app::App, prelude::KeyInput};
-use asset::{AssetApp, AssetLoader};
-
 impl AssetLoader for AudioAssetLoader {
     type Asset = AudioSource;
 
-    async fn load(
+    fn load(
         _context: RenderContext,
         reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
         _path: String,
         ext: &str,
-    ) -> Result<Self::Asset, AssetLoaderError> {
-        match ext {
-            "wav" => AudioSource::new(reader),
-            _ => Err(AssetLoaderError::UnsupportedFileExtension),
+    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>> {
+        async move {
+            match ext {
+                "wav" => AudioSource::new(reader),
+                _ => Err(AssetLoaderError::UnsupportedFileExtension),
+            }
         }
     }
 
