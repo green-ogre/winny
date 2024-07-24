@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use self::prelude::{AppExit, KeyCode};
+use self::prelude::{AppExit, KeyCode, MouseMotion};
 
 use super::*;
 use ecs::{EventReader, EventWriter, WinnyResource};
@@ -39,6 +39,7 @@ impl Plugin for WindowPlugin {
             .register_resource::<Window>()
             .register_resource::<WindowResized>()
             .register_event::<MouseInput>()
+            .register_event::<MouseMotion>()
             .register_event::<KeyInput>();
     }
 }
@@ -48,25 +49,23 @@ pub struct WindowResized(pub u32, pub u32);
 
 #[derive(WinnyResource)]
 pub struct Window {
-    window: Arc<winit::window::Window>,
-    viewport: ViewPort,
+    pub winit_window: Arc<winit::window::Window>,
+    pub viewport: ViewPort,
+    pub is_init: bool,
 }
 
 impl Window {
-    pub fn new(window: Arc<winit::window::Window>, viewport: ViewPort) -> Self {
-        Self { window, viewport }
+    pub fn new(winit_window: Arc<winit::window::Window>, viewport: ViewPort) -> Self {
+        Self {
+            winit_window,
+            viewport,
+            is_init: true,
+        }
     }
 
-    pub fn set_title(&self, title: &str) {
-        self.window.set_title(title);
-    }
-
-    pub fn viewport(&self) -> ViewPort {
-        self.viewport
-    }
-
-    pub fn window(&self) -> Arc<winit::window::Window> {
-        Arc::clone(&self.window)
+    pub fn set_title(&mut self, title: &str) {
+        self.winit_window.set_title(title);
+        self.is_init = false;
     }
 }
 

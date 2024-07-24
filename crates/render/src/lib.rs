@@ -61,7 +61,7 @@ fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>) {
 
 // NOTE: this MUST be the first system ran as the StartUp schedule EXPECTS the renderer and its resources to exist
 fn startup(mut commands: Commands, window: Res<Window>) {
-    let (device, queue, renderer) = Renderer::new(window.window());
+    let (device, queue, renderer) = Renderer::new(Arc::clone(&window.winit_window));
     let config = renderer.config();
     trace!("Render startup: {:?}", config);
 
@@ -117,7 +117,7 @@ impl Renderer {
                 },
                 required_features: wgpu::Features::default(),
                 label: None,
-                memory_hints: wgpu::MemoryHints::Performance,
+                // memory_hints: wgpu::MemoryHints::Performance,
             },
             None,
         ))
@@ -224,7 +224,7 @@ pub fn submit_encoder(
 }
 
 #[derive(Debug, WinnyResource)]
-pub struct RenderEncoder(wgpu::CommandEncoder);
+pub struct RenderEncoder(pub wgpu::CommandEncoder);
 
 impl Deref for RenderEncoder {
     type Target = wgpu::CommandEncoder;

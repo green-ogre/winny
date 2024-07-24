@@ -6,6 +6,7 @@ use std::{
 };
 
 use ecs::{prelude::*, Events, Scheduler, UnsafeWorldCell, WinnyEvent, WinnyResource, World};
+use mouse_and_key::MouseMotion;
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
@@ -17,8 +18,9 @@ use winit::{
 use winny_math::vector::Vec2f;
 
 use crate::{
+    input::mouse_and_key,
     plugins::{Plugin, PluginSet},
-    prelude::KeyState,
+    prelude::{KeyState, MouseButton},
     window::{ViewPort, WindowResized},
 };
 use crate::{
@@ -133,12 +135,21 @@ impl App {
                     ));
                 }
             }
-            // TODO: mouse input
             WinitEvent::MouseInput(state, button) => {
-                let mut mouse_input = self.world_mut().resource_mut::<Events<MouseInput>>();
+                self.world_mut().push_event(MouseInput::new(
+                    match button {
+                        winit::event::MouseButton::Left => MouseButton::Left,
+                        winit::event::MouseButton::Right => MouseButton::Right,
+                        _ => unimplemented!(),
+                    },
+                    match state {
+                        ElementState::Pressed => KeyState::Pressed,
+                        ElementState::Released => KeyState::Released,
+                    },
+                ));
             }
             WinitEvent::MouseMotion(x, y) => {
-                let mut mouse_input = self.world_mut().resource_mut::<Events<MouseInput>>();
+                self.world_mut().push_event(MouseMotion(x, y));
             }
         }
     }
@@ -389,11 +400,33 @@ impl ApplicationHandler for WinitApp {
             winit::event::WindowEvent::KeyboardInput { event, .. } => self
                 .app
                 .insert_winit_event(WinitEvent::KeyboardInput(event)),
+            winit::event::WindowEvent::MouseInput {
+                device_id,
+                state,
+                button,
+            } => self
+                .app
+                .insert_winit_event(WinitEvent::MouseInput(state, button)),
+            winit::event::WindowEvent::CursorMoved {
+                device_id,
+                position,
+            } => self
+                .app
+                .insert_winit_event(WinitEvent::MouseMotion(position.x, position.y)),
             winit::event::WindowEvent::RedrawRequested => {
                 // self.render();
             }
             _ => (),
         }
+    }
+
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        // match event {}
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
@@ -432,7 +465,7 @@ impl ApplicationHandler for WinitApp {
         if chrono::Local::now().signed_duration_since(self.clock) >= chrono::TimeDelta::seconds(1) {
             let fps = self.presented_frames;
             let title = self.app.world().resource::<WindowPlugin>().title;
-            let window = self.app.world().resource::<Window>();
+            let mut window = self.app.world_mut().resource_mut::<Window>();
             window.set_title(
                 format!(
                     "{} - {} - {}ms - {}ms",

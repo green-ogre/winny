@@ -4,6 +4,8 @@ use winny_math::vector::Vec2f;
 
 pub mod camera;
 #[cfg(feature = "egui")]
+pub mod editor;
+#[cfg(feature = "egui")]
 pub mod gui;
 pub mod model;
 pub mod prelude;
@@ -351,6 +353,6 @@ pub fn create_render_pipeline(
             alpha_to_coverage_enabled: false,
         },
         multiview: None,
-        cache: None,
+        // cache: None,
     })
 }
