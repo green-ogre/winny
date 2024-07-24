@@ -325,8 +325,8 @@ impl ApplicationHandler for WinitApp {
         let window_attributes = winit::window::Window::default_attributes()
             .with_title(window_plugin.title)
             .with_inner_size(PhysicalSize::new(
-                window_plugin.window_size.0,
-                window_plugin.window_size.1,
+                window_plugin.window_size.x,
+                window_plugin.window_size.y,
             ));
         let window = event_loop.create_window(window_attributes).unwrap();
         util::tracing::info!("New window: {:?}", *window_plugin);
@@ -358,12 +358,7 @@ impl ApplicationHandler for WinitApp {
             }
         }
 
-        let viewport = ViewPort::new(
-            window_plugin.viewport_size.0 as f32,
-            window_plugin.viewport_size.1 as f32,
-            // TODO: verify
-            Vec2f::new(0.0, 0.0),
-        );
+        let viewport = ViewPort::new(Vec2f::new(0.0, 0.0), window_plugin.viewport_size);
         let window = Window::new(Arc::new(window), viewport);
         self.app.insert_resource(window);
         self.created_window = true;

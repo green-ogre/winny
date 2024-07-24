@@ -63,6 +63,12 @@ pub struct Vec2f {
     pub y: f32,
 }
 
+impl From<[f32; 2]> for Vec2f {
+    fn from(value: [f32; 2]) -> Self {
+        Self::new(value[0], value[1])
+    }
+}
+
 impl Vec2f {
     pub fn zero() -> Self {
         Self { x: 0.0, y: 0.0 }

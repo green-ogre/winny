@@ -1,4 +1,4 @@
-use winny::prelude::*;
+use winny::{gfx::editor::EditorPlugin, prelude::*};
 
 fn main() {
     App::default()
@@ -11,19 +11,7 @@ fn main() {
                 ..Default::default()
             },
             EguiPlugin,
+            EditorPlugin,
         ))
         .run();
-}
-
-fn run_ui(mut egui: ResMut<EguiRenderer>) {
-    // egui.draw(|ctx| {
-    //     egui::Window::new("I am egui!")
-    //         .resizable(true)
-    //         .show(&ctx, |ui| {
-    //             ui.label("Hello world!");
-    //             if ui.button("Click me").clicked() {
-    //                 info!("You clicked me!");
-    //             }
-    //         });
-    // });
 }

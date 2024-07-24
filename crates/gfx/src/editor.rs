@@ -2,7 +2,6 @@ use app::{plugins::Plugin, window::Window};
 use ecs::{prelude::*, WinnyResource};
 use egui::{Rect, Vec2};
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
-use render::{RenderConfig, RenderDevice};
 
 use crate::gui::EguiRenderer;
 
@@ -91,8 +90,8 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 
         match window {
             EguiWindow::GameView => {
-                // *self.viewport_rect = ui.clip_rect();
-                //
+                *self.viewport_rect = ui.clip_rect();
+
                 // draw_gizmo(ui, self.world, self.selected_entities, self.gizmo_mode);
             }
             EguiWindow::Hierarchy => {
@@ -142,18 +141,17 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     }
 }
 
-fn startup(
-    mut commands: Commands,
-    egui_renderer: Option<Res<EguiRenderer>>,
-    device: Res<RenderDevice>,
-    config: Res<RenderConfig>,
-    window: Res<Window>,
-) {
+fn update_camera_viewport(
+    cameras: Query<Camera>,
+
+)
+
+fn startup(mut commands: Commands, egui_renderer: Option<Res<EguiRenderer>>, window: Res<Window>) {
     let Some(egui) = egui_renderer else {
         panic!("The [`EditorPlugin`] was added before the [`EguiPlugin`]");
     };
 
-    let ui_state = UiState::new(&window, egui.context.zoom_factor());
+    let ui_state = UiState::new(&window, egui.egui_context().zoom_factor());
     commands.insert_resource(ui_state);
 }
 
@@ -162,6 +160,7 @@ pub struct EditorPlugin;
 impl Plugin for EditorPlugin {
     fn build(&mut self, app: &mut app::app::App) {
         app.register_resource::<UiState>()
+            .add_systems(Schedule::StartUp, startup)
             .add_systems(ecs::Schedule::PostUpdate, draw);
     }
 }

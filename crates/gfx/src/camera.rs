@@ -84,8 +84,8 @@ impl OrthographicProjection {
     }
 
     pub fn transform_mat4x4(&self, viewport: &ViewPort) -> [[f32; 4]; 4] {
-        let (top, left) = (viewport.top_left.y, viewport.top_left.x);
-        let (bottom, right) = (top + viewport.height, left + viewport.width);
+        let (top, left) = (viewport.position.y, viewport.position.x);
+        let (bottom, right) = (top + viewport.size.x, left + viewport.size.y);
         [
             [
                 2.0 / (right - left),
