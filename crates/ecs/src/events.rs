@@ -1,9 +1,8 @@
 use self::unsafe_world::UnsafeWorldCell;
-use std::fmt::Debug;
 
 use super::*;
 
-pub trait Event: Send + Sync + 'static + Debug {}
+pub trait Event: Send + Sync + 'static {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct EventId(usize);
@@ -24,7 +23,7 @@ impl SparseArrayIndex for EventId {
     }
 }
 
-#[derive(Debug, InternalResource)]
+#[derive(InternalResource)]
 pub struct Events<E: Event> {
     storage: Vec<E>,
 }
@@ -74,7 +73,6 @@ impl<E: Event> Events<E> {
     }
 }
 
-#[derive(Debug)]
 pub struct EventWriter<'w, E: Event> {
     events: ResMut<'w, Events<E>>,
 }
@@ -91,7 +89,6 @@ impl<'w, E: Event> EventWriter<'w, E> {
     }
 }
 
-#[derive(Debug)]
 pub struct EventReader<'w, E: Event> {
     events: ResMut<'w, Events<E>>,
 }

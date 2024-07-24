@@ -1,5 +1,7 @@
 use std::f32::consts::PI;
 
+use self::prelude::Vec2f;
+
 use super::*;
 
 pub struct Matrix2x2f {

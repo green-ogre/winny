@@ -12,7 +12,7 @@ use image::GenericImageView;
 use render::{RenderConfig, RenderContext, RenderDevice, RenderQueue};
 use wgpu::util::DeviceExt;
 
-use util::tracing::{info, trace};
+use util::tracing::trace;
 
 use crate::texture::Texture;
 use crate::VertexLayout;
@@ -236,7 +236,7 @@ pub async fn load_normal(
     device: &RenderDevice,
     queue: &RenderQueue,
 ) -> Result<NormalTexture, ()> {
-    info!("Loading texture: {:?}", file_name);
+    trace!("Loading texture: {:?}", file_name);
     let data = load_binary(file_name).await.unwrap();
     let img = image::load_from_memory(&data).map_err(|_| ())?;
     Ok(NormalTexture::from_image(&img, device, queue))
@@ -249,7 +249,7 @@ async fn load_model(
     queue: &RenderQueue,
     layout: &wgpu::BindGroupLayout,
 ) -> Result<Model, AssetLoaderError> {
-    info!("Loading model: {}", path);
+    trace!("Loading model: {}", path);
     let obj_cursor = Cursor::new(obj_string.as_ref());
     let mut obj_reader = BufReader::new(obj_cursor);
 
@@ -725,7 +725,7 @@ impl DepthTexture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
     pub fn new(device: &RenderDevice, config: &RenderConfig, label: &str) -> Self {
-        info!("creating new depth texture: {:?}, {:?}", config, device);
+        trace!("creating new depth texture: {:?}, {:?}", config, device);
         let size = wgpu::Extent3d {
             width: config.width(),
             height: config.height(),

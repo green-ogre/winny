@@ -12,17 +12,18 @@ use winit::{
     event::{self, DeviceEvent, DeviceId, ElementState, WindowEvent},
     event_loop::{self, ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::PhysicalKey,
-    window::{Window, WindowId},
+    window::WindowId,
 };
+use winny_math::vector::Vec2f;
 
 use crate::{
     plugins::{Plugin, PluginSet},
     prelude::KeyState,
-    window::WindowResized,
+    window::{ViewPort, WindowResized},
 };
 use crate::{
     prelude::{KeyCode, KeyInput, MouseInput, WindowPlugin},
-    window::WinitWindow,
+    window::Window,
 };
 
 #[derive(Debug, WinnyEvent)]
@@ -308,23 +309,21 @@ impl ApplicationHandler for WinitApp {
             return;
         }
 
-        util::tracing::info!("App resumed: Initializing");
+        util::tracing::trace!("App resumed: Initializing");
         let window_plugin = self.app.world().resource::<WindowPlugin>();
-        let window_attributes = Window::default_attributes()
+        let window_attributes = winit::window::Window::default_attributes()
             .with_title(window_plugin.title)
             .with_inner_size(PhysicalSize::new(
-                window_plugin.inner_size.0,
-                window_plugin.inner_size.1,
-            ))
-            .with_position(PhysicalPosition::new(
-                window_plugin.position.0,
-                window_plugin.position.1,
+                window_plugin.window_size.0,
+                window_plugin.window_size.1,
             ));
         let window = event_loop.create_window(window_attributes).unwrap();
+        util::tracing::info!("New window: {:?}", *window_plugin);
 
         #[cfg(target_arch = "wasm32")]
+        let mut startup = true;
+        #[cfg(target_arch = "wasm32")]
         {
-            use crate::window::winit;
             use winit::platform::web::WindowExtWebSys;
             web_sys::window()
                 .and_then(|win| win.document())
@@ -337,20 +336,30 @@ impl ApplicationHandler for WinitApp {
                 .expect("Couldn't append canvas to document body.");
 
             use winit::dpi::PhysicalSize;
-            if let Some(size) = window.request_inner_size(PhysicalSize::new(16 * 60, 16 * 60)) {
+            if let Some(size) = window.request_inner_size(PhysicalSize::new(
+                window_plugin.window_size.0,
+                window_plugin.window_size.1,
+            )) {
                 util::tracing::info!("requested inner window size: {size:?}");
             } else {
+                startup = false;
                 util::tracing::info!("failed to request size, awaiting resized event");
-                let window = WinitWindow(Arc::new(window));
-                self.app.insert_resource(window);
-                self.created_window = true;
-                return;
             }
         }
 
-        let window = WinitWindow(Arc::new(window));
+        let viewport = ViewPort::new(
+            window_plugin.viewport_size.0 as f32,
+            window_plugin.viewport_size.1 as f32,
+            // TODO: verify
+            Vec2f::new(0.0, 0.0),
+        );
+        let window = Window::new(Arc::new(window), viewport);
         self.app.insert_resource(window);
         self.created_window = true;
+        #[cfg(target_arch = "wasm32")]
+        if !startup {
+            return;
+        }
         self.app.startup();
         self.startup = true;
     }
@@ -423,7 +432,7 @@ impl ApplicationHandler for WinitApp {
         if chrono::Local::now().signed_duration_since(self.clock) >= chrono::TimeDelta::seconds(1) {
             let fps = self.presented_frames;
             let title = self.app.world().resource::<WindowPlugin>().title;
-            let window = self.app.world().resource::<WinitWindow>();
+            let window = self.app.world().resource::<Window>();
             window.set_title(
                 format!(
                     "{} - {} - {}ms - {}ms",

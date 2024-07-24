@@ -2,16 +2,22 @@ use ecs::WinnyComponent;
 use render::RenderDevice;
 use winny_math::vector::Vec2f;
 
+pub mod camera;
 #[cfg(feature = "egui")]
 pub mod gui;
 pub mod model;
 pub mod prelude;
 pub mod sprite;
+#[cfg(feature = "text")]
+pub mod text;
 pub mod texture;
+pub mod viewport;
 
 pub extern crate bytemuck;
 pub extern crate cgmath;
 pub extern crate wgpu;
+#[cfg(feature = "text")]
+pub extern crate wgpu_text;
 
 #[derive(Debug, WinnyComponent)]
 pub struct Transform2D {
@@ -242,6 +248,14 @@ impl VertexUv {
             _padding: [0.0, 0.0],
         }
     }
+
+    pub fn new_2d(position: Vec2f, uv: Vec2f) -> Self {
+        Self {
+            position: [position.x, position.y, 0.0, 0.0],
+            uv: [uv.x, uv.y],
+            _padding: [0.0, 0.0],
+        }
+    }
 }
 
 pub const FULLSCREEN_QUAD_VERTEX_UV: [VertexUv; 6] = [
@@ -337,5 +351,6 @@ pub fn create_render_pipeline(
             alpha_to_coverage_enabled: false,
         },
         multiview: None,
+        cache: None,
     })
 }
