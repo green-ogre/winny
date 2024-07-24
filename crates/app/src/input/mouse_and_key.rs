@@ -98,12 +98,8 @@ impl KeyInput {
 
 #[derive(Debug, Clone, Copy, WinnyEvent)]
 pub struct MouseInput {
-    pub dx: f64,
-    pub dy: f64,
-    pub x: f64,
-    pub y: f64,
-    pub button_pressed: Option<MouseButton>,
-    pub button_held: Option<MouseButton>,
+    pub button: MouseButton,
+    pub state: KeyState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,21 +109,10 @@ pub enum MouseButton {
 }
 
 impl MouseInput {
-    pub fn new(
-        dx: f64,
-        dy: f64,
-        x: f64,
-        y: f64,
-        pressed: Option<MouseButton>,
-        held: Option<MouseButton>,
-    ) -> Self {
-        Self {
-            dx,
-            dy,
-            x,
-            y,
-            button_pressed: pressed,
-            button_held: held,
-        }
+    pub fn new(button: MouseButton, state: KeyState) -> Self {
+        Self { button, state }
     }
 }
+
+#[derive(Debug, Clone, Copy, WinnyEvent)]
+pub struct MouseMotion(pub f64, pub f64);
