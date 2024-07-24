@@ -61,18 +61,6 @@ impl<'w> UnsafeWorldCell<'w> {
         self.components().id(id)
     }
 
-    // pub unsafe fn register_component<C: Component>(self) -> ComponentId {
-    //     self.components_mut().register::<C>()
-    // }
-    //
-    // pub unsafe fn register_component_by_id(
-    //     self,
-    //     id: std::any::TypeId,
-    //     name: &'static str,
-    // ) -> ComponentId {
-    //     self.components_mut().register_by_id(id, name)
-    // }
-
     pub unsafe fn get_component_ids(&self, ids: &[std::any::TypeId]) -> Vec<ComponentId> {
         let mut c_ids = Vec::new();
         for id in ids.iter() {
@@ -103,13 +91,7 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub unsafe fn get_resource_id<R: Resource>(self) -> ResourceId {
-        self.resources().id::<R>().unwrap_or_else(|| {
-            error!(
-                "Resource ['{}'] is not registered. Remember to 'app.insert_resource::<R>()...'",
-                std::any::type_name::<R>()
-            );
-            panic!("{} not registered", std::any::type_name::<R>());
-        })
+        self.resources().id_unwrapped::<R>()
     }
 
     pub unsafe fn get_resource<R: Resource>(self) -> &'w R {

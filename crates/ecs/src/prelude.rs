@@ -9,6 +9,8 @@ pub use crate::storage::resources::{Res, ResMut, Resource};
 pub use crate::commands::Commands;
 pub use crate::world::World;
 
+pub use crate::entity::Entity;
+
 pub extern crate ecs_macro;
 pub use ecs_macro::Bundle;
 pub use ecs_macro::Component;

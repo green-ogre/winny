@@ -4,7 +4,7 @@ use std::{future::Future, io::Cursor};
 use asset::{load_binary, reader::ByteReader, AssetApp, AssetLoaderError};
 
 use image::{DynamicImage, GenericImageView};
-use util::tracing::info;
+use util::tracing::trace;
 
 use render::{RenderContext, RenderDevice, RenderQueue};
 
@@ -136,7 +136,7 @@ impl Texture {
         device: &RenderDevice,
         queue: &RenderQueue,
     ) -> Result<Texture, ()> {
-        info!("Loading texture: {:?}", file_name);
+        trace!("Loading texture: {:?}", file_name);
         let data = load_binary(file_name).await.map_err(|_| ())?;
         Texture::from_image_bytes(device, queue, &data, file_name)
     }

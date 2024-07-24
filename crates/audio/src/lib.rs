@@ -89,13 +89,13 @@ fn config(device: &Device) -> Result<StreamConfig, Error> {
         supported_output_configs
             .into_iter()
             .find(|config| {
-                info!("{:?}", config);
+                // info!("{:?}", config);
                 config.sample_format() == SampleFormat::F32 && config.channels() == 2
             })
             .ok_or(())
     )?;
     let config = config.with_sample_rate(cpal::SampleRate(44100)).into();
-    info!("{:?}", config);
+    trace!("Retrieving audio context: {:?}", config);
     Ok(config)
 }
 
@@ -115,8 +115,6 @@ impl AudioSource {
             AssetLoaderError::from(e)
         })?;
 
-        println!("{:?}", format);
-
         Ok(Self {
             bytes: bytes.into(),
             format,
@@ -131,7 +129,7 @@ impl AudioSource {
         playback_settings: PlaybackSettings,
     ) -> Result<StreamHandle, Error> {
         let volume = global_audio.volume * playback_settings.volume;
-        info!("volume for stream: {volume}");
+        // info!("volume for stream: {volume}");
         let data = self.bytes.clone();
         let format = self.format.clone();
 
@@ -346,7 +344,7 @@ impl AudioPlayback {
         let device = device()?;
         let config = config(&device)?;
 
-        util::tracing::info_span!("spawning audio playback", path = ?source.path);
+        info!("spawning audio playback: {:?}", source.path);
         let handle = source.stream(device, config, global_audio, playback_settings)?;
 
         Ok(Self {

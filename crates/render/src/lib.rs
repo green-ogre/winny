@@ -6,12 +6,14 @@ use std::{
 
 use app::{
     plugins::Plugin,
-    window::{WindowResized, WinitWindow},
+    window::{Window, WindowResized},
 };
+use fxhash::FxHashMap;
 use util::tracing::trace;
 
-use app::window::winit::window::Window;
-use ecs::{Commands, Res, ResMut, Take, WinnyResource};
+// pub mod graph;
+
+use ecs::{Commands, Query, Res, ResMut, Take, WinnyBundle, WinnyComponent, WinnyResource};
 use wgpu::TextureFormat;
 
 pub struct RendererPlugin;
@@ -58,10 +60,10 @@ fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>) {
 }
 
 // NOTE: this MUST be the first system ran as the StartUp schedule EXPECTS the renderer and its resources to exist
-fn startup(mut commands: Commands, window: Res<WinitWindow>) {
-    let (device, queue, renderer) = Renderer::new(Arc::clone(&window));
+fn startup(mut commands: Commands, window: Res<Window>) {
+    let (device, queue, renderer) = Renderer::new(window.window());
     let config = renderer.config();
-    util::tracing::info!("Render startup: {:?}", config);
+    trace!("Render startup: {:?}", config);
 
     commands
         .insert_resource(RenderQueue(Arc::new(queue)))
@@ -86,7 +88,7 @@ unsafe impl Send for Renderer {}
 unsafe impl Sync for Renderer {}
 
 impl Renderer {
-    pub fn new(window: Arc<Window>) -> (wgpu::Device, wgpu::Queue, Self) {
+    pub fn new(window: Arc<app::winit::window::Window>) -> (wgpu::Device, wgpu::Queue, Self) {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -115,22 +117,19 @@ impl Renderer {
                 },
                 required_features: wgpu::Features::default(),
                 label: None,
+                memory_hints: wgpu::MemoryHints::Performance,
             },
             None,
         ))
         .unwrap();
         let surface_caps = surface.get_capabilities(&adapter);
-        util::tracing::info!("Surface capabilities: {:?}", surface_caps.formats);
-        util::tracing::info!("Surface usages: {:?}", surface_caps.usages);
+        util::tracing::info!("Surface capabilities: {:?}", surface_caps);
         let surface_format = surface_caps
             .formats
             .iter()
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
-
-        util::tracing::info!("Surface present_modes: {:?}", surface_caps.present_modes);
-        util::tracing::info!("Surface apha_modes: {:?}", surface_caps.alpha_modes);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -345,3 +344,58 @@ pub struct RenderContext {
     pub device: RenderDevice,
     pub config: RenderConfig,
 }
+
+#[derive(WinnyComponent, PartialEq, Eq)]
+pub struct RenderLayer(pub u8);
+
+pub trait RenderPassCommand: Send + Sync + 'static {
+    // TODO: errors?
+    fn render(
+        &self,
+        // pipelines: &Pipelines,
+        // bind_groups: &BindGroups,
+        // vertex_buffers: &VertexBuffers,
+        // uniform_buffers: &UniformBuffers,
+    );
+}
+
+#[derive(WinnyComponent)]
+pub struct RenderPass {
+    commands: Vec<Box<dyn RenderPassCommand>>,
+}
+
+// impl RenderPass {
+//     pub fn new(commands: Vec<Box<dyn RenderPassCommand>>) -> Self {
+//         Self { commands }
+//     }
+//
+//     pub fn run(&self
+//         pipelines: &Pipelines,
+//         bind_groups: &BindGroups,
+//         vertex_buffers: &VertexBuffers,
+//         uniform_buffers: &UniformBuffers,
+//     ) {
+//         self.commands.iter().for_each(|c| c.render(pipelines, bind_groups, vertex_buffers, uniform_buffers));
+//     }
+// }
+//
+// pub struct Pipelines(FxHashMap<RenderHandle<Pipeline>, >)
+//
+// #[derive(WinnyBundle)]
+// pub struct RenderPassBundle {
+//     pub pass: RenderPass,
+//     pub layer: RenderLayer,
+// }
+
+// pub struct SetPipeline(Handle<RenderPipeline>);
+// impl RenderPassCommand for SetPipeline {}
+// pub struct SetBindGroup(Handle<BindGroup>);
+// impl RenderPassCommand for SetBindGroup {}
+// pub struct SetVertexBuffer(Handle<VertexBuffer>);
+// impl RenderPassCommand for SetVertexBuffer {}
+// pub struct SetUniformBuffer(Handle<UniformBuffer>);
+// impl RenderPassCommand for SetUniformBuffer {}
+// pub struct DrawInstanced();
+// impl RenderPassCommand for DrawInstanced {}
+// pub struct Draw();
+// impl RenderPassCommand for Draw {}

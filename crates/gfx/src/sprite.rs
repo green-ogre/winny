@@ -1,10 +1,33 @@
+use app::plugins::Plugin;
+use ecs::Commands;
+use render::{RenderLayer, RenderPass};
+
+pub struct SpritePlugin;
+
+impl Plugin for SpritePlugin {
+    fn build(&mut self, app: &mut app::app::App) {
+        app.add_systems(ecs::Schedule::StartUp, insert_render_pass);
+    }
+}
+
+fn insert_render_pass(mut commands: Commands) {
+    // commands.spawn(RenderPassBundle {
+    //     layer: RenderLayer(0),
+    //     pass: RenderPass::new(sprite_render_pass),
+    // });
+}
+
+fn sprite_render_pass() {}
+
 // use app::plugins::Plugin;
 // use asset::{Asset, AssetApp, AssetLoader, Assets, Handle};
 // use ecs::{Commands, Entity, IntoSystemStorage, Query, Res, ResMut, WinnyResource, With};
-// use texture::Sprites;
 // use wgpu::util::DeviceExt;
 //
-// use app::renderer::{Renderer, RenderContext};
+// use render::{RenderConfig, RenderContext, Renderer};
+// use winny_math::matrix::Matrix2x2f;
+//
+// use self::texture::Texture;
 //
 // use super::*;
 //
@@ -78,13 +101,15 @@
 //         source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sprite_shader.wgsl").into()),
 //     };
 //
-//     app::renderer::create_render_pipeline(
+//     crate::create_render_pipeline(
+//         Some("sprites"),
 //         &device,
 //         &render_pipeline_layout,
 //         config.format,
-//         // Some(wgpu::TextureFormat::Depth32Float),
+//         None,
 //         &[SpriteVertex::desc(), SpriteInstance::desc()],
 //         shader,
+//         true,
 //     )
 // }
 //
@@ -92,48 +117,26 @@
 //
 // #[derive(Debug, WinnyResource)]
 // pub struct SpriteRenderer {
-//     vertex_buffer: Option<wgpu::Buffer>,
-//     sprite_buffer: Option<wgpu::Buffer>,
+//     vertex_buffer: wgpu::Buffer,
+//     sprite_buffer: wgpu::Buffer,
+//     render_pipeline: wgpu::RenderPipeline,
 //     num_sprites: u32,
-//     render_pipeline: Option<wgpu::RenderPipeline>,
 // }
 //
 // impl SpriteRenderer {
-//     pub fn new() -> Self {
-//         Self {
-//             vertex_buffer: None,
-//             sprite_buffer: None,
-//             num_sprites: 0,
-//             render_pipeline: None,
-//         }
-//     }
+//     pub fn new(device: &RenderDevice, config: &RenderConfig) -> Self {
+//         let pipeline = create_sprite_render_pipeline(device, config);
 //
-//     pub fn get_or_initialize(
-//         &mut self,
-//         renderer: &Renderer,
-//     ) -> (&mut wgpu::Buffer, &mut wgpu::Buffer, &wgpu::RenderPipeline) {
-//         let pipeline = self.render_pipeline.get_or_insert_with(|| {
-//             create_sprite_render_pipeline(&renderer.device, &renderer.config)
+//         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+//             label: Some("sprite vertexes"),
+//             contents: bytemuck::cast_slice::<SpriteVertex, u8>(&[]),
+//             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
 //         });
 //
-//         let vertex_buffer = self.vertex_buffer.get_or_insert_with(|| {
-//             renderer
-//                 .device
-//                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-//                     label: Some("sprite vertex buffer"),
-//                     contents: bytemuck::cast_slice::<SpriteVertex, u8>(&[]),
-//                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-//                 })
-//         });
-//
-//         let sprite_buffer = self.sprite_buffer.get_or_insert_with(|| {
-//             renderer
-//                 .device
-//                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-//                     label: Some("sprite buffer"),
-//                     contents: &[],
-//                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-//                 })
+//         let sprite_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+//             label: Some("sprite instances"),
+//             contents: &[],
+//             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
 //         });
 //
 //         (vertex_buffer, sprite_buffer, pipeline)
@@ -238,9 +241,6 @@
 //     context.finish_encoder();
 // }
 //
-// #[derive(WinnyComponent)]
-// pub struct SpriteIsBinded;
-//
 // #[derive(Debug, Clone, WinnyBundle)]
 // pub struct SpriteBundle {
 //     pub sprite: Sprite,
@@ -304,11 +304,11 @@
 // }
 //
 // impl Sprite {
-//     pub fn to_raw(&self, renderer: &Renderer) -> SpriteInstance {
+//     pub fn to_raw(&self, config: &RenderConfig) -> SpriteInstance {
 //         SpriteInstance {
 //             position: [
-//                 self.position.x / renderer.virtual_size[0] as f32,
-//                 self.position.y / renderer.virtual_size[0] as f32,
+//                 self.position.x / config.virtual_size[0] as f32,
+//                 self.position.y / config.virtual_size[0] as f32,
 //                 self.z,
 //                 0.0,
 //             ],
@@ -316,41 +316,24 @@
 //         }
 //     }
 //
-//     pub fn to_vertices(&self) -> [SpriteVertex; 3] {
+//     pub fn to_vertices(&self) -> [VertexUv; 3] {
 //         let x = self.offset.x * self.scale;
 //         let y = self.offset.y * self.scale;
 //
-//         if self.v_flip {
-//             [
-//                 SpriteVertex::new(
-//                     Matrix2x2f::rotation_2d(Vec2f::new(-x, -y), self.rotation),
-//                     Vec2f::zero(),
-//                 ),
-//                 SpriteVertex::new(
-//                     Matrix2x2f::rotation_2d(Vec2f::new(-x, 2.0 * self.scale - y), self.rotation),
-//                     Vec2f::new(0.0, 2.0),
-//                 ),
-//                 SpriteVertex::new(
-//                     Matrix2x2f::rotation_2d(Vec2f::new(2.0 * self.scale - x, -y), self.rotation),
-//                     Vec2f::new(2.0, 0.0),
-//                 ),
-//             ]
-//         } else {
-//             [
-//                 SpriteVertex::new(
-//                     Matrix2x2f::rotation_2d(Vec2f::new(-x, -y), self.rotation),
-//                     Vec2f::new(0.0, 1.0),
-//                 ),
-//                 SpriteVertex::new(
-//                     Matrix2x2f::rotation_2d(Vec2f::new(-x, 2.0 * self.scale - y), self.rotation),
-//                     Vec2f::new(0.0, -1.0),
-//                 ),
-//                 SpriteVertex::new(
-//                     Matrix2x2f::rotation_2d(Vec2f::new(2.0 * self.scale - x, -y), self.rotation),
-//                     Vec2f::new(2.0, 1.0),
-//                 ),
-//             ]
-//         }
+//         [
+//             VertexUv::new_2d(
+//                 Matrix2x2f::rotation_2d(Vec2f::new(-x, -y), self.rotation),
+//                 Vec2f::zero(),
+//             ),
+//             VertexUv::new_2d(
+//                 Matrix2x2f::rotation_2d(Vec2f::new(-x, 2.0 * self.scale - y), self.rotation),
+//                 Vec2f::new(0.0, 2.0),
+//             ),
+//             VertexUv::new_2d(
+//                 Matrix2x2f::rotation_2d(Vec2f::new(2.0 * self.scale - x, -y), self.rotation),
+//                 Vec2f::new(2.0, 0.0),
+//             ),
+//         ]
 //     }
 // }
 //
@@ -372,8 +355,8 @@
 //     }
 // }
 //
-// impl Vertex for SpriteVertex {
-//     fn desc() -> wgpu::VertexBufferLayout<'static> {
+// impl VertexLayout for SpriteVertex {
+//     fn layout() -> wgpu::VertexBufferLayout<'static> {
 //         use std::mem;
 //         wgpu::VertexBufferLayout {
 //             array_stride: mem::size_of::<SpriteVertex>() as wgpu::BufferAddress,
@@ -394,83 +377,49 @@
 //     }
 // }
 //
-// #[derive(Debug)]
-// pub struct SpriteData {
-//     pub bytes: Vec<u8>,
-//     pub dimensions: (u32, u32),
-// }
-//
-// impl Asset for SpriteData {}
-//
-// impl SpriteData {
-//     // pub fn write_to_texture(&self, dimensions: (u32, u32), data: &[u8], renderer: &Renderer) {
-//     //     let size = wgpu::Extent3d {
-//     //         width: dimensions.0,
-//     //         height: dimensions.1,
-//     //         depth_or_array_layers: 1,
-//     //     };
-//
-//     //     renderer.queue.write_texture(
-//     //         self.texture.tex.as_image_copy(),
-//     //         &data,
-//     //         wgpu::ImageDataLayout {
-//     //             offset: 0,
-//     //             bytes_per_row: Some(4 * dimensions.0),
-//     //             rows_per_image: Some(dimensions.1),
-//     //         },
-//     //         size,
-//     //     );
-//     //     renderer.queue.submit([]);
-//     // }
-// }
-//
 // #[derive(Debug, WinnyComponent)]
 // pub struct SpriteBinding {
 //     pub bind_group: wgpu::BindGroup,
 // }
 //
 // impl SpriteBinding {
-//     pub fn from_texture(texture: &Texture, renderer: &Renderer) -> Self {
-//         let layout = renderer
-//             .device
-//             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-//                 entries: &[
-//                     wgpu::BindGroupLayoutEntry {
-//                         binding: 0,
-//                         visibility: wgpu::ShaderStages::FRAGMENT,
-//                         ty: wgpu::BindingType::Texture {
-//                             multisampled: false,
-//                             view_dimension: wgpu::TextureViewDimension::D2,
-//                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
-//                         },
-//                         count: None,
+//     pub fn from_texture(texture: &Texture, device: &RenderDevice) -> Self {
+//         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+//             entries: &[
+//                 wgpu::BindGroupLayoutEntry {
+//                     binding: 0,
+//                     visibility: wgpu::ShaderStages::FRAGMENT,
+//                     ty: wgpu::BindingType::Texture {
+//                         multisampled: false,
+//                         view_dimension: wgpu::TextureViewDimension::D2,
+//                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
 //                     },
-//                     wgpu::BindGroupLayoutEntry {
-//                         binding: 1,
-//                         visibility: wgpu::ShaderStages::FRAGMENT,
-//                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-//                         count: None,
-//                     },
-//                 ],
-//                 label: Some("bind group layout for sprite"),
-//             });
+//                     count: None,
+//                 },
+//                 wgpu::BindGroupLayoutEntry {
+//                     binding: 1,
+//                     visibility: wgpu::ShaderStages::FRAGMENT,
+//                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+//                     count: None,
+//                 },
+//             ],
+//             label: Some("bind group layout for sprite"),
+//         });
 //
-//         let bind_group = renderer
-//             .device
-//             .create_bind_group(&wgpu::BindGroupDescriptor {
-//                 layout: &layout,
-//                 entries: &[
-//                     wgpu::BindGroupEntry {
-//                         binding: 0,
-//                         resource: wgpu::BindingResource::TextureView(&texture.view),
-//                     },
-//                     wgpu::BindGroupEntry {
-//                         binding: 1,
-//                         resource: wgpu::BindingResource::Sampler(&texture.sampler),
-//                     },
-//                 ],
-//                 label: Some("bind group for sprite"),
-//             });
+//         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+//             layout: &layout,
+//             entries: &[
+//                 wgpu::BindGroupEntry {
+//                     binding: 0,
+//                     resource: wgpu::BindingResource::TextureView(&texture.view),
+//                 },
+//                 wgpu::BindGroupEntry {
+//                     binding: 1,
+//                     resource: wgpu::BindingResource::Sampler(&texture.sampler),
+//                 },
+//             ],
+//             label: Some("bind group for sprite"),
+//         });
 //
 //         Self { bind_group }
 //     }
@@ -483,8 +432,8 @@
 //     mask: [f32; 4],
 // }
 //
-// impl Vertex for SpriteInstance {
-//     fn desc() -> wgpu::VertexBufferLayout<'static> {
+// impl VertexLayout for SpriteInstance {
+//     fn layout() -> wgpu::VertexBufferLayout<'static> {
 //         use std::mem;
 //         wgpu::VertexBufferLayout {
 //             array_stride: mem::size_of::<SpriteInstance>() as wgpu::BufferAddress,
@@ -505,43 +454,21 @@
 //     }
 // }
 //
-// // TODO: this is coupled with the renderer right now, need to be pulled apart
-// pub struct SpriteAssetLoader;
-//
-// impl AssetLoader for SpriteAssetLoader {
-//     type Asset = SpriteData;
-//
-//     fn extensions(&self) -> Vec<String> {
-//         // TODO: feature flags
-//         vec!["png".into()]
-//     }
-//
-//     fn load(
-//         reader: asset::reader::ByteReader<std::fs::File>,
-//         _ext: &str,
-//     ) -> Result<Self::Asset, ()> {
-//         let (bytes, dimensions) = png::to_bytes(reader)
-//             .map_err(|err| logger::error!("Could not load sprite: {:?}", err))?;
-//         Ok(SpriteData { bytes, dimensions })
-//     }
-// }
-//
 // #[derive(Clone)]
 // pub struct SpritePlugin;
 //
 // impl Plugin for SpritePlugin {
 //     fn build(&mut self, app: &mut app::app::App) {
-//         let loader = SpriteAssetLoader {};
-//         app.register_asset_loader::<SpriteData>(loader);
-//
-//         let sprite_renderer = SpriteRenderer::new();
-//
-//         app.insert_resource(Sprites::new())
-//             .insert_resource(sprite_renderer)
+//         app.add_systems(ecs::Schedule::StartUp, startup)
 //             .add_systems(
 //                 ecs::Schedule::PostUpdate,
-//                 (bind_new_sprite_bundles, update_sprite_data).chain(),
+//                 (bind_new_sprite_bundles, update_sprite_data),
 //             )
 //             .add_systems(ecs::Schedule::Render, render_sprites);
 //     }
+// }
+//
+// fn startup(mut commands: Commands, device: Res<RenderDevice>, config: Res<RenderConfig>) {
+//     let sprite_renderer = SpriteRenderer::new(&device, &config);
+//     commands.insert_resource(sprite_renderer);
 // }

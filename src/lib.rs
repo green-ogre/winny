@@ -8,7 +8,6 @@ use app::{
 };
 use asset::AssetLoaderPlugin;
 use ecs::{EventReader, EventWriter};
-// use gfx::sprite::SpritePlugin;
 
 pub extern crate app;
 pub extern crate asset;
@@ -35,22 +34,6 @@ pub mod prelude {
     pub use util::prelude::*;
     pub use winny_math as math;
     pub use winny_math::prelude::*;
-}
-
-pub struct CloseOnEscape;
-
-impl Plugin for CloseOnEscape {
-    fn build(&mut self, app: &mut app::app::App) {
-        app.add_systems(ecs::Schedule::Platform, should_exit);
-    }
-}
-
-fn should_exit(mut event_writer: EventWriter<AppExit>, key_input: EventReader<KeyInput>) {
-    for input in key_input.peak_read() {
-        if input.code == KeyCode::Escape {
-            event_writer.send(AppExit);
-        }
-    }
 }
 
 pub struct DefaultPlugins {
@@ -81,7 +64,6 @@ impl Plugin for DefaultPlugins {
             self.asset_loader.clone(),
             gfx::texture::TexturePlugin,
             gfx::model::ModelPlugin,
-            CloseOnEscape,
             audio::AudioPlugin,
         ));
         if self.log {

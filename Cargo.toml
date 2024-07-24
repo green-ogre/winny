@@ -8,8 +8,8 @@ name = "winny"
 path = "src/lib.rs"
 
 [workspace]
-members = ["crates/*"]
-exclude = ["crates/deprecated"]
+members = ["crates/*", "examples/camera"]
+exclude = ["examples", "crates/deprecated"]
 
 [dependencies]
 ecs = { path = "crates/ecs" }
@@ -26,4 +26,5 @@ hot_reload = { path = "crates/hot_reload", optional = true }
 [features]
 hot_reload = ["dep:hot_reload"]
 egui = ["gfx/egui"]
+text = ["gfx/text"]
 gilrs = ["app/controller"]

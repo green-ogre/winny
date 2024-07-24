@@ -183,6 +183,16 @@ impl Resources {
         self.id_table.get(&id).cloned()
     }
 
+    pub fn id_unwrapped<R: Resource>(&self) -> ResourceId {
+        if let Some(id) = self.id::<R>() {
+            id
+        } else {
+            util::tracing::error!("Resource [`{}`] is not registered. Remember to `world.insert_resource(..)` \
+                or `world.register_resource::<R>` if the resource is uninitialized.", std::any::type_name::<R>());
+            panic!();
+        }
+    }
+
     pub fn get_ptr<R: Resource>(&self, id: ResourceId) -> Option<NonNull<R>> {
         self.resources
             .get(&id)
