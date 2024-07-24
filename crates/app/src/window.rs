@@ -13,8 +13,8 @@ pub extern crate winit;
 #[derive(Debug, WinnyResource, Clone, Copy)]
 pub struct WindowPlugin {
     pub title: &'static str,
-    pub window_size: (u32, u32),
-    pub viewport_size: (u32, u32),
+    pub window_size: Vec2f,
+    pub viewport_size: Vec2f,
     pub close_on_escape: bool,
 }
 
@@ -22,8 +22,8 @@ impl Default for WindowPlugin {
     fn default() -> Self {
         Self {
             title: "Winny",
-            window_size: (1920, 1080),
-            viewport_size: (1920, 1080),
+            window_size: [1920.0, 1080.0].into(),
+            viewport_size: [1920.0, 1080.0].into(),
             close_on_escape: false,
         }
     }
@@ -79,25 +79,12 @@ fn should_exit(mut event_writer: EventWriter<AppExit>, key_input: EventReader<Ke
 
 #[derive(Clone, Copy)]
 pub struct ViewPort {
-    pub top_left: Vec2f,
-    pub width: f32,
-    pub height: f32,
+    pub position: Vec2f,
+    pub size: Vec2f,
 }
 
 impl ViewPort {
-    pub fn new(width: f32, height: f32, top_left: Vec2f) -> Self {
-        Self {
-            width,
-            height,
-            top_left,
-        }
-    }
-
-    pub fn width(&self) -> f32 {
-        self.width
-    }
-
-    pub fn height(&self) -> f32 {
-        self.height
+    pub fn new(position: Vec2f, size: Vec2f) -> Self {
+        Self { position, size }
     }
 }
