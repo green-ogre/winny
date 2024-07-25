@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+component = "0.1.1"
+rust-analyzer = "0.0.1"
 winny = { path = "../../", features = ["egui"] }

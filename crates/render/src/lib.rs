@@ -338,6 +338,26 @@ impl RenderConfig {
 #[derive(Debug, Clone)]
 pub struct Dimensions(pub u32, pub u32);
 
+#[derive(WinnyComponent)]
+pub struct RenderBuffer(pub wgpu::Buffer);
+
+impl Deref for RenderBuffer {
+    type Target = wgpu::Buffer;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(WinnyComponent)]
+pub struct RenderBindGroup(pub wgpu::BindGroup);
+
+impl Deref for RenderBindGroup {
+    type Target = wgpu::BindGroup;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderContext {
     pub queue: RenderQueue,

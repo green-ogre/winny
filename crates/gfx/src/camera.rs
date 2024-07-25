@@ -1,12 +1,28 @@
-use app::{plugins::Plugin, window::ViewPort};
-use ecs::{Query, WinnyBundle, WinnyComponent};
-use render::{RenderLayer, RenderPass};
+use app::{
+    plugins::Plugin,
+    window::{ViewPort, Window},
+};
+use ecs::{prelude::*, WinnyBundle, WinnyComponent};
+use render::{RenderBindGroup, RenderBuffer, RenderDevice, RenderLayer, RenderPass, RenderQueue};
+use winny_math::{
+    matrix::Matrix4x4f,
+    quaternion::Quaternion,
+    vector::{Vec3f, Vec4f},
+};
+
+use wgpu::util::DeviceExt;
+
+use crate::Transform;
 
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&mut self, app: &mut app::app::App) {
-        app.add_systems(ecs::Schedule::Render, render_cameras);
+        app.add_systems(
+            ecs::Schedule::PreRender,
+            (generate_camera_bindings, update_camera_view),
+        )
+        .add_systems(ecs::Schedule::Render, render_cameras);
     }
 }
 
@@ -14,6 +30,7 @@ impl Plugin for CameraPlugin {
 pub struct CameraBundle2d {
     pub camera: Camera,
     pub projection: Projection,
+    pub transform: Transform,
     pub render_layer: RenderLayer,
 }
 
@@ -22,6 +39,26 @@ impl Default for CameraBundle2d {
         Self {
             camera: Camera::default(),
             projection: Projection::Orthographic(OrthographicProjection::default()),
+            transform: Transform::default(),
+            render_layer: RenderLayer(0),
+        }
+    }
+}
+
+#[derive(WinnyBundle)]
+pub struct CameraBundle3d {
+    pub camera: Camera,
+    pub projection: Projection,
+    pub transform: Transform,
+    pub render_layer: RenderLayer,
+}
+
+impl Default for CameraBundle3d {
+    fn default() -> Self {
+        Self {
+            camera: Camera::default(),
+            projection: Projection::Perspective(PerspectiveProjection::default()),
+            transform: Transform::default(),
             render_layer: RenderLayer(0),
         }
     }
@@ -29,8 +66,8 @@ impl Default for CameraBundle2d {
 
 #[derive(WinnyComponent)]
 pub struct Camera {
-    is_visible: bool,
-    view_port: Option<ViewPort>,
+    pub is_visible: bool,
+    pub view_port: Option<ViewPort>,
 }
 
 impl Default for Camera {
@@ -42,22 +79,68 @@ impl Default for Camera {
     }
 }
 
-#[derive(WinnyComponent)]
+#[derive(WinnyComponent, Debug)]
 pub enum Projection {
     Orthographic(OrthographicProjection),
-    Perspective,
+    Perspective(PerspectiveProjection),
 }
 
 impl Projection {
-    pub fn transform_mat4x4(&self, view_port: &ViewPort) -> [[f32; 4]; 4] {
+    pub fn matrix(&mut self, view_port: &ViewPort) -> Matrix4x4f {
         match self {
-            Self::Orthographic(p) => p.transform_mat4x4(view_port),
-            Self::Perspective => todo!(),
+            Self::Orthographic(p) => p.projection(view_port),
+            Self::Perspective(p) => p.projection(view_port),
         }
     }
 }
 
-// TODO: just have it be the enum
+#[derive(Debug)]
+pub struct PerspectiveProjection {
+    fov: f32,
+    aspect: f32,
+    near: f32,
+    far: f32,
+}
+
+impl Default for PerspectiveProjection {
+    fn default() -> Self {
+        Self {
+            fov: 90.,
+            aspect: 0.0,
+            near: 0.0,
+            far: 1000.0,
+        }
+    }
+}
+
+impl PerspectiveProjection {
+    pub fn new(viewport: &ViewPort, fov: f32, near: f32, far: f32) -> Self {
+        let aspect = (viewport.max.x - viewport.min.x) / (viewport.max.y - viewport.max.x);
+
+        Self {
+            fov,
+            near,
+            far,
+            aspect,
+        }
+    }
+
+    pub fn projection(&mut self, viewport: &ViewPort) -> Matrix4x4f {
+        let mut output = Matrix4x4f::zero();
+
+        self.aspect = (viewport.max.x - viewport.min.x) / (viewport.max.y - viewport.max.x);
+        let fov = (self.fov / 2.).tan();
+        output.m[0][0] = 1. / (self.aspect * fov); // 1 / (tan(FOV / 2) * AspectRatio)
+        output.m[1][1] = 1. / fov; // 1 / tan(FOV / 2)
+        output.m[2][2] = (self.far + self.near) / (self.near - self.far); // (Far + Near) / (Near - Far)
+        output.m[2][3] = (2. * self.far * self.near) / (self.near - self.far); // (2 * Far * Near) / (Near - Far)
+        output.m[3][2] = -1.;
+
+        output
+    }
+}
+
+#[derive(Debug)]
 pub struct OrthographicProjection {
     view_port: Option<ViewPort>,
     far: f32,
@@ -83,30 +166,116 @@ impl OrthographicProjection {
         }
     }
 
-    pub fn transform_mat4x4(&self, viewport: &ViewPort) -> [[f32; 4]; 4] {
-        let (top, left) = (viewport.position.y, viewport.position.x);
-        let (bottom, right) = (top + viewport.size.x, left + viewport.size.y);
-        [
-            [
-                2.0 / (right - left),
-                0.0,
-                0.0,
-                -((right + left) / (right - left)),
+    pub fn projection(&self, viewport: &ViewPort) -> Matrix4x4f {
+        // TODO: fix
+        let (top, left) = (viewport.min.y, viewport.min.x);
+        let (bottom, right) = (viewport.max.x, viewport.max.y);
+        Matrix4x4f {
+            m: [
+                [
+                    2.0 / (right - left),
+                    0.0,
+                    0.0,
+                    -((right + left) / (right - left)),
+                ],
+                [
+                    0.0,
+                    2.0 / (top - bottom),
+                    0.0,
+                    -((top + bottom) / (top - bottom)),
+                ],
+                [
+                    0.0,
+                    0.0,
+                    -2.0 / (self.far - self.near),
+                    -((self.far + self.near) / (self.far - self.near)),
+                ],
+                [0.0, 0.0, 0.0, 1.0],
             ],
-            [
-                0.0,
-                2.0 / (top - bottom),
-                0.0,
-                -((top + bottom) / (top - bottom)),
-            ],
-            [
-                0.0,
-                0.0,
-                -2.0 / (self.far - self.near),
-                -((self.far + self.near) / (self.far - self.near)),
-            ],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CameraUniform {
+    view_position: Vec4f,
+    view_proj: Matrix4x4f,
+}
+
+impl CameraUniform {
+    pub fn new(
+        viewport: &ViewPort,
+        mut projection: &mut Projection,
+        transform: &Transform,
+    ) -> Self {
+        let view_proj = match &mut projection {
+            Projection::Orthographic(OrthographicProjection {
+                view_port,
+                far,
+                near,
+            }) => {
+                unimplemented!()
+            }
+            Projection::Perspective(p) => {
+                p.projection(viewport) * transform.transformation_matrix()
+            }
+        };
+        let view_position = Vec4f::to_homogenous(transform.translation);
+
+        Self {
+            view_position,
+            view_proj,
+        }
+    }
+}
+
+fn update_camera_view(
+    mut cameras: Query<(Camera, Mut<Projection>, Transform, RenderBuffer)>,
+    queue: Res<RenderQueue>,
+    window: Res<Window>,
+) {
+    for (camera, mut projection, transform, buffer) in cameras.iter_mut() {
+        let viewport = if let Some(viewport) = &camera.view_port {
+            viewport
+        } else {
+            &window.viewport
+        };
+
+        let uniform = CameraUniform::new(viewport, projection, transform);
+        queue.write_buffer(buffer, 0, bytemuck::cast_slice(&[uniform]));
+    }
+}
+
+fn generate_camera_bindings(
+    mut commands: Commands,
+    device: Res<RenderDevice>,
+    mut camera_bundles: Query<
+        (Entity, Camera, Mut<Projection>, Transform),
+        Without<RenderBindGroup>,
+    >,
+    window: Res<Window>,
+) {
+    for (entity, camera, mut projection, transform) in camera_bundles.iter_mut() {
+        util::tracing::error!("CAMERA");
+        let viewport = if let Some(viewport) = &camera.view_port {
+            viewport
+        } else {
+            &window.viewport
+        };
+
+        let camera_uniform = CameraUniform::new(viewport, projection, transform);
+        util::tracing::info!(
+            "generating camera binding: {entity:?}, {projection:?}, {transform:?}"
+        );
+        let uniform_buffer = new_camera_buffer(&device, camera_uniform);
+        let uniform_bind_group_layout = new_camera_bind_group_layout(&device);
+        let uniform_bind_group =
+            new_camera_bind_group(&device, &uniform_bind_group_layout, &uniform_buffer);
+        commands.get_entity(entity).insert((
+            RenderBuffer(uniform_buffer),
+            RenderBindGroup(uniform_bind_group),
+        ));
     }
 }
 
@@ -114,11 +283,50 @@ fn render_cameras(
     cameras: Query<(Camera, Projection, RenderLayer)>,
     render_pass: Query<(RenderPass, RenderLayer)>,
 ) {
-    for (camera, projection, layer) in cameras.iter() {
-        for (pass, _) in render_pass.iter().filter(|(_, l)| *l == layer) {
-            // pass.run();
-        }
-    }
+    // for (camera, projection, layer) in cameras.iter() {
+    //     for (pass, _) in render_pass.iter().filter(|(_, l)| *l == layer) {
+    //         // pass.run();
+    //     }
+    // }
+}
+
+fn new_camera_buffer(device: &RenderDevice, camera_uniform: CameraUniform) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("camera"),
+        contents: bytemuck::cast_slice(&[camera_uniform]),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    })
+}
+
+pub fn new_camera_bind_group_layout(device: &RenderDevice) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+        label: Some("camera"),
+    })
+}
+
+fn new_camera_bind_group(
+    device: &RenderDevice,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+    camera_buffer: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &camera_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: camera_buffer.as_entire_binding(),
+        }],
+        label: Some("camera"),
+    })
 }
 
 // use app::input::mouse_and_key::{KeyCode, KeyInput, MouseInput};

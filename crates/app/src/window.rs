@@ -77,14 +77,16 @@ fn should_exit(mut event_writer: EventWriter<AppExit>, key_input: EventReader<Ke
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct ViewPort {
-    pub position: Vec2f,
-    pub size: Vec2f,
+    // top left
+    pub min: Vec2f,
+    // bottom right
+    pub max: Vec2f,
 }
 
 impl ViewPort {
-    pub fn new(position: Vec2f, size: Vec2f) -> Self {
-        Self { position, size }
+    pub fn new(min: Vec2f, max: Vec2f) -> Self {
+        Self { min, max }
     }
 }

@@ -230,13 +230,16 @@ where
 {
     let mut exit = false;
     let mut panicking = false;
-    std::thread::scope(|s| {
-        let h = s.spawn(|| exit = f(world, scheduler));
+    // NOTE: on macos, the window is non send, it causes deadlock on `inner_size`
+    // std::thread::scope(|s| {
+    //     let h = s.spawn(|| exit = f(world, scheduler));
+    //
+    //     if let Err(_) = h.join() {
+    //         panicking = true;
+    //     }
+    // });
 
-        if let Err(_) = h.join() {
-            panicking = true;
-        }
-    });
+    exit = f(world, scheduler);
 
     if panicking {
         Err(ExitCode::Panicking)

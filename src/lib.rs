@@ -62,6 +62,7 @@ impl Plugin for DefaultPlugins {
             self.window.clone(),
             render::RendererPlugin,
             self.asset_loader.clone(),
+            gfx::camera::CameraPlugin,
             gfx::texture::TexturePlugin,
             gfx::model::ModelPlugin,
             audio::AudioPlugin,
