@@ -1,16 +1,17 @@
-use app::{plugins::Plugin, window::Window};
+use app::{
+    plugins::Plugin,
+    window::{ViewPort, Window},
+};
 use ecs::{prelude::*, WinnyResource};
 use egui::{Rect, Vec2};
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
 
-use crate::gui::EguiRenderer;
+use util::prelude::*;
 
-fn draw(mut egui: ResMut<EguiRenderer>, ui_state: Res<UiState>) {
-    let mut ui_state = ui_state.clone();
-    egui.draw(move |ctx| {
-        ui_state.ui(ctx);
-    })
-}
+use crate::{
+    camera::Camera,
+    gui::{EguiPlugin, EguiRenderer, UiRenderState},
+};
 
 #[derive(WinnyResource, Clone)]
 pub struct UiState {
@@ -21,8 +22,14 @@ pub struct UiState {
     // gizmo_mode: GizmoMode,
 }
 
+impl UiRenderState for UiState {
+    fn ui(&mut self) -> impl FnOnce(&egui::Context) {
+        |ctx| self.ui(ctx)
+    }
+}
+
 impl UiState {
-    pub fn new(window: &Window, zoom_factor: f32) -> Self {
+    pub fn new(window: &Window) -> Self {
         let mut state = DockState::new(vec![EguiWindow::GameView]);
         let tree = state.main_surface_mut();
         let [game, _inspector] =
@@ -31,15 +38,17 @@ impl UiState {
         let [_game, _bottom] =
             tree.split_below(game, 0.8, vec![EguiWindow::Resources, EguiWindow::Assets]);
 
-        let size = window.winit_window.inner_size();
-        let screen_size_in_pixels = Vec2::new(size.width as f32, size.height as f32);
+        // let size = window.winit_window.inner_size();
+        // let screen_size_in_pixels = Vec2::new(size.width as f32, size.height as f32);
+        //
+        // let native_pixels_per_point = window.winit_window.scale_factor() as f32;
+        // let screen_size_in_points = screen_size_in_pixels / (zoom_factor * native_pixels_per_point);
+        //
+        // let viewport_rect = (screen_size_in_points.x > 0.0 && screen_size_in_points.y > 0.0)
+        //     .then(|| Rect::from_min_size(Default::default(), screen_size_in_points))
+        //     .unwrap();
 
-        let native_pixels_per_point = window.winit_window.scale_factor() as f32;
-        let screen_size_in_points = screen_size_in_pixels / (zoom_factor * native_pixels_per_point);
-
-        let viewport_rect = (screen_size_in_points.x > 0.0 && screen_size_in_points.y > 0.0)
-            .then(|| Rect::from_min_size(Default::default(), screen_size_in_points))
-            .unwrap();
+        let viewport_rect = egui::Rect::ZERO;
 
         Self {
             state,
@@ -141,17 +150,24 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     }
 }
 
-fn update_camera_viewport(
-    cameras: Query<Camera>,
+fn update_camera_viewport(mut cameras: Query<Mut<Camera>>, ui: Res<UiState>) {
+    if ui.viewport_rect == egui::Rect::ZERO {
+        return;
+    }
 
-)
-
-fn startup(mut commands: Commands, egui_renderer: Option<Res<EguiRenderer>>, window: Res<Window>) {
-    let Some(egui) = egui_renderer else {
-        panic!("The [`EditorPlugin`] was added before the [`EguiPlugin`]");
+    let viewport = ViewPort {
+        min: [ui.viewport_rect.min.x, ui.viewport_rect.min.y].into(),
+        max: [ui.viewport_rect.max.x, ui.viewport_rect.max.y].into(),
     };
 
-    let ui_state = UiState::new(&window, egui.egui_context().zoom_factor());
+    for camera in cameras.iter_mut() {
+        info!("{viewport:?}");
+        camera.view_port = Some(viewport);
+    }
+}
+
+fn startup(mut commands: Commands, window: Res<Window>) {
+    let ui_state = UiState::new(&window);
     commands.insert_resource(ui_state);
 }
 
@@ -160,7 +176,8 @@ pub struct EditorPlugin;
 impl Plugin for EditorPlugin {
     fn build(&mut self, app: &mut app::app::App) {
         app.register_resource::<UiState>()
+            .add_plugins(EguiPlugin::<UiState>::new())
             .add_systems(Schedule::StartUp, startup)
-            .add_systems(ecs::Schedule::PostUpdate, draw);
+            .add_systems(ecs::Schedule::PostUpdate, update_camera_viewport);
     }
 }

@@ -1,3 +1,5 @@
+use crate::prelude::{Matrix3x3f, Matrix4x4f};
+
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Default)]
 pub struct Vec2 {
     pub x: i32,
@@ -66,6 +68,12 @@ pub struct Vec2f {
 impl From<[f32; 2]> for Vec2f {
     fn from(value: [f32; 2]) -> Self {
         Self::new(value[0], value[1])
+    }
+}
+
+impl From<[usize; 2]> for Vec2f {
+    fn from(value: [usize; 2]) -> Self {
+        Self::new(value[0] as f32, value[1] as f32)
     }
 }
 
@@ -178,7 +186,7 @@ impl std::ops::DivAssign<f32> for Vec2f {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Vec3f {
     pub x: f32,
     pub y: f32,
@@ -192,6 +200,18 @@ impl Vec3f {
             y: 0.0,
             z: 0.0,
         }
+    }
+
+    pub fn one() -> Self {
+        Self {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        }
+    }
+
+    pub fn as_array(&self) -> [f32; 3] {
+        [self.x, self.y, self.z]
     }
 
     pub fn new(x: f32, y: f32, z: f32) -> Self {
@@ -219,6 +239,28 @@ impl Vec3f {
             x: self.x / m,
             y: self.y / m,
             z: self.z / m,
+        }
+    }
+
+    pub fn scale_matrix(&self) -> Matrix4x4f {
+        Matrix4x4f {
+            m: [
+                [self.x, 0., 0., 0.],
+                [0., self.y, 0., 0.],
+                [0., 0., self.z, 0.],
+                [0., 0., 0., 1.],
+            ],
+        }
+    }
+
+    pub fn translation_matrix(&self) -> Matrix4x4f {
+        Matrix4x4f {
+            m: [
+                [1., 0., 0., self.x],
+                [0., 1., 0., self.y],
+                [0., 0., 1., self.z],
+                [0., 0., 0., 1.],
+            ],
         }
     }
 
@@ -304,5 +346,19 @@ impl std::ops::DivAssign<f32> for Vec3f {
         self.x /= rhs;
         self.y /= rhs;
         self.z /= rhs;
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Vec4f {
+    v: [f32; 4],
+}
+
+impl Vec4f {
+    pub fn to_homogenous(v: Vec3f) -> Self {
+        Self {
+            v: [v.x, v.y, v.z, 1.0],
+        }
     }
 }

@@ -1,6 +1,10 @@
 use ecs::WinnyComponent;
 use render::RenderDevice;
-use winny_math::vector::Vec2f;
+use winny_math::{
+    matrix::Matrix4x4f,
+    quaternion::Quaternion,
+    vector::{Vec2f, Vec3f},
+};
 
 pub mod camera;
 #[cfg(feature = "egui")]
@@ -21,24 +25,31 @@ pub extern crate wgpu;
 #[cfg(feature = "text")]
 pub extern crate wgpu_text;
 
-#[derive(Debug, WinnyComponent)]
-pub struct Transform2D {
-    t: Vec2f,
+#[derive(WinnyComponent, Debug)]
+pub struct Transform {
+    pub translation: Vec3f,
+    pub rotation: Quaternion,
+    pub scale: Vec3f,
 }
 
-impl Transform2D {
-    pub fn zero() -> Self {
-        Self { t: Vec2f::zero() }
-    }
-
-    pub fn new(x: f32, y: f32) -> Self {
+impl Default for Transform {
+    fn default() -> Self {
         Self {
-            t: Vec2f::new(x, y),
+            translation: Vec3f::zero(),
+            rotation: Quaternion::zero(),
+            scale: Vec3f::one(),
         }
     }
+}
 
-    pub fn as_matrix(&self) -> [f32; 2] {
-        self.t.as_matrix()
+impl Transform {
+    pub fn transformation_matrix(&self) -> Matrix4x4f {
+        let rotation_matrix = self.rotation.rotation_matrix();
+        let scale_matrix = self.scale.scale_matrix();
+        let scaled_rotation_matrix = rotation_matrix * scale_matrix;
+        let translation_matrix = self.translation.translation_matrix();
+
+        translation_matrix * scaled_rotation_matrix
     }
 }
 

@@ -10,8 +10,12 @@ fn main() {
                 },
                 ..Default::default()
             },
-            EguiPlugin,
             EditorPlugin,
         ))
+        .add_systems(Schedule::StartUp, startup)
         .run();
+}
+
+fn startup(mut commands: Commands) {
+    commands.spawn(CameraBundle2d::default());
 }

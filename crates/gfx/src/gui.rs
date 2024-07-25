@@ -2,6 +2,8 @@
 
 // TODO: does not display
 
+use std::marker::PhantomData;
+
 use app::{
     app::App,
     input::mouse_and_key::{KeyCode, KeyInput, KeyState, MouseButton, MouseInput, MouseMotion},
@@ -9,11 +11,13 @@ use app::{
     window::Window,
     winit::event::{ElementState, WindowEvent},
 };
-use ecs::{Commands, EventReader, Res, ResMut, WinnyResource};
+use ecs::{Commands, EventReader, Res, ResMut, Resource, WinnyResource};
 use egui::{Context, RawInput, Rect, Vec2};
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
 use egui_wgpu::ScreenDescriptor;
 use render::{RenderConfig, RenderDevice, RenderEncoder, RenderQueue, RenderView};
+
+use util::prelude::*;
 
 #[derive(WinnyResource)]
 pub struct EguiRenderer {
@@ -176,7 +180,7 @@ impl EguiRenderer {
         encoder: &mut RenderEncoder,
         window: &Window,
         window_surface_view: &RenderView,
-        // run_ui: impl FnOnce(&Context),
+        run_ui: impl FnOnce(&Context),
     ) {
         // let Some(callback) = self.ui_callback.take() else {
         //     return;
@@ -193,9 +197,8 @@ impl EguiRenderer {
         // let raw_input = self.state.take_egui_input(window.window().as_ref());
         let raw_input = self.take_egui_input(window);
         let full_output = self.context.run(raw_input, |ui| {
-            if let Some(callback) = self.ui_callback.take() {
-                callback(ui);
-            }
+            // callback(ui);
+            run_ui(ui);
         });
 
         // self.state
@@ -240,15 +243,20 @@ impl EguiRenderer {
     }
 }
 
-fn render_gui(
+fn render_gui<S: UiRenderState>(
     mut egui: ResMut<EguiRenderer>,
     mut encoder: ResMut<RenderEncoder>,
+    mut state: ResMut<S>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     window: Res<Window>,
     view: Res<RenderView>,
 ) {
-    egui.render(&device, &queue, &mut encoder, &window, &view);
+    egui.render(&device, &queue, &mut encoder, &window, &view, state.ui());
+}
+
+pub trait UiRenderState: Resource {
+    fn ui(&mut self) -> impl FnOnce(&Context);
 }
 
 fn handle_input(
@@ -281,13 +289,19 @@ fn startup(
     commands.insert_resource(egui_renderer);
 }
 
-pub struct EguiPlugin;
+pub struct EguiPlugin<S: UiRenderState>(PhantomData<S>);
 
-impl Plugin for EguiPlugin {
+impl<S: UiRenderState> EguiPlugin<S> {
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<S: UiRenderState> Plugin for EguiPlugin<S> {
     fn build(&mut self, app: &mut App) {
         app.add_systems(ecs::Schedule::StartUp, startup)
             .add_systems(ecs::Schedule::PreUpdate, handle_input)
-            .add_systems(ecs::Schedule::PreRender, render_gui)
+            .add_systems(ecs::Schedule::PreRender, render_gui::<S>)
             .register_resource::<EguiRenderer>();
     }
 }
