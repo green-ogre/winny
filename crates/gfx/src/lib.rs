@@ -1,10 +1,4 @@
-use ecs::WinnyComponent;
 use render::RenderDevice;
-use winny_math::{
-    matrix::Matrix4x4f,
-    quaternion::Quaternion,
-    vector::{Vec2f, Vec3f},
-};
 
 pub mod camera;
 #[cfg(feature = "egui")]
@@ -17,41 +11,16 @@ pub mod sprite;
 #[cfg(feature = "text")]
 pub mod text;
 pub mod texture;
-pub mod viewport;
+pub mod transform;
+pub mod vertex;
 
 pub extern crate bytemuck;
 pub extern crate cgmath;
+#[cfg(feature = "egui")]
+pub extern crate egui;
 pub extern crate wgpu;
 #[cfg(feature = "text")]
 pub extern crate wgpu_text;
-
-#[derive(WinnyComponent, Debug)]
-pub struct Transform {
-    pub translation: Vec3f,
-    pub rotation: Quaternion,
-    pub scale: Vec3f,
-}
-
-impl Default for Transform {
-    fn default() -> Self {
-        Self {
-            translation: Vec3f::zero(),
-            rotation: Quaternion::zero(),
-            scale: Vec3f::one(),
-        }
-    }
-}
-
-impl Transform {
-    pub fn transformation_matrix(&self) -> Matrix4x4f {
-        let rotation_matrix = self.rotation.rotation_matrix();
-        let scale_matrix = self.scale.scale_matrix();
-        let scaled_rotation_matrix = rotation_matrix * scale_matrix;
-        let translation_matrix = self.translation.translation_matrix();
-
-        translation_matrix * scaled_rotation_matrix
-    }
-}
 
 pub fn create_texture_bind_group(
     label: Option<&str>,
@@ -160,149 +129,6 @@ pub fn create_read_only_storage_bind_group(
 
     (layout, bg)
 }
-
-pub trait VertexLayout {
-    fn layout() -> wgpu::VertexBufferLayout<'static>;
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vertex {
-    pub position: [f32; 4],
-}
-
-impl VertexLayout for Vertex {
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: wgpu::VertexFormat::Float32x4,
-            }],
-        }
-    }
-}
-
-impl Vertex {
-    pub fn new(x: f32, y: f32, z: f32) -> Self {
-        Self {
-            position: [x, y, z, 1.0],
-        }
-    }
-}
-
-pub const FULLSCREEN_QUAD_VERTEX: [Vertex; 6] = [
-    Vertex {
-        position: [-1.0, 1.0, 0.0, 1.0],
-    },
-    Vertex {
-        position: [-1.0, -1.0, 0.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, -1.0, 0.0, 1.0],
-    },
-    Vertex {
-        position: [-1.0, 1.0, 0.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, -1.0, 0.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, 1.0, 0.0, 1.0],
-    },
-];
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct VertexUv {
-    pub position: [f32; 4],
-    pub uv: [f32; 2],
-    pub _padding: [f32; 2],
-}
-
-impl std::ops::Mul<Vec2f> for VertexUv {
-    type Output = Self;
-
-    fn mul(mut self, rhs: Vec2f) -> Self::Output {
-        self.position[0] *= rhs.x;
-        self.position[1] *= rhs.y;
-        self
-    }
-}
-
-impl VertexLayout for VertexUv {
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<VertexUv>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-            ],
-        }
-    }
-}
-
-impl VertexUv {
-    pub fn new(x: f32, y: f32, z: f32, u: f32, v: f32) -> Self {
-        Self {
-            position: [x, y, z, 1.0],
-            uv: [u, v],
-            _padding: [0.0, 0.0],
-        }
-    }
-
-    pub fn new_2d(position: Vec2f, uv: Vec2f) -> Self {
-        Self {
-            position: [position.x, position.y, 0.0, 0.0],
-            uv: [uv.x, uv.y],
-            _padding: [0.0, 0.0],
-        }
-    }
-}
-
-pub const FULLSCREEN_QUAD_VERTEX_UV: [VertexUv; 6] = [
-    VertexUv {
-        position: [-1.0, 1.0, 0.0, 1.0],
-        uv: [0.0, 0.0],
-        _padding: [0.0, 0.0],
-    },
-    VertexUv {
-        position: [-1.0, -1.0, 0.0, 1.0],
-        uv: [0.0, 1.0],
-        _padding: [0.0, 0.0],
-    },
-    VertexUv {
-        position: [1.0, -1.0, 0.0, 1.0],
-        uv: [1.0, 1.0],
-        _padding: [0.0, 0.0],
-    },
-    VertexUv {
-        position: [-1.0, 1.0, 0.0, 1.0],
-        uv: [0.0, 0.0],
-        _padding: [0.0, 0.0],
-    },
-    VertexUv {
-        position: [1.0, -1.0, 0.0, 1.0],
-        uv: [1.0, 1.0],
-        _padding: [0.0, 0.0],
-    },
-    VertexUv {
-        position: [1.0, 1.0, 0.0, 1.0],
-        uv: [1.0, 0.0],
-        _padding: [0.0, 0.0],
-    },
-];
 
 pub fn create_render_pipeline(
     label: &str,

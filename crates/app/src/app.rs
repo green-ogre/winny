@@ -328,8 +328,8 @@ impl ApplicationHandler for WinitApp {
         let window_attributes = winit::window::Window::default_attributes()
             .with_title(window_plugin.title)
             .with_inner_size(PhysicalSize::new(
-                window_plugin.window_size.x,
-                window_plugin.window_size.y,
+                window_plugin.window_size.v[0],
+                window_plugin.window_size.v[1],
             ));
         let window = event_loop.create_window(window_attributes).unwrap();
         util::tracing::info!("New window: {:?}", *window_plugin);
@@ -412,6 +412,7 @@ impl ApplicationHandler for WinitApp {
                 .app
                 .insert_winit_event(WinitEvent::MouseMotion(position.x, position.y)),
             winit::event::WindowEvent::RedrawRequested => {
+                // NOTE: doesn't increase the responsiveness of quick screen resizing
                 // self.render();
             }
             _ => (),

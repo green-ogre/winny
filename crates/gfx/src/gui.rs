@@ -1,7 +1,5 @@
 #![allow(unused)]
 
-// TODO: does not display
-
 use std::marker::PhantomData;
 
 use app::{
@@ -251,7 +249,14 @@ fn render_gui<S: UiRenderState>(
     queue: Res<RenderQueue>,
     window: Res<Window>,
     view: Res<RenderView>,
+    config: Res<RenderConfig>,
 ) {
+    let size = window.winit_window.inner_size();
+    if size.width != config.width() as u32 || size.height != config.height() as u32 {
+        util::tracing::warn!("skipping frame: render/window size mismatch");
+        return;
+    }
+
     egui.render(&device, &queue, &mut encoder, &window, &view, state.ui());
 }
 
@@ -301,7 +306,7 @@ impl<S: UiRenderState> Plugin for EguiPlugin<S> {
     fn build(&mut self, app: &mut App) {
         app.add_systems(ecs::Schedule::StartUp, startup)
             .add_systems(ecs::Schedule::PreUpdate, handle_input)
-            .add_systems(ecs::Schedule::PreRender, render_gui::<S>)
+            .add_systems(ecs::Schedule::PostRender, render_gui::<S>)
             .register_resource::<EguiRenderer>();
     }
 }

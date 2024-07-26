@@ -16,7 +16,7 @@ pub struct TextPlugin {
 impl TextPlugin {
     pub fn new<P: Into<String>>(path: P) -> Self {
         Self {
-            text_path: path.into()
+            text_path: path.into(),
         }
     }
 }
@@ -71,7 +71,7 @@ struct TextHandle(Handle<Ttf>);
 #[derive(WinnyResource)]
 struct TextPath(String);
 
-fn startup(mut commands: Commands, server: Res<AssetServer>, path: Res<TextPath>) {
+fn startup(mut commands: Commands, mut server: ResMut<AssetServer>, path: Res<TextPath>) {
     let handle = server.load(path.0.as_str());
     commands.insert_resource(TextHandle(handle));
     commands.run_system_once_when(text_setup, should_run_text_setup);
@@ -101,8 +101,8 @@ impl TextRenderer {
     pub fn new(font_bytes: &'static [u8], device: &RenderDevice, config: &RenderConfig) -> Self {
         let brush = BrushBuilder::using_font_bytes(&font_bytes).unwrap().build(
             device,
-            config.width(),
-            config.height(),
+            config.width() as u32,
+            config.height() as u32,
             config.format(),
         );
 
@@ -119,10 +119,6 @@ impl TextRenderer {
         };
     }
 }
-
-// pub type SectionIter<'a> = dyn IntoIterator<Item = Section<'a>, IntoIter = >;
-// pub type TextSystem<'a> = dyn System<Out = SectionIter<'a>>;
-// pub type TextSystemCallback<'a, Input> = dyn IntoSystem<Input, Sys = TextSystem<'a>>;
 
 fn render_pass(
     mut text_renderer: Option<ResMut<TextRenderer>>,

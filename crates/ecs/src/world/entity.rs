@@ -283,6 +283,12 @@ impl<'w> EntityMut<'w> {
             });
 
             let table_id = unsafe { self.world.archetypes.get_mut_unchecked(arch_id).table_id };
+            trace!(
+                "transfer table row: {:?}, {:?} - {:?}",
+                meta.location.table_row,
+                meta.location.table_id,
+                table_id
+            );
             unsafe {
                 UnsafeWorldCell::transfer_table_row(
                     &mut self.world.tables,
@@ -292,6 +298,7 @@ impl<'w> EntityMut<'w> {
                 )
             };
 
+            trace!("update entity meta");
             unsafe {
                 UnsafeWorldCell::insert_entity_into_world(
                     self.entity,

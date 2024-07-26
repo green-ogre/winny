@@ -16,7 +16,6 @@ pub extern crate ecs;
 pub extern crate gfx;
 #[cfg(feature = "hot_reload")]
 pub extern crate hot_reload;
-pub extern crate log;
 pub extern crate render;
 pub extern crate util;
 pub extern crate winny_math as math;
@@ -30,7 +29,6 @@ pub mod prelude {
     pub use gfx::prelude::*;
     #[cfg(feature = "hot_reload")]
     pub use hot_reload::prelude::*;
-    pub use log::*;
     pub use util::prelude::*;
     pub use winny_math as math;
     pub use winny_math::prelude::*;
