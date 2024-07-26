@@ -14,11 +14,9 @@ app = { path = "../app" }
 asset = { path = "../asset" }
 render = { path = "../render" }
 
-# winit = "0.30.3"
 cgmath = "0.18"
 tobj = { version = "4.0.2", features = ["async"] }
 image = "0.25.1"
-cfg-if = "1"
 
 pollster = "0.3.0"
 bytemuck = { version = "1.12", features = ["derive"] }
@@ -31,7 +29,7 @@ egui-wgpu = { version = "0.28.1", optional = true }
 # Outdated winit
 # egui-winit = { version = "0.28.1", optional = true }
 
-wgpu_text = { version = "0.9.0", optional = true }
+wgpu_text = { version = "0.8.8", optional = true }
 
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

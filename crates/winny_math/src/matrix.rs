@@ -1,6 +1,6 @@
 use std::{f32::consts::PI, ops::Mul};
 
-use self::{prelude::Vec2f, vector::Vec3f};
+use self::{angle::Radf, prelude::Vec2f, vector::Vec4f};
 
 use super::*;
 
@@ -31,8 +31,10 @@ impl std::ops::Mul<Matrix2x2f> for Vec2f {
 
     fn mul(self, rhs: Matrix2x2f) -> Self::Output {
         Vec2f {
-            x: self.x * rhs.m[0][0] + self.y * rhs.m[0][1],
-            y: self.x * rhs.m[1][0] + self.y * rhs.m[1][1],
+            v: [
+                self.v[0] * rhs.m[0][0] + self.v[1] * rhs.m[0][1],
+                self.v[0] * rhs.m[1][0] + self.v[1] * rhs.m[1][1],
+            ],
         }
     }
 }
@@ -71,7 +73,7 @@ impl Matrix3x3f {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Matrix4x4f {
     pub m: [[f32; 4]; 4],
 }
@@ -98,9 +100,80 @@ impl Mul<Matrix4x4f> for Matrix4x4f {
     }
 }
 
+impl Mul<Vec4f> for Matrix4x4f {
+    type Output = Vec4f;
+    fn mul(self, rhs: Vec4f) -> Self::Output {
+        let mut output = Vec4f::zero();
+        for y in 0..4 {
+            let mut dot = 0.;
+            for x in 0..4 {
+                dot += rhs.v[x] * self.m[y][x];
+            }
+            output.v[y] = dot;
+        }
+
+        output
+    }
+}
+
 impl Matrix4x4f {
     pub fn zero() -> Self {
         Self { m: [[0.; 4]; 4] }
+    }
+}
+
+pub fn world_to_screen_space_matrix4x4f(
+    screen_width: f32,
+    screen_height: f32,
+    max_z: f32,
+) -> Matrix4x4f {
+    #[cfg_attr(rustfmt, rustfmt_skip)]
+    Matrix4x4f {
+        m: [
+            [2. / screen_width, 0.,                  0.,         0.],
+            [0.,                -2. / screen_height, 0.,         0.],
+            [0.,                0.,                  1. / max_z, 0.],
+            [0.,                0.,                  0.,         1.],
+        ]
+    }
+}
+
+pub fn translation_matrix4x4f(point: Vec4f) -> Matrix4x4f {
+    #[cfg_attr(rustfmt, rustfmt_skip)]
+    Matrix4x4f {
+        m: [
+            [1., 0., 0., point.v[0]],
+            [0., 1., 0., point.v[1]],
+            [0., 0., 1., point.v[2]],
+            [0., 0., 0., 1.        ],
+        ]
+    }
+}
+
+// Takes normalized width and height
+pub fn rotation_2d_matrix4x4f(theta: impl Into<Radf>) -> Matrix4x4f {
+    let theta = theta.into().0;
+
+    #[cfg_attr(rustfmt, rustfmt_skip)]
+    Matrix4x4f {
+        m: [
+            [theta.cos(), (-theta).sin(), 0., 0.],
+            [theta.sin(), theta.cos(),    0., 0.],
+            [0.,          0.,             1., 0.],
+            [0.,          0.,             0., 1.],
+        ]
+    }
+}
+
+pub fn scale_matrix4x4f(scale: Vec2f) -> Matrix4x4f {
+    #[cfg_attr(rustfmt, rustfmt_skip)]
+    Matrix4x4f {
+        m: [
+            [scale.v[0], 0.,         0., 0.],
+            [0.,         scale.v[1], 0., 0.],
+            [0.,         0.,         1., 0.],
+            [0.,         0.,         0., 1.],
+        ]
     }
 }
 

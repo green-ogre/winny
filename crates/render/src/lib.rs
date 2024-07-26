@@ -11,9 +11,9 @@ use app::{
 use fxhash::FxHashMap;
 use util::tracing::trace;
 
-// pub mod graph;
-
-use ecs::{Commands, Query, Res, ResMut, Take, WinnyBundle, WinnyComponent, WinnyResource};
+use ecs::{
+    Commands, Res, ResMut, SparseArrayIndex, SparseSet, Take, WinnyComponent, WinnyResource,
+};
 use wgpu::TextureFormat;
 
 pub struct RendererPlugin;
@@ -32,6 +32,7 @@ impl Plugin for RendererPlugin {
             .register_resource::<RenderQueue>()
             .register_resource::<RenderDevice>()
             .register_resource::<RenderConfig>()
+            .insert_resource(BindGroups::default())
             .add_systems(ecs::Schedule::Resized, resize)
             // .add_systems(ecs::Schedule::SubmitEncoder, submit_encoder)
             .add_systems(ecs::Schedule::PreStartUp, startup)
@@ -47,7 +48,12 @@ fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>) {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.05,
+                        g: 0.05,
+                        b: 0.05,
+                        a: 1.0,
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
                 resolve_target: None,
@@ -306,32 +312,33 @@ impl Deref for RenderDevice {
 }
 
 #[derive(Debug, WinnyResource, Clone)]
-pub struct RenderConfig(pub Dimensions, pub wgpu::TextureFormat);
-
-impl Deref for RenderConfig {
-    type Target = Dimensions;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+pub struct RenderConfig {
+    pub dimensions: Dimensions,
+    pub format: wgpu::TextureFormat,
+    pub max_z: f32,
 }
 
 impl RenderConfig {
     fn from_config(value: &wgpu::SurfaceConfiguration) -> Self {
-        Self(Dimensions(value.width, value.height), value.format)
+        Self {
+            dimensions: Dimensions(value.width, value.height),
+            format: value.format,
+            max_z: 1000.,
+        }
     }
 }
 
 impl RenderConfig {
-    pub fn width(&self) -> u32 {
-        self.0 .0
+    pub fn width(&self) -> f32 {
+        self.dimensions.0 as f32
     }
 
-    pub fn height(&self) -> u32 {
-        self.0 .1
+    pub fn height(&self) -> f32 {
+        self.dimensions.1 as f32
     }
 
     pub fn format(&self) -> TextureFormat {
-        self.1
+        self.format
     }
 }
 
@@ -358,6 +365,44 @@ impl Deref for RenderBindGroup {
     }
 }
 
+#[derive(WinnyComponent, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BindGroupHandle(usize);
+
+impl SparseArrayIndex for BindGroupHandle {
+    fn index(&self) -> usize {
+        self.0
+    }
+}
+
+#[derive(WinnyResource, Default)]
+pub struct BindGroups {
+    bindings: SparseSet<BindGroupHandle, RenderBindGroup>,
+    stored_bindings: FxHashMap<String, BindGroupHandle>,
+}
+
+impl BindGroups {
+    pub fn get(&self, handle: BindGroupHandle) -> Option<&RenderBindGroup> {
+        self.bindings.get(&handle)
+    }
+
+    pub fn get_handle_or_insert_with(
+        &mut self,
+        path: &String,
+        bind_group: impl FnOnce() -> RenderBindGroup,
+    ) -> BindGroupHandle {
+        if let Some(handle) = self.stored_bindings.get(path) {
+            *handle
+        } else {
+            util::tracing::info!("inserting new bind group");
+            let index = self.bindings.insert_in_first_empty(bind_group());
+            let handle = BindGroupHandle(index);
+            self.stored_bindings.insert(path.clone(), handle);
+
+            handle
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderContext {
     pub queue: RenderQueue,
@@ -368,21 +413,21 @@ pub struct RenderContext {
 #[derive(WinnyComponent, PartialEq, Eq)]
 pub struct RenderLayer(pub u8);
 
-pub trait RenderPassCommand: Send + Sync + 'static {
-    // TODO: errors?
-    fn render(
-        &self,
-        // pipelines: &Pipelines,
-        // bind_groups: &BindGroups,
-        // vertex_buffers: &VertexBuffers,
-        // uniform_buffers: &UniformBuffers,
-    );
-}
-
-#[derive(WinnyComponent)]
-pub struct RenderPass {
-    commands: Vec<Box<dyn RenderPassCommand>>,
-}
+// pub trait RenderPassCommand: Send + Sync + 'static {
+//     // TODO: errors?
+//     fn render(
+//         &self,
+//         // pipelines: &Pipelines,
+//         // bind_groups: &BindGroups,
+//         // vertex_buffers: &VertexBuffers,
+//         // uniform_buffers: &UniformBuffers,
+//     );
+// }
+//
+// #[derive(WinnyComponent)]
+// pub struct RenderPass {
+//     commands: Vec<Box<dyn RenderPassCommand>>,
+// }
 
 // impl RenderPass {
 //     pub fn new(commands: Vec<Box<dyn RenderPassCommand>>) -> Self {

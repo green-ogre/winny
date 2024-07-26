@@ -3,16 +3,12 @@ use app::{
     window::{ViewPort, Window},
 };
 use ecs::{prelude::*, WinnyBundle, WinnyComponent};
-use render::{RenderBindGroup, RenderBuffer, RenderDevice, RenderLayer, RenderPass, RenderQueue};
-use winny_math::{
-    matrix::Matrix4x4f,
-    quaternion::Quaternion,
-    vector::{Vec3f, Vec4f},
-};
+use render::{RenderBindGroup, RenderBuffer, RenderDevice, RenderLayer, RenderQueue};
+use winny_math::{matrix::Matrix4x4f, vector::Vec4f};
 
 use wgpu::util::DeviceExt;
 
-use crate::Transform;
+use crate::transform::Transform;
 
 pub struct CameraPlugin;
 
@@ -21,8 +17,8 @@ impl Plugin for CameraPlugin {
         app.add_systems(
             ecs::Schedule::PreRender,
             (generate_camera_bindings, update_camera_view),
-        )
-        .add_systems(ecs::Schedule::Render, render_cameras);
+        );
+        // .add_systems(ecs::Schedule::Render, render_cameras);
     }
 }
 
@@ -115,7 +111,8 @@ impl Default for PerspectiveProjection {
 
 impl PerspectiveProjection {
     pub fn new(viewport: &ViewPort, fov: f32, near: f32, far: f32) -> Self {
-        let aspect = (viewport.max.x - viewport.min.x) / (viewport.max.y - viewport.max.x);
+        let aspect =
+            (viewport.max.v[0] - viewport.min.v[0]) / (viewport.max.v[1] - viewport.max.v[1]);
 
         Self {
             fov,
@@ -128,7 +125,8 @@ impl PerspectiveProjection {
     pub fn projection(&mut self, viewport: &ViewPort) -> Matrix4x4f {
         let mut output = Matrix4x4f::zero();
 
-        self.aspect = (viewport.max.x - viewport.min.x) / (viewport.max.y - viewport.max.x);
+        self.aspect =
+            (viewport.max.v[0] - viewport.min.v[0]) / (viewport.max.v[1] - viewport.max.v[1]);
         let fov = (self.fov / 2.).tan();
         output.m[0][0] = 1. / (self.aspect * fov); // 1 / (tan(FOV / 2) * AspectRatio)
         output.m[1][1] = 1. / fov; // 1 / tan(FOV / 2)
@@ -142,7 +140,6 @@ impl PerspectiveProjection {
 
 #[derive(Debug)]
 pub struct OrthographicProjection {
-    view_port: Option<ViewPort>,
     far: f32,
     near: f32,
 }
@@ -150,7 +147,6 @@ pub struct OrthographicProjection {
 impl Default for OrthographicProjection {
     fn default() -> Self {
         Self {
-            view_port: None,
             far: 1000.0,
             near: 0.0,
         }
@@ -159,17 +155,13 @@ impl Default for OrthographicProjection {
 
 impl OrthographicProjection {
     pub fn new(far: f32, near: f32) -> Self {
-        Self {
-            view_port: None,
-            far,
-            near,
-        }
+        Self { far, near }
     }
 
     pub fn projection(&self, viewport: &ViewPort) -> Matrix4x4f {
         // TODO: fix
-        let (top, left) = (viewport.min.y, viewport.min.x);
-        let (bottom, right) = (viewport.max.x, viewport.max.y);
+        let (top, left) = (viewport.min.v[1], viewport.min.v[0]);
+        let (bottom, right) = (viewport.max.v[0], viewport.max.v[1]);
         Matrix4x4f {
             m: [
                 [
@@ -210,15 +202,11 @@ impl CameraUniform {
         transform: &Transform,
     ) -> Self {
         let view_proj = match &mut projection {
-            Projection::Orthographic(OrthographicProjection {
-                view_port,
-                far,
-                near,
-            }) => {
+            Projection::Orthographic(OrthographicProjection { .. }) => {
                 unimplemented!()
             }
             Projection::Perspective(p) => {
-                p.projection(viewport) * transform.transformation_matrix()
+                p.projection(viewport) * transform.transformation_matrix(viewport, 1000.)
             }
         };
         let view_position = Vec4f::to_homogenous(transform.translation);
@@ -235,7 +223,7 @@ fn update_camera_view(
     queue: Res<RenderQueue>,
     window: Res<Window>,
 ) {
-    for (camera, mut projection, transform, buffer) in cameras.iter_mut() {
+    for (camera, projection, transform, buffer) in cameras.iter_mut() {
         let viewport = if let Some(viewport) = &camera.view_port {
             viewport
         } else {
@@ -256,7 +244,7 @@ fn generate_camera_bindings(
     >,
     window: Res<Window>,
 ) {
-    for (entity, camera, mut projection, transform) in camera_bundles.iter_mut() {
+    for (entity, camera, projection, transform) in camera_bundles.iter_mut() {
         util::tracing::error!("CAMERA");
         let viewport = if let Some(viewport) = &camera.view_port {
             viewport
@@ -279,16 +267,16 @@ fn generate_camera_bindings(
     }
 }
 
-fn render_cameras(
-    cameras: Query<(Camera, Projection, RenderLayer)>,
-    render_pass: Query<(RenderPass, RenderLayer)>,
-) {
-    // for (camera, projection, layer) in cameras.iter() {
-    //     for (pass, _) in render_pass.iter().filter(|(_, l)| *l == layer) {
-    //         // pass.run();
-    //     }
-    // }
-}
+// fn render_cameras(
+//     cameras: Query<(Camera, Projection, RenderLayer)>,
+//     render_pass: Query<(RenderPass, RenderLayer)>,
+// ) {
+//     // for (camera, projection, layer) in cameras.iter() {
+//     //     for (pass, _) in render_pass.iter().filter(|(_, l)| *l == layer) {
+//     //         // pass.run();
+//     //     }
+//     // }
+// }
 
 fn new_camera_buffer(device: &RenderDevice, camera_uniform: CameraUniform) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

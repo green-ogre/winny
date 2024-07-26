@@ -1,4 +1,6 @@
-use crate::prelude::{Matrix3x3f, Matrix4x4f};
+use std::ops::{Add, SubAssign};
+
+use crate::prelude::Matrix4x4f;
 
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Default)]
 pub struct Vec2 {
@@ -59,10 +61,10 @@ impl std::ops::AddAssign<Vec2> for Vec2 {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vec2f {
-    pub x: f32,
-    pub y: f32,
+    pub v: [f32; 2],
 }
 
 impl From<[f32; 2]> for Vec2f {
@@ -79,112 +81,115 @@ impl From<[usize; 2]> for Vec2f {
 
 impl Vec2f {
     pub fn zero() -> Self {
-        Self { x: 0.0, y: 0.0 }
+        Self { v: [0.0, 0.0] }
+    }
+
+    pub fn one() -> Self {
+        Self { v: [1.; 2] }
     }
 
     pub fn new(x: f32, y: f32) -> Self {
-        Self { x, y }
+        Self { v: [x, y] }
     }
 
     pub fn as_matrix(&self) -> [f32; 2] {
-        [self.x, self.y]
+        self.v
     }
 
-    pub fn distance(&self, other: &Vec2f) -> f32 {
-        let x = self.x - other.x;
-        let y = self.y - other.y;
-        (x * x + y * y).sqrt()
-    }
+    // pub fn distance(&self, other: &Vec2f) -> f32 {
+    //     let x = self.x - other.x;
+    //     let y = self.y - other.y;
+    //     (x * x + y * y).sqrt()
+    // }
 
     pub fn is_zero(&self) -> bool {
-        self.x == 0.0 && self.y == 0.0
+        self.v[0] == 0.0 && self.v[1] == 0.0
     }
 
     pub fn normalize(&self) -> Vec2f {
         let m = self.magnitude();
 
         Vec2f {
-            x: self.x / m,
-            y: self.y / m,
+            v: [self.v[0] / m, self.v[1] / m],
         }
     }
 
     pub fn magnitude(&self) -> f32 {
-        (self.x * self.x + self.y * self.y).sqrt()
+        (self.v[0] * self.v[0] + self.v[1] * self.v[1]).sqrt()
     }
 }
 
-impl std::ops::Add<Vec2f> for Vec2f {
-    type Output = Vec2f;
-
-    fn add(self, _rhs: Vec2f) -> Vec2f {
-        Vec2f {
-            x: self.x + _rhs.x,
-            y: self.y + _rhs.y,
-        }
-    }
-}
-
-impl std::ops::AddAssign<Vec2f> for Vec2f {
-    fn add_assign(&mut self, rhs: Vec2f) {
-        self.x += rhs.x;
-        self.y += rhs.y;
-    }
-}
-
-impl std::ops::Sub<Vec2f> for Vec2f {
-    type Output = Vec2f;
-
-    fn sub(self, _rhs: Vec2f) -> Vec2f {
-        Vec2f {
-            x: self.x - _rhs.x,
-            y: self.y - _rhs.y,
-        }
-    }
-}
-
-impl std::ops::SubAssign<Vec2f> for Vec2f {
-    fn sub_assign(&mut self, _rhs: Vec2f) {
-        self.x -= _rhs.x;
-        self.y -= _rhs.y;
-    }
-}
-
-impl std::ops::Mul<f32> for Vec2f {
-    type Output = Vec2f;
-
-    fn mul(self, rhs: f32) -> Self::Output {
-        Vec2f {
-            x: self.x * rhs,
-            y: self.y * rhs,
-        }
-    }
-}
-
-impl std::ops::MulAssign<f32> for Vec2f {
-    fn mul_assign(&mut self, rhs: f32) {
-        self.x *= rhs;
-        self.y *= rhs;
-    }
-}
-
-impl std::ops::Div<f32> for Vec2f {
-    type Output = Vec2f;
-
-    fn div(self, rhs: f32) -> Self::Output {
-        Vec2f {
-            x: self.x / rhs,
-            y: self.y / rhs,
-        }
-    }
-}
-
-impl std::ops::DivAssign<f32> for Vec2f {
-    fn div_assign(&mut self, rhs: f32) {
-        self.x /= rhs;
-        self.y /= rhs;
-    }
-}
+// impl std::ops::Add<Vec2f> for Vec2f {
+//     type Output = Vec2f;
+//
+//     fn add(self, _rhs: Vec2f) -> Vec2f {
+//         Vec2f {
+//             x: self.x + _rhs.x,
+//             y: self.y + _rhs.y,
+//         }
+//     }
+// }
+//
+// impl std::ops::AddAssign<Vec2f> for Vec2f {
+//     fn add_assign(&mut self, rhs: Vec2f) {
+//         self.x += rhs.x;
+//         self.y += rhs.y;
+//     }
+// }
+//
+// impl std::ops::Sub<Vec2f> for Vec2f {
+//     type Output = Vec2f;
+//
+//     fn sub(self, _rhs: Vec2f) -> Vec2f {
+//         Vec2f {
+//             x: self.x - _rhs.x,
+//             y: self.y - _rhs.y,
+//         }
+//     }
+// }
+//
+// impl std::ops::SubAssign<Vec2f> for Vec2f {
+//     fn sub_assign(&mut self, _rhs: Vec2f) {
+//         self.x -= _rhs.x;
+//         self.y -= _rhs.y;
+//     }
+// }
+//
+// impl std::ops::Mul<f32> for Vec2f {
+//     type Output = Vec2f;
+//
+//     fn mul(self, rhs: f32) -> Self::Output {
+//         Vec2f {
+//             x: self.x * rhs,
+//             y: self.y * rhs,
+//         }
+//     }
+// }
+//
+// impl std::ops::MulAssign<f32> for Vec2f {
+//     fn mul_assign(&mut self, rhs: f32) {
+//         self.x *= rhs;
+//         self.y *= rhs;
+//     }
+// }
+//
+// impl std::ops::Div<f32> for Vec2f {
+//     type Output = Vec2f;
+//
+//     fn div(self, rhs: f32) -> Self::Output {
+//         Vec2f {
+//             x: self.x / rhs,
+//             y: self.y / rhs,
+//         }
+//     }
+// }
+//
+// impl std::ops::DivAssign<f32> for Vec2f {
+//     fn div_assign(&mut self, rhs: f32) {
+//         self.x /= rhs;
+//         self.y /= rhs;
+//     }
+// }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Vec3f {
@@ -350,15 +355,66 @@ impl std::ops::DivAssign<f32> for Vec3f {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vec4f {
-    v: [f32; 4],
+    pub v: [f32; 4],
+}
+
+impl SubAssign<Vec4f> for Vec4f {
+    fn sub_assign(&mut self, rhs: Vec4f) {
+        self.v[0] -= rhs.v[0];
+        self.v[1] -= rhs.v[1];
+        self.v[2] -= rhs.v[2];
+        self.v[3] -= rhs.v[3];
+    }
+}
+
+impl Add<Vec4f> for Vec4f {
+    type Output = Vec4f;
+
+    fn add(mut self, rhs: Vec4f) -> Self::Output {
+        self.v[0] += rhs.v[0];
+        self.v[1] += rhs.v[1];
+        self.v[2] += rhs.v[2];
+        self.v[3] += rhs.v[3];
+
+        self
+    }
 }
 
 impl Vec4f {
+    pub fn new(x: f32, y: f32, z: f32, r: f32) -> Self {
+        Self { v: [x, y, z, r] }
+    }
+
+    pub fn zero() -> Self {
+        Self { v: [0.; 4] }
+    }
+
     pub fn to_homogenous(v: Vec3f) -> Self {
         Self {
             v: [v.x, v.y, v.z, 1.0],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector4() {
+        let m = Matrix4x4f {
+            m: [
+                [1.0, 2.0, 3.2, 3.0],
+                [2.2, 8.0, 2.2, 8.0],
+                [8.0, 0.0, 1.0, 2.0],
+                [3.0, 6.0, 1.0, 2.0],
+            ],
+        };
+        let v1 = Vec4f::new(1., 2., 0., 1.);
+
+        let v2 = m * v1;
+        println!("{v2:?}");
     }
 }

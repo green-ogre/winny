@@ -3,14 +3,13 @@ use app::{
     window::{ViewPort, Window},
 };
 use ecs::{prelude::*, WinnyResource};
-use egui::{Rect, Vec2};
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
 
 use util::prelude::*;
 
 use crate::{
     camera::Camera,
-    gui::{EguiPlugin, EguiRenderer, UiRenderState},
+    gui::{EguiPlugin, UiRenderState},
 };
 
 #[derive(WinnyResource, Clone)]
@@ -29,7 +28,7 @@ impl UiRenderState for UiState {
 }
 
 impl UiState {
-    pub fn new(window: &Window) -> Self {
+    pub fn new(_window: &Window) -> Self {
         let mut state = DockState::new(vec![EguiWindow::GameView]);
         let tree = state.main_surface_mut();
         let [game, _inspector] =

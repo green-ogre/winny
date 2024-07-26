@@ -322,6 +322,7 @@ impl<'w> UnsafeWorldCell<'w> {
     {
         let _span = trace_span!("conditional transfer table row").entered();
 
+        trace!("retrieving owned pointers");
         let mut components: Vec<(ComponentId, OwnedPtr)> = Vec::with_capacity(10);
         {
             let src_table = tables.get_mut_unchecked(src);
@@ -333,6 +334,7 @@ impl<'w> UnsafeWorldCell<'w> {
             }
         }
 
+        trace!("pushing erased");
         {
             let dst = tables.get_mut_unchecked(dst);
             for (component_id, ptr) in components.into_iter() {
@@ -344,8 +346,10 @@ impl<'w> UnsafeWorldCell<'w> {
             let src = tables.get_mut_unchecked(src);
             for (component_id, column) in src.iter_mut() {
                 if f(component_id, column) {
+                    trace!("conditionally dropping swap remove: false");
                     column.swap_remove_row_no_drop(src_row);
                 } else {
+                    trace!("conditionally dropping swap remove: true");
                     column.swap_remove_row_drop(src_row);
                 }
             }

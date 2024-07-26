@@ -78,7 +78,11 @@ impl DumbVec {
 
     pub fn clone_empty(&self) -> Self {
         let item_layout = self.item_layout;
-        let capacity = 0;
+        let capacity = if self.capacity == usize::MAX {
+            usize::MAX
+        } else {
+            0
+        };
         let drop = self.drop;
 
         Self::new_init(item_layout, capacity, drop)

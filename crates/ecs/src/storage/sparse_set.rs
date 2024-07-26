@@ -151,11 +151,21 @@ impl<I: SparseArrayIndex, V> SparseArray<I, V> {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct SparseSet<I: SparseArrayIndex, V> {
     dense: Vec<V>,
     indexes: Vec<I>,
     sparse: SparseArray<I, usize>,
+}
+
+impl<I: SparseArrayIndex, V> Default for SparseSet<I, V> {
+    fn default() -> Self {
+        Self {
+            dense: Vec::new(),
+            indexes: Vec::new(),
+            sparse: SparseArray::default(),
+        }
+    }
 }
 
 #[allow(clippy::missing_safety_doc)]

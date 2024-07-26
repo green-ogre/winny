@@ -9,13 +9,12 @@ use std::ops::Range;
 
 use asset::{load_binary, load_string, reader::ByteReader, AssetApp, AssetLoaderError};
 use image::GenericImageView;
-use render::{RenderConfig, RenderContext, RenderDevice, RenderQueue};
+use render::{RenderContext, RenderDevice, RenderQueue};
 use wgpu::util::DeviceExt;
 
 use util::tracing::trace;
 
-use crate::texture::Texture;
-use crate::VertexLayout;
+use crate::{texture::Texture, vertex::VertexLayout};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Instance {
@@ -708,54 +707,6 @@ impl NormalTexture {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        Self { tex, view, sampler }
-    }
-}
-
-pub struct DepthTexture {
-    pub tex: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
-}
-
-impl DepthTexture {
-    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-
-    pub fn new(device: &RenderDevice, config: &RenderConfig, label: &str) -> Self {
-        trace!("creating new depth texture: {:?}, {:?}", config, device);
-        let size = wgpu::Extent3d {
-            width: config.width(),
-            height: config.height(),
-            depth_or_array_layers: 1,
-        };
-        let desc = wgpu::TextureDescriptor {
-            label: Some(label),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT // 3.
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        };
-        let tex = device.create_texture(&desc);
-
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            // 4.
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            compare: Some(wgpu::CompareFunction::LessEqual), // 5.
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 100.0,
             ..Default::default()
         });
 

@@ -300,7 +300,7 @@ impl AssetLoaders {
     }
 
     pub fn load<A: Asset, P: AsRef<Path>>(
-        &self,
+        &mut self,
         _asset_folder: String,
         path: P,
         context: RenderContext,
@@ -333,7 +333,7 @@ impl AssetLoaders {
             path.clone(),
             file_ext.to_str().unwrap().to_owned(),
         );
-        // TODO: add loaded assets
+        self.loaded_assets.insert(path, handle);
 
         handle.into()
     }
@@ -359,7 +359,7 @@ impl AssetServer {
         self.loaders.register_loader(loader, future);
     }
 
-    pub fn load<A: Asset, P: AsRef<Path>>(&self, path: P) -> Handle<A> {
+    pub fn load<A: Asset, P: AsRef<Path>>(&mut self, path: P) -> Handle<A> {
         let _span = trace_span!("asset load").entered();
         self.loaders.load(
             self.asset_folder.clone(),

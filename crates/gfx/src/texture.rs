@@ -3,10 +3,11 @@ use std::{future::Future, io::Cursor};
 // use crate::sprite::{SpriteBinding, SpriteData};
 use asset::{load_binary, reader::ByteReader, AssetApp, AssetLoaderError};
 
+use ecs::WinnyComponent;
 use image::{DynamicImage, GenericImageView};
 use util::tracing::trace;
 
-use render::{RenderContext, RenderDevice, RenderQueue};
+use render::{Dimensions, RenderConfig, RenderContext, RenderDevice, RenderQueue};
 
 struct TextureAssetLoader;
 
@@ -105,8 +106,6 @@ pub struct TextureSource {
     pub image: DynamicImage,
 }
 
-impl asset::Asset for Texture {}
-
 impl TextureSource {
     pub fn new(mut reader: ByteReader<Cursor<Vec<u8>>>) -> Result<Self, AssetLoaderError> {
         let data = reader
@@ -118,12 +117,23 @@ impl TextureSource {
     }
 }
 
+#[derive(WinnyComponent)]
+pub struct TextureDimensions(pub Dimensions);
+
+impl TextureDimensions {
+    pub fn from_texture(texture: &Texture) -> Self {
+        Self(Dimensions(texture.tex.width(), texture.tex.height()))
+    }
+}
+
 #[derive(Debug)]
 pub struct Texture {
     pub tex: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
 }
+
+impl asset::Asset for Texture {}
 
 #[cfg(target_arch = "wasm32")]
 unsafe impl Send for Texture {}
@@ -313,35 +323,50 @@ impl Texture {
     }
 }
 
-// #[derive(Debug, WinnyResource)]
-// pub struct Sprites {
-//     storage: SparseSet<AssetId, (Texture, SpriteBinding)>,
-// }
-//
-// impl Sprites {
-//     pub fn new() -> Self {
-//         Self {
-//             storage: SparseSet::new(),
-//         }
-//     }
-//
-//     pub fn insert(&mut self, handle: &Handle<SpriteData>, texture: Texture, bind: SpriteBinding) {
-//         self.storage.insert(handle.id(), (texture, bind));
-//     }
-//
-//     pub fn get_tex(&self, handle: &Handle<SpriteData>) -> Option<&Texture> {
-//         self.storage.get(&handle.id()).map(|(t, _)| t)
-//     }
-//
-//     pub fn get_tex_mut(&mut self, handle: &Handle<SpriteData>) -> Option<&mut Texture> {
-//         self.storage.get_mut(&handle.id()).map(|(t, _)| t)
-//     }
-//
-//     pub fn contains_key(&self, key: &AssetId) -> bool {
-//         self.storage.contains_key(key)
-//     }
-//
-//     pub fn iter_bindings(&self) -> impl Iterator<Item = &SpriteBinding> {
-//         self.storage.values().iter().map(|(_, b)| b)
-//     }
-// }
+pub struct DepthTexture {
+    pub tex: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+}
+
+impl DepthTexture {
+    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+    pub fn new(device: &RenderDevice, config: &RenderConfig, label: &str) -> Self {
+        trace!("creating new depth texture: {:?}, {:?}", config, device);
+        let size = wgpu::Extent3d {
+            width: config.width() as u32,
+            height: config.height() as u32,
+            depth_or_array_layers: 1,
+        };
+        let desc = wgpu::TextureDescriptor {
+            label: Some(label),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT // 3.
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        };
+        let tex = device.create_texture(&desc);
+
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            // 4.
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            compare: Some(wgpu::CompareFunction::LessEqual), // 5.
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 100.0,
+            ..Default::default()
+        });
+
+        Self { tex, view, sampler }
+    }
+}
