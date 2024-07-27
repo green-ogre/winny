@@ -1,6 +1,7 @@
 use app::window::ViewPort;
 use cgmath::{Quaternion, Zero};
 use ecs::WinnyComponent;
+use render::RenderDevice;
 use winny_math::{
     matrix::{
         scale_matrix4x4f, translation_matrix4x4f, world_to_screen_space_matrix4x4f, Matrix4x4f,
@@ -76,4 +77,40 @@ impl Transform {
 
         scale * rotation * translation * offset_translation
     }
+}
+
+pub fn new_transform_bind_group_layout(
+    device: &RenderDevice,
+    binding: u32,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+        label: Some("transform"),
+    })
+}
+
+pub fn new_transform_bind_group(
+    device: &RenderDevice,
+    transform_bind_group_layout: &wgpu::BindGroupLayout,
+    transform_buffer: &wgpu::Buffer,
+    binding: u32,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &transform_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding,
+            resource: transform_buffer.as_entire_binding(),
+        }],
+        label: Some("transform"),
+    })
 }

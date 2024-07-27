@@ -13,7 +13,8 @@ fn main() {
             DefaultPlugins {
                 window: WindowPlugin {
                     close_on_escape: true,
-                    // window_size: Vec2f::new(900., 900.),
+                    // Sprite rotation will stretch in a non square window / viewport
+                    window_size: Vec2f::new(1200., 1200.),
                     ..Default::default()
                 },
                 ..Default::default()

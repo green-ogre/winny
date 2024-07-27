@@ -16,6 +16,8 @@ use ecs::{
 };
 use wgpu::TextureFormat;
 
+pub mod prelude;
+
 pub struct RendererPlugin;
 
 impl Plugin for RendererPlugin {
@@ -33,6 +35,7 @@ impl Plugin for RendererPlugin {
             .register_resource::<RenderDevice>()
             .register_resource::<RenderConfig>()
             .insert_resource(BindGroups::default())
+            .insert_resource(Buffers::default())
             .add_systems(ecs::Schedule::Resized, resize)
             // .add_systems(ecs::Schedule::SubmitEncoder, submit_encoder)
             .add_systems(ecs::Schedule::PreStartUp, startup)
@@ -397,6 +400,44 @@ impl BindGroups {
             let index = self.bindings.insert_in_first_empty(bind_group());
             let handle = BindGroupHandle(index);
             self.stored_bindings.insert(path.clone(), handle);
+
+            handle
+        }
+    }
+}
+
+#[derive(WinnyComponent, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BufferHandle(usize);
+
+impl SparseArrayIndex for BufferHandle {
+    fn index(&self) -> usize {
+        self.0
+    }
+}
+
+#[derive(WinnyResource, Default)]
+pub struct Buffers {
+    buffers: SparseSet<BufferHandle, RenderBuffer>,
+    stored_buffers: FxHashMap<String, BufferHandle>,
+}
+
+impl Buffers {
+    pub fn get(&self, handle: BufferHandle) -> Option<&RenderBuffer> {
+        self.buffers.get(&handle)
+    }
+
+    pub fn get_handle_or_insert_with(
+        &mut self,
+        path: &String,
+        bind_group: impl FnOnce() -> RenderBuffer,
+    ) -> BufferHandle {
+        if let Some(handle) = self.stored_buffers.get(path) {
+            *handle
+        } else {
+            util::tracing::info!("inserting new buffer");
+            let index = self.buffers.insert_in_first_empty(bind_group());
+            let handle = BufferHandle(index);
+            self.stored_buffers.insert(path.clone(), handle);
 
             handle
         }

@@ -4,10 +4,14 @@ use app::{
     app::AppExit,
     plugins::{Plugin, PluginSet},
     prelude::{KeyCode, KeyInput},
+    time::TimePlugin,
     window::WindowPlugin,
 };
 use asset::AssetLoaderPlugin;
+use audio::AudioPlugin;
 use ecs::{EventReader, EventWriter};
+use gfx::{camera::CameraPlugin, model::ModelPlugin, texture::TexturePlugin};
+use render::RendererPlugin;
 
 pub extern crate app;
 pub extern crate asset;
@@ -57,13 +61,14 @@ impl Default for DefaultPlugins {
 impl Plugin for DefaultPlugins {
     fn build(&mut self, app: &mut app::app::App) {
         app.add_plugins_priority((
+            TimePlugin,
             self.window.clone(),
-            render::RendererPlugin,
+            RendererPlugin,
             self.asset_loader.clone(),
-            gfx::camera::CameraPlugin,
-            gfx::texture::TexturePlugin,
-            gfx::model::ModelPlugin,
-            audio::AudioPlugin,
+            CameraPlugin,
+            TexturePlugin,
+            ModelPlugin,
+            AudioPlugin,
         ));
         if self.log {
             app.add_plugins_priority(log::LogPlugin);

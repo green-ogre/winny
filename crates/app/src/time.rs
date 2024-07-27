@@ -9,7 +9,8 @@ pub struct TimePlugin;
 
 impl Plugin for TimePlugin {
     fn build(&mut self, app: &mut crate::app::App) {
-        app.add_systems(Schedule::PreStartUp, insert_delta)
+        app.register_resource::<DeltaTime>()
+            .add_systems(Schedule::PreStartUp, insert_delta)
             .add_systems(Schedule::Platform, update_delta);
     }
 }
@@ -24,13 +25,15 @@ fn update_delta(mut delta: ResMut<DeltaTime>) {
 
 #[derive(WinnyResource)]
 pub struct DeltaTime {
+    elapsed: f32,
     last_time: DateTime<Local>,
-    delta: f32,
+    pub delta: f32,
 }
 
 impl DeltaTime {
     pub fn new() -> Self {
         Self {
+            elapsed: 0.0,
             last_time: chrono::Local::now(),
             delta: 0.0,
         }
@@ -40,14 +43,11 @@ impl DeltaTime {
         let delta = chrono::Local::now().signed_duration_since(self.last_time);
         self.last_time = chrono::Local::now();
         self.delta = delta.num_milliseconds() as f32 * 1e-3;
+        self.elapsed += self.delta;
     }
-}
 
-impl Deref for DeltaTime {
-    type Target = f32;
-
-    fn deref(&self) -> &Self::Target {
-        &self.delta
+    pub fn wrapping_elapsed_as_seconds(&self) -> f32 {
+        self.elapsed
     }
 }
 
