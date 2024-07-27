@@ -41,7 +41,6 @@ impl Default for App {
     fn default() -> Self {
         let mut world = World::default();
         world.register_event::<AppExit>();
-        world.insert_resource(DeltaT(0.0));
 
         App {
             world,
@@ -194,9 +193,6 @@ impl App {
 fn flush_event_queue<E: Event>(queue: EventReader<E>) {
     queue.flush();
 }
-
-#[derive(Debug, WinnyResource)]
-pub struct DeltaT(pub f64);
 
 fn update_ecs(world: &mut World, scheduler: &mut Scheduler) -> Result<(), ExitCode> {
     run_and_handle_panic(world, scheduler, |world, scheduler| {

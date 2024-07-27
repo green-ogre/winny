@@ -6,6 +6,8 @@ pub mod editor;
 #[cfg(feature = "egui")]
 pub mod gui;
 pub mod model;
+pub mod noise;
+pub mod particle;
 pub mod prelude;
 pub mod sprite;
 #[cfg(feature = "text")]
@@ -99,15 +101,50 @@ pub fn create_uniform_bind_group(
     (layout, bg)
 }
 
-pub fn create_read_only_storage_bind_group(
+pub fn create_buffer_bind_group(
     label: Option<&str>,
     device: &RenderDevice,
     buffer: &wgpu::Buffer,
+    binding_type: wgpu::BufferBindingType,
+    visibility: wgpu::ShaderStages,
+    binding: u32,
 ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label,
         entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: binding_type,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+
+    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label,
+        layout: &layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+
+    (layout, bg)
+}
+
+pub fn create_read_only_storage_bind_group(
+    label: Option<&str>,
+    device: &RenderDevice,
+    buffer: &wgpu::Buffer,
+    binding: u32,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding,
             visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -122,7 +159,7 @@ pub fn create_read_only_storage_bind_group(
         label,
         layout: &layout,
         entries: &[wgpu::BindGroupEntry {
-            binding: 0,
+            binding,
             resource: buffer.as_entire_binding(),
         }],
     });
@@ -191,5 +228,23 @@ pub fn create_render_pipeline(
         },
         multiview: None,
         // cache: None,
+    })
+}
+
+pub fn create_compute_pipeline(
+    label: &str,
+    device: &RenderDevice,
+    layout: &wgpu::PipelineLayout,
+    shader: wgpu::ShaderModuleDescriptor,
+    entry_point: &str,
+) -> wgpu::ComputePipeline {
+    let shader = device.create_shader_module(shader);
+
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        module: &shader,
+        entry_point,
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
     })
 }

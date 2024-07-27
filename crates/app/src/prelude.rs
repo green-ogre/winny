@@ -1,4 +1,4 @@
-pub use crate::app::{App, AppExit, DeltaT};
+pub use crate::app::{App, AppExit};
 #[cfg(feature = "controller")]
 pub use crate::input::controller::*;
 pub use crate::input::mouse_and_key::*;
