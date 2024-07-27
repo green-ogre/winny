@@ -74,12 +74,13 @@ pub fn create_uniform_bind_group(
     label: Option<&str>,
     device: &RenderDevice,
     buffer: &wgpu::Buffer,
+    visibility: wgpu::ShaderStages,
 ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label,
         entries: &[wgpu::BindGroupLayoutEntry {
             binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            visibility,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
@@ -139,13 +140,14 @@ pub fn create_read_only_storage_bind_group(
     label: Option<&str>,
     device: &RenderDevice,
     buffer: &wgpu::Buffer,
+    visibility: wgpu::ShaderStages,
     binding: u32,
 ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label,
         entries: &[wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            visibility,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                 has_dynamic_offset: false,

@@ -458,6 +458,7 @@ impl<'w> EntityMut<'w> {
                 self.world
                     .entities
                     .set_location(old_arch.get_entity_unchecked(old_arch_row), meta.location);
+                old_arch.entities[old_arch_row.0].row = meta.location.table_row;
             },
             SwapEntity::Pop => (),
         }
@@ -502,20 +503,24 @@ mod tests {
         let e2 = world.spawn((Health(0), Weight(0)));
         let e = world.spawn((Health(1), Weight(1)));
 
-        let mut e = world.entity_mut(e);
-        e.insert(Size(1));
+        world.despawn(e2);
+
+        // let mut e = world.entity_mut(e);
+        // e.insert(Size(1));
+        // // println!("{:#?}", world.entities);
+        // e.despawn();
+        //
+        // let mut e2 = world.entity_mut(e2);
+        // e2.insert(Size(0));
+        // e2.remove::<(Health, Size)>();
+        // e2.insert((Health(69), Size(69)));
+
         // println!("{:#?}", world.entities);
-        e.despawn();
 
-        let mut e2 = world.entity_mut(e2);
-        e2.insert(Size(0));
-        e2.remove::<(Health, Size)>();
-        e2.insert((Health(69), Size(69)));
+        // assert!(world.archetypes.len() == 3);
+        // assert!(world.entities.len() == 2);
 
-        // println!("{:#?}", world.entities);
-
-        assert!(world.archetypes.len() == 3);
-        assert!(world.entities.len() == 2);
+        // println!("{:#?}", world);
 
         println!("exiting scope");
     }

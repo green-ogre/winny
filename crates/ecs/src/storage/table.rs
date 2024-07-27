@@ -221,6 +221,13 @@ impl Table {
         self.storage.get(component_id).unwrap().as_slice()
     }
 
+    pub unsafe fn try_column_slice<T: Component>(
+        &self,
+        component_id: &ComponentId,
+    ) -> Option<&[UnsafeCell<T>]> {
+        self.storage.get(component_id).map(|c| c.as_slice())
+    }
+
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&ComponentId, &mut Column)> {
         self.storage.iter_mut()
     }
