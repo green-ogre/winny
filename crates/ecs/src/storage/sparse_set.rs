@@ -232,7 +232,7 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
         self.get(&index).unwrap()
     }
 
-    pub fn remove(&mut self, index: &I) {
+    pub fn remove(&mut self, index: &I) -> V {
         for i in 0..self.indexes.len() {
             if self.indexes[i].index() == index.index() {
                 self.indexes.remove(i);
@@ -240,14 +240,17 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
             }
         }
 
-        let Some(index) = self.sparse.get(index) else {
+        let Some(index) = self.sparse.take(index.index()) else {
             panic!("removal index exceedes bounds");
         };
 
-        let index = *index;
+        for i in self.sparse.iter_mut() {
+            if *i > index {
+                *i = *i - 1;
+            }
+        }
 
-        self.dense.remove(index);
-        self.sparse.take(index);
+        self.dense.remove(index)
     }
 
     pub fn get_single(&self) -> Option<&V> {

@@ -183,6 +183,50 @@ impl<T: Component> WorldQuery for Mut<T> {
     }
 }
 
+impl<T: Component> QueryData for Option<T> {
+    type ReadOnly = Self;
+}
+
+impl<T: Component> ReadOnlyQueryData for Option<T> {}
+
+impl<T: Component> WorldQuery for Option<T> {
+    type Item<'d> = Option<&'d T>;
+    type Fetch<'d> = Option<&'d [UnsafeCell<T>]>;
+    type State = ComponentId;
+
+    fn init_state(world: UnsafeWorldCell<'_>) -> Self::State {
+        unsafe { world.components() }.id(&std::any::TypeId::of::<T>())
+    }
+
+    fn init_fetch<'d>(_world: UnsafeWorldCell<'d>, _state: &Self::State) -> Self::Fetch<'d> {
+        None
+    }
+
+    fn set_table<'d>(fetch: &mut Self::Fetch<'d>, state: &Self::State, table: &'d Table) {
+        *fetch = unsafe { table.try_column_slice::<T>(state) };
+    }
+
+    fn fetch<'d>(fetch: &mut Self::Fetch<'d>, arch_entity: &ArchEntity) -> Self::Item<'d> {
+        unsafe {
+            if let Some(fetch) = fetch {
+                Some(fetch.as_ref()[arch_entity.row.0].get().as_ref().unwrap())
+            } else {
+                None
+            }
+        }
+    }
+
+    fn system_access(components: &mut Components) -> SystemAccess {
+        let meta = components.register::<T>();
+        SystemAccess::default().with_component(ComponentAccess::new(AccessType::Immutable, *meta))
+    }
+
+    fn set_ids() -> Vec<TypeId> {
+        // vec![std::any::TypeId::of::<T>()]
+        vec![]
+    }
+}
+
 impl<T: Component> QueryData for T {
     type ReadOnly = Self;
 }
@@ -323,25 +367,11 @@ mod tests {
     // #[traced_test]
     #[test]
     fn state() {
-        // let mut world = World::default();
-
-        // let mut scheduler = Scheduler::default();
-        // scheduler.add_systems(Schedule::Update, test_query);
-        // scheduler.build_schedule(&mut world);
-        //
-        // world.spawn((Health(0), Size(0), Weight(0)));
-        // world.spawn(Health(0));
-
-        // let system = &mut scheduler.executers[5].systems[0];
-        // system.new_archetype(world.archetypes.get(ArchId::new(0)).unwrap());
-        // system.new_archetype(world.archetypes.get(ArchId::new(1)).unwrap());
-
-        // println!("{:#?}", system.access(&mut world));
-        // println!("{:#?}", scheduler);
-        // println!("{:#?}", world.archetypes);
+        let mut world = World::default();
 
         // assert!(world.entities.len() == 2);
 
         // println!("exiting scope");
+        println!("hello")
     }
 }

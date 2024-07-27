@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     collections::HashMap,
     fmt::{Debug, Display},
     future::Future,
@@ -197,12 +198,17 @@ where
         }
     }
 
+    // TODO: (crate)
     pub fn insert(&mut self, asset: LoadedAsset<A>, id: AssetId) {
         self.storage.insert(id, asset);
     }
 
     pub fn get(&self, handle: &Handle<A>) -> Option<&LoadedAsset<A>> {
         self.storage.get(&handle.id())
+    }
+
+    pub fn remove(&mut self, handle: &Handle<A>) -> LoadedAsset<A> {
+        self.storage.remove(&handle.id())
     }
 }
 
@@ -299,6 +305,42 @@ impl AssetLoaders {
         self.loaders.push(InternalAssetLoader::new(loader, future));
     }
 
+    pub fn store_asset<A: Asset>(
+        &mut self,
+        _asset_folder: String,
+        asset: A,
+        key: String,
+    ) -> Handle<A> {
+        let asset_type_id = TypeId::of::<A>();
+
+        let mut erased_asset = Some(ErasedLoadedAsset::new(LoadedAsset::new(
+            asset,
+            key.clone(),
+            // Set by the ErasedAssetLoader
+            ErasedHandle::new(AssetId(u64::MAX)),
+        )));
+
+        for internal_loader in self.loaders.iter_mut() {
+            let result = internal_loader.loader.store_asset(
+                internal_loader.async_dispatch.clone(),
+                &internal_loader.handler,
+                erased_asset.take().unwrap(),
+                asset_type_id,
+            );
+
+            match result {
+                Ok(h) => {
+                    let handle = h.into();
+                    self.loaded_assets.insert(key, handle);
+                    return handle.into();
+                }
+                Err(a) => erased_asset = Some(a),
+            }
+        }
+
+        panic!("Could not find storage for asset: {}", key);
+    }
+
     pub fn load<A: Asset, P: AsRef<Path>>(
         &mut self,
         _asset_folder: String,
@@ -318,24 +360,34 @@ impl AssetLoaders {
             .to_owned();
         let path = path.as_ref().to_str().unwrap().to_owned();
 
-        let loader_index = self
+        let asset_type_id = TypeId::of::<A>();
+        for loader in self
             .ext_to_loader
             .iter()
-            .find(|(ext, _)| ext.contains(&file_ext.to_str().unwrap()))
+            .filter(|(ext, _)| ext.contains(&file_ext.to_str().unwrap()))
             .map(|(_, i)| i)
-            .expect("unsupported file type");
-        // TODO: handle error
-        let internal_loader = &self.loaders[*loader_index];
-        let handle = internal_loader.loader.load(
-            context,
-            internal_loader.async_dispatch.clone(),
-            &internal_loader.handler,
-            path.clone(),
-            file_ext.to_str().unwrap().to_owned(),
-        );
-        self.loaded_assets.insert(path, handle);
+        {
+            let internal_loader = &self.loaders[*loader];
+            let result = internal_loader.loader.load(
+                context.clone(),
+                internal_loader.async_dispatch.clone(),
+                &internal_loader.handler,
+                path.clone(),
+                file_ext.to_str().unwrap().to_owned(),
+                asset_type_id,
+            );
 
-        handle.into()
+            match result {
+                Ok(h) => {
+                    let handle = h.into();
+                    self.loaded_assets.insert(path.clone(), handle);
+                    return handle.into();
+                }
+                _ => {}
+            }
+        }
+
+        panic!("Could not find asset loader for path: {}", path);
     }
 }
 
@@ -369,6 +421,12 @@ impl AssetServer {
                 .expect("Do not load assets before the `StartUp` schedule")
                 .clone(),
         )
+    }
+
+    pub fn store_asset<A: Asset>(&mut self, key: String, asset: A) -> Handle<A> {
+        let _span = trace_span!("asset load from bytes").entered();
+        self.loaders
+            .store_asset(self.asset_folder.clone(), asset, key)
     }
 
     fn insert_context(&mut self, context: RenderContext) {
@@ -542,7 +600,15 @@ pub trait ErasedAssetLoader: Send + Sync + 'static {
         handler: &AssetHandleCreator,
         path: String,
         ext: String,
-    ) -> ErasedHandle;
+        asset_type_id: TypeId,
+    ) -> Result<ErasedHandle, ()>;
+    fn store_asset(
+        &self,
+        sender: AssetFuture,
+        handler: &AssetHandleCreator,
+        asset: ErasedLoadedAsset,
+        asset_type_id: TypeId,
+    ) -> Result<ErasedHandle, ErasedLoadedAsset>;
     fn extensions(&self) -> Vec<&'static str>;
 }
 
@@ -580,7 +646,12 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
         handler: &AssetHandleCreator,
         path: String,
         ext: String,
-    ) -> ErasedHandle {
+        asset_type_id: TypeId,
+    ) -> Result<ErasedHandle, ()> {
+        if TypeId::of::<L::Asset>() != asset_type_id {
+            return Err(());
+        }
+
         let handle = handler.new_id();
 
         std::thread::spawn(move || {
@@ -593,7 +664,26 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
             sender.send_result(handle, result.map_err(|e| (path, e)));
         });
 
-        handle
+        Ok(handle)
+    }
+
+    fn store_asset(
+        &self,
+        sender: AssetFuture,
+        handler: &AssetHandleCreator,
+        asset: ErasedLoadedAsset,
+        asset_type_id: TypeId,
+    ) -> Result<ErasedHandle, ErasedLoadedAsset> {
+        if TypeId::of::<L::Asset>() != asset_type_id {
+            return Err(asset);
+        }
+
+        let handle = handler.new_id();
+        let mut asset: LoadedAsset<L::Asset> = asset.into();
+        asset.handle = handle;
+        sender.send_result::<L::Asset>(handle, Ok(asset));
+
+        Ok(handle)
     }
 
     fn extensions(&self) -> Vec<&'static str> {
