@@ -148,7 +148,7 @@ pub struct HotReloadPlugin {
 
 impl Plugin for HotReloadPlugin {
     fn build(&mut self, app: &mut App) {
-        if cfg!(target_os = "windows") {
+        if !cfg!(target_arch = "wasm32") {
             // let s: String = rand::thread_rng()
             //     .sample_iter(&Alphanumeric)
             //     .take(7)
