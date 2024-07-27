@@ -4,6 +4,7 @@ use asset::{Assets, Handle};
 use ecs::prelude::*;
 use ecs::SparseArrayIndex;
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
+use render::Dimensions;
 use render::{
     BindGroupHandle, BindGroups, RenderBindGroup, RenderConfig, RenderDevice, RenderEncoder,
     RenderQueue, RenderView,
@@ -17,6 +18,8 @@ use winny_math::vector::{Vec2f, Vec3f, Vec4f};
 
 use wgpu::util::DeviceExt;
 
+use crate::create_read_only_storage_bind_group;
+use crate::texture::TextureAtlas;
 use crate::texture::{Texture, TextureDimensions};
 use crate::transform::Transform;
 use crate::vertex::{VertexLayout, VertexUv, FULLSCREEN_QUAD_VERTEX_UV};
@@ -49,7 +52,10 @@ impl Plugin for SpritePlugin {
         app.register_resource::<SpriteRenderer>()
             .insert_resource(GlobalSpriteSettings::from(&*self))
             .add_systems(ecs::Schedule::StartUp, startup)
-            .add_systems(ecs::Schedule::PostUpdate, bind_new_sprite_bundles)
+            .add_systems(
+                ecs::Schedule::PostUpdate,
+                (bind_new_sprite_bundles, bind_new_animated_sprite_bundles),
+            )
             .add_systems(ecs::Schedule::PreRender, prepare_for_render_pass)
             .add_systems(ecs::Schedule::Render, render_sprites);
     }
@@ -63,6 +69,7 @@ fn startup(mut commands: Commands, device: Res<RenderDevice>, config: Res<Render
 fn create_sprite_render_pipeline(
     device: &RenderDevice,
     config: &RenderConfig,
+    layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     let sprite_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -89,7 +96,7 @@ fn create_sprite_render_pipeline(
 
     let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[&sprite_bind_group_layout],
+        bind_group_layouts: &[&sprite_bind_group_layout, layout],
         push_constant_ranges: &[],
     });
 
@@ -122,12 +129,30 @@ pub struct SpriteRenderer {
     vertex_buffer: wgpu::Buffer,
     sprite_buffer: wgpu::Buffer,
     transform_buffer: wgpu::Buffer,
+    // An 2D array of Matrix4x4f
+    atlas_uniforms: wgpu::Buffer,
+    atlas_uniform_bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
 }
 
 impl SpriteRenderer {
     pub fn new(device: &RenderDevice, config: &RenderConfig) -> Self {
-        let pipeline = create_sprite_render_pipeline(device, config);
+        let atlas_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("atlas uniforms"),
+            size: 12,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let (layout, atlas_uniform_bind_group) = create_read_only_storage_bind_group(
+            Some("atlas uniforms"),
+            &device,
+            &atlas_uniforms,
+            wgpu::ShaderStages::VERTEX,
+            0,
+        );
+
+        let pipeline = create_sprite_render_pipeline(device, config, &layout);
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprite vertexes"),
@@ -151,6 +176,8 @@ impl SpriteRenderer {
         });
 
         Self {
+            atlas_uniforms,
+            atlas_uniform_bind_group,
             vertex_buffer,
             sprite_buffer,
             transform_buffer,
@@ -159,22 +186,81 @@ impl SpriteRenderer {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct AtlasUniform {
+    width: u32,
+    height: u32,
+    index: u32,
+}
+
 pub fn prepare_for_render_pass(
     mut sprite_renderer: ResMut<SpriteRenderer>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     config: Res<RenderConfig>,
-    sprites: Query<(Sprite, Transform, BindGroupHandle, TextureDimensions)>,
+    sprites: Query<(
+        Sprite,
+        Transform,
+        BindGroupHandle,
+        TextureDimensions,
+        Option<AnimatedSprite>,
+    )>,
     // TODO: change to camera
     window: Res<Window>,
 ) {
     // TODO: decide on whether to sort by bind group handle or z
     let mut sprites = sprites.iter().collect::<Vec<_>>();
-    sprites.sort_by(|(s1, _, _, _), (s2, _, _, _)| s1.z.cmp(&s2.z));
+    sprites.sort_by(|(s1, _, _, _, _), (s2, _, _, _, _)| s1.z.cmp(&s2.z));
+
+    let atlas_data: Vec<_> = sprites
+        .iter()
+        .map(|(_, _, _, _, a_s)| {
+            if let Some(a_s) = a_s {
+                AtlasUniform {
+                    width: a_s.width as u32,
+                    height: a_s.height as u32,
+                    index: a_s.index,
+                }
+            } else {
+                AtlasUniform {
+                    width: 1,
+                    height: 1,
+                    index: 0,
+                }
+            }
+        })
+        .collect();
+    let atlas_data = bytemuck::cast_slice(&atlas_data);
+    if atlas_data.len() <= sprite_renderer.atlas_uniforms.size() as usize {
+        queue.write_buffer(&sprite_renderer.atlas_uniforms, 0, atlas_data);
+    } else {
+        util::tracing::info!(
+            "allocating larger sprite atlas uniform buffer. current size: {}, new size: {}",
+            sprite_renderer.atlas_uniforms.size(),
+            atlas_data.len(),
+        );
+
+        sprite_renderer.atlas_uniforms =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("sprite atlas uiform"),
+                contents: atlas_data,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let (_, atlas_uniform_bind_group) = create_read_only_storage_bind_group(
+            Some("atlas uniforms"),
+            &device,
+            &sprite_renderer.atlas_uniforms,
+            wgpu::ShaderStages::VERTEX,
+            0,
+        );
+        sprite_renderer.atlas_uniform_bind_group = atlas_uniform_bind_group;
+    }
 
     let vertex_data: Vec<_> = sprites
         .iter()
-        .map(|(s, t, _, d)| s.to_vertices(&config, d, t))
+        .map(|(s, t, _, d, a)| s.to_vertices(&config, d, t, *a))
         .flatten()
         .collect();
     let vertex_data = bytemuck::cast_slice(&vertex_data);
@@ -198,7 +284,7 @@ pub fn prepare_for_render_pass(
 
     let sprite_data = sprites
         .iter()
-        .map(|(s, _, _, _)| s.to_raw())
+        .map(|(s, _, _, _, _)| s.to_raw())
         .collect::<Vec<_>>();
     let sprite_data = bytemuck::cast_slice(&sprite_data);
 
@@ -222,7 +308,7 @@ pub fn prepare_for_render_pass(
     let viewport = &window.viewport;
     let transform_data = sprites
         .iter()
-        .map(|(_, t, _, _)| t.transformation_matrix(viewport, config.max_z))
+        .map(|(_, t, _, _, _)| t.transformation_matrix(viewport, config.max_z))
         .collect::<Vec<_>>();
     let transform_data = bytemuck::cast_slice(&transform_data);
 
@@ -277,6 +363,8 @@ fn render_sprites(
     render_pass.set_vertex_buffer(1, sprite_renderer.sprite_buffer.slice(..));
     // sorted by bind group handle
     render_pass.set_vertex_buffer(2, sprite_renderer.transform_buffer.slice(..));
+    // sorted by bind group handle
+    render_pass.set_bind_group(1, &sprite_renderer.atlas_uniform_bind_group, &[]);
 
     let mut offset = 0;
     let previous_bind_index = usize::MAX;
@@ -300,6 +388,37 @@ pub struct SpriteBundle {
     pub handle: Handle<Texture>,
 }
 
+#[derive(Debug, Clone, WinnyBundle)]
+pub struct AnimatedSpriteBundle {
+    pub sprite: Sprite,
+    pub animated_sprite: AnimatedSprite,
+    pub handle: Handle<TextureAtlas>,
+}
+
+pub fn bind_new_animated_sprite_bundles(
+    mut commands: Commands,
+    device: Res<RenderDevice>,
+    sprites: Query<
+        (Entity, Handle<TextureAtlas>),
+        (With<AnimatedSprite>, Without<BindGroupHandle>),
+    >,
+    texture_atlases: ResMut<Assets<TextureAtlas>>,
+    mut bind_groups: ResMut<BindGroups>,
+) {
+    for (entity, handle) in sprites.iter() {
+        if let Some(asset) = texture_atlases.get(&handle) {
+            let dimensions = TextureDimensions(Dimensions(
+                asset.texture.tex.width(),
+                asset.texture.tex.height(),
+            ));
+            let handle = bind_groups.get_handle_or_insert_with(&asset.path, || {
+                binding_from_texture(&asset.asset.texture, &device)
+            });
+            commands.get_entity(entity).insert((handle, dimensions));
+        }
+    }
+}
+
 pub fn bind_new_sprite_bundles(
     mut commands: Commands,
     device: Res<RenderDevice>,
@@ -310,13 +429,11 @@ pub fn bind_new_sprite_bundles(
     for (entity, sprite, handle) in sprites.iter() {
         if let Some(asset) = textures.get(&handle) {
             util::tracing::info!("binding new sprite bundle: {entity:?}, {handle:?}, {sprite:?}");
-            let texture_dimensions = TextureDimensions::from_texture(&asset.asset);
+            let dimensions = TextureDimensions(Dimensions(asset.tex.width(), asset.tex.height()));
             let handle = bind_groups.get_handle_or_insert_with(&asset.path, || {
                 binding_from_texture(&asset.asset, &device)
             });
-            commands
-                .get_entity(entity)
-                .insert((handle, texture_dimensions));
+            commands.get_entity(entity).insert((handle, dimensions));
         }
     }
 }
@@ -366,12 +483,19 @@ impl Sprite {
         config: &RenderConfig,
         texture_dimension: &TextureDimensions,
         transform: &Transform,
+        animation: Option<&AnimatedSprite>,
     ) -> [VertexUv; 6] {
         let mut vertices = FULLSCREEN_QUAD_VERTEX_UV;
 
+        let atlas_scaling = if let Some(animation) = animation {
+            (1.0 / animation.width as f32, 1.0 / animation.height as f32)
+        } else {
+            (1.0, 1.0)
+        };
+
         let normalized_scale = Vec2f::new(
-            texture_dimension.0 .0 as f32 / config.width() as f32,
-            texture_dimension.0 .1 as f32 / config.height() as f32,
+            atlas_scaling.0 * texture_dimension.0 .0 as f32 / config.width() as f32,
+            atlas_scaling.1 * texture_dimension.0 .1 as f32 / config.height() as f32,
         );
         let image_scale = scale_matrix4x4f(normalized_scale);
         for vert in vertices.iter_mut() {
@@ -394,6 +518,36 @@ impl Sprite {
         }
 
         vertices
+    }
+}
+
+#[derive(WinnyComponent, Debug, Clone, Copy)]
+pub struct AnimatedSprite {
+    width: u16,
+    height: u16,
+    index: u32,
+    keyframes: usize,
+}
+
+impl AnimatedSprite {
+    pub fn from_texture_atlas(atlas: &TextureAtlas) -> Self {
+        if atlas.width != 1 {
+            panic!("atlas dimensions not supported");
+        }
+
+        Self {
+            width: atlas.width as u16,
+            height: atlas.height as u16,
+            keyframes: atlas.height as usize,
+            index: 0,
+        }
+    }
+
+    pub fn advance(&mut self) {
+        self.index += 1;
+        if self.index >= self.keyframes as u32 {
+            self.index = 0;
+        }
     }
 }
 
