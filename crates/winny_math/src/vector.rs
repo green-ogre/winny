@@ -191,7 +191,7 @@ impl Vec2f {
 //     }
 // }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Vec3f {
     pub x: f32,
     pub y: f32,
@@ -227,12 +227,13 @@ impl Vec3f {
         [self.x, self.y, self.z]
     }
 
-    // pub fn distance(&self, other: &Vec3f) -> f32 {
-    //     let x = self.x - other.x;
-    //     let y = self.y - other.y;
-    //     (x * x + y * y).sqrt()
-    // }
-    //
+    /// The squared, 2D distance.
+    pub fn dist2(&self, other: &Vec3f) -> f32 {
+        let x = self.x - other.x;
+        let y = self.y - other.y;
+        (x * x + y * y).sqrt()
+    }
+
     pub fn is_zero(&self) -> bool {
         self.x == 0.0 && self.y == 0.0 && self.z == 0.0
     }

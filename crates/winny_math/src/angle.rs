@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Radf(pub f32);
 
 impl From<Degrees> for Radf {
@@ -7,7 +7,7 @@ impl From<Degrees> for Radf {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Degrees(pub f32);
 
 impl From<Radf> for Degrees {
