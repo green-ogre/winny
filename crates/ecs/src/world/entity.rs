@@ -7,7 +7,7 @@ use crate::{
 
 use util::tracing::{error, trace};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Entity(u64);
 
 impl Entity {

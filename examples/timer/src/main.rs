@@ -18,15 +18,14 @@ pub fn main() {
 
 #[derive(Event, Default)]
 struct InfoTimeout;
-impl TimeoutEmitter for InfoTimeout {}
 
 fn spawn_timer(mut commands: Commands) {
-    commands.spawn(Timer::<InfoTimeout>::new(1.0));
+    commands.spawn(Timer::new(1.0, InfoTimeout));
 }
 
 fn print_on_timeout(timeouts: EventReader<InfoTimeout>, mut commands: Commands) {
     for _ in timeouts.read() {
         info!("Timeout!");
-        commands.spawn(Timer::<InfoTimeout>::new(1.0));
+        commands.spawn(Timer::new(1.0, InfoTimeout));
     }
 }

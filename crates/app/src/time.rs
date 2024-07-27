@@ -1,5 +1,3 @@
-use std::{marker::PhantomData, ops::Deref};
-
 use chrono::{DateTime, Local, TimeDelta};
 use ecs::{prelude::*, WinnyComponent, WinnyResource};
 
@@ -52,49 +50,45 @@ impl DeltaTime {
 }
 
 pub trait TimeApp {
-    fn register_timer<Emitter: TimeoutEmitter>(&mut self) -> &mut Self;
+    fn register_timer<E: Event>(&mut self) -> &mut Self;
 }
 
 impl TimeApp for App {
-    fn register_timer<Emitter: TimeoutEmitter>(&mut self) -> &mut App {
-        self.register_event::<Emitter>()
-            .add_systems(Schedule::Platform, emit_timer::<Emitter>);
+    fn register_timer<E: Event>(&mut self) -> &mut App {
+        self.register_event::<E>()
+            .add_systems(Schedule::Platform, emit_timer::<E>);
 
         self
     }
 }
 
 #[derive(WinnyComponent)]
-pub struct Timer<Emitter: TimeoutEmitter>(
-    chrono::DateTime<chrono::Local>,
-    i64,
-    PhantomData<Emitter>,
-);
+pub struct Timer<E: Event>(chrono::DateTime<chrono::Local>, i64, Option<E>);
 
-impl<Emitter: TimeoutEmitter> Timer<Emitter> {
-    pub fn new(duration: impl Into<TimerDurationSeconds>) -> Self {
+impl<E: Event> Timer<E> {
+    pub fn new(duration: impl Into<TimerDurationSeconds>, event: E) -> Self {
         Self(
             chrono::Local::now(),
             (duration.into().0 * 1000.0) as i64,
-            PhantomData,
+            Some(event),
         )
     }
 }
 
-pub fn emit_timer<Emitter: TimeoutEmitter>(
+pub fn emit_timer<E: Event>(
     mut commands: Commands,
-    mut writer: EventWriter<Emitter>,
-    timers: Query<(Entity, Timer<Emitter>)>,
+    mut writer: EventWriter<E>,
+    mut timers: Query<(Entity, Mut<Timer<E>>)>,
 ) {
-    for (entity, timer) in timers.iter() {
+    for (entity, timer) in timers.iter_mut() {
         if TimeDelta::milliseconds(timer.1) <= chrono::Local::now().signed_duration_since(timer.0) {
-            writer.send(Emitter::default());
+            if let Some(event) = timer.2.take() {
+                writer.send(event);
+            }
             commands.get_entity(entity).despawn();
         }
     }
 }
-
-pub trait TimeoutEmitter: Event + Default {}
 
 pub struct TimerDurationSeconds(f32);
 
