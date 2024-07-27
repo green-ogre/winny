@@ -1,13 +1,56 @@
-use std::{future::Future, io::Cursor};
+use std::{fmt::Display, future::Future, io::Cursor};
 
 // use crate::sprite::{SpriteBinding, SpriteData};
-use asset::{load_binary, reader::ByteReader, AssetApp, AssetLoaderError};
+use asset::{load_binary, reader::ByteReader, Asset, AssetApp, AssetLoaderError};
 
 use ecs::WinnyComponent;
 use image::{DynamicImage, GenericImageView};
 use util::tracing::trace;
 
 use render::{Dimensions, RenderConfig, RenderContext, RenderDevice, RenderQueue};
+
+struct TextureAtlasLoader;
+
+impl asset::AssetLoader for TextureAtlasLoader {
+    type Asset = TextureAtlas;
+
+    fn extensions(&self) -> Vec<&'static str> {
+        vec!["png"]
+    }
+
+    fn load(
+        _context: RenderContext,
+        _reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
+        _path: String,
+        _ext: &str,
+    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>> {
+        async move { unimplemented!() }
+    }
+}
+
+struct ImageAssetLoader;
+
+impl asset::AssetLoader for ImageAssetLoader {
+    type Asset = Image;
+
+    fn extensions(&self) -> Vec<&'static str> {
+        vec!["png"]
+    }
+
+    fn load(
+        _context: RenderContext,
+        reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
+        _path: String,
+        ext: &str,
+    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>> {
+        async move {
+            match ext {
+                "png" => Image::new(reader),
+                _ => Err(AssetLoaderError::UnsupportedFileExtension),
+            }
+        }
+    }
+}
 
 struct TextureAssetLoader;
 
@@ -27,7 +70,7 @@ impl asset::AssetLoader for TextureAssetLoader {
         async move {
             match ext {
                 "png" => {
-                    let source = TextureSource::new(reader)?;
+                    let source = Image::new(reader)?;
                     Ok(Texture::from_image(
                         &context.device,
                         &context.queue,
@@ -41,72 +84,27 @@ impl asset::AssetLoader for TextureAssetLoader {
     }
 }
 
-// #[derive(Debug, WinnyResource)]
-// pub struct Textures {
-//     storage: SparseSet<AssetId, Texture>,
-// }
-//
-// impl Default for Textures {
-//     fn default() -> Self {
-//         Self {
-//             storage: SparseSet::new(),
-//         }
-//     }
-// }
-//
-// impl Textures {
-//     pub fn insert(&mut self, handle: Handle<TextureSource>, texture: Texture) {
-//         self.storage.insert(handle.id(), texture);
-//     }
-//
-//     pub fn get(&self, handle: &Handle<TextureSource>) -> Option<&Texture> {
-//         self.storage.get(&handle.id())
-//     }
-// }
-
-// #[derive(Debug, WinnyEvent)]
-// pub struct TextureCreated {
-//     pub handle: Handle<TextureSource>,
-// }
-
-// fn insert_new_textures(
-//     mut textures: ResMut<Textures>,
-//     mut texture_created: EventWriter<TextureCreated>,
-//     assets: Res<Assets<TextureSource>>,
-//     events: EventReader<AssetLoaderEvent<TextureSource>>,
-//     device: Res<RenderDevice>,
-//     queue: Res<RenderQueue>,
-// ) {
-//     for event in events.read() {
-//         match event {
-//             AssetLoaderEvent::Loaded { handle } => {
-//                 let tex_source = assets.get(&handle).unwrap();
-//                 let texture =
-//                     Texture::from_bytes(&tex_source.bytes, tex_source.dimensions, &device, &queue);
-//                 textures.insert(handle.clone(), texture);
-//                 texture_created.send(TextureCreated {
-//                     handle: handle.clone(),
-//                 })
-//             }
-//             AssetLoaderEvent::Err { .. } => {}
-//         }
-//     }
-// }
-
 pub struct TexturePlugin;
 
 impl app::plugins::Plugin for TexturePlugin {
     fn build(&mut self, app: &mut app::app::App) {
-        let loader = TextureAssetLoader {};
-        app.register_asset_loader::<Texture>(loader);
+        let texture_loader = TextureAssetLoader {};
+        let image_loader = ImageAssetLoader {};
+        let atlas_loader = TextureAtlasLoader {};
+
+        app.register_asset_loader::<Texture>(texture_loader)
+            .register_asset_loader::<TextureAtlas>(atlas_loader)
+            .register_asset_loader::<Image>(image_loader);
     }
 }
 
-pub struct TextureSource {
+pub struct Image {
     pub image: DynamicImage,
 }
 
-impl TextureSource {
+impl Asset for Image {}
+
+impl Image {
     pub fn new(mut reader: ByteReader<Cursor<Vec<u8>>>) -> Result<Self, AssetLoaderError> {
         let data = reader
             .read_all()
@@ -123,6 +121,13 @@ pub struct TextureDimensions(pub Dimensions);
 impl TextureDimensions {
     pub fn from_texture(texture: &Texture) -> Self {
         Self(Dimensions(texture.tex.width(), texture.tex.height()))
+    }
+
+    pub fn from_texture_atlas(atlas: &TextureAtlas) -> Self {
+        Self(Dimensions(
+            atlas.texture.tex.width() * atlas.width,
+            atlas.texture.tex.height() * atlas.height,
+        ))
     }
 }
 
@@ -322,6 +327,121 @@ impl Texture {
         }
     }
 }
+
+#[derive(WinnyComponent, Debug)]
+pub struct TextureAtlas {
+    // Number of Textures horizontally
+    pub width: u32,
+    // Number of Textures vertically
+    pub height: u32,
+    pub texture: Texture,
+}
+
+impl Asset for TextureAtlas {}
+
+impl TextureAtlas {
+    pub fn build_atlas(
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        textures: Vec<Image>,
+    ) -> Result<Self, AtlasError> {
+        let dimensions = if let Some(first) = textures.first() {
+            first.image.dimensions()
+        } else {
+            return Err(AtlasError::InputEmpty);
+        };
+
+        if textures.iter().any(|t| t.image.dimensions() != dimensions) {
+            return Err(AtlasError::NonUniformDimensions);
+        }
+
+        let height = textures.len() as u32;
+        let width = 1;
+
+        let rgba = textures
+            .into_iter()
+            .map(|i| i.image.to_rgba8().to_vec())
+            .flatten()
+            .collect::<Vec<u8>>();
+
+        let size = wgpu::Extent3d {
+            width: dimensions.0,
+            height: dimensions.1 * height,
+            depth_or_array_layers: 1,
+        };
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("atlas texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                aspect: wgpu::TextureAspect::All,
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            &rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * dimensions.0),
+                rows_per_image: Some(dimensions.1 * height),
+            },
+            size,
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let texture = Texture {
+            tex: texture,
+            view,
+            sampler,
+        };
+
+        Ok(TextureAtlas {
+            width,
+            height,
+            texture,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub enum AtlasError {
+    NonUniformDimensions,
+    InputEmpty,
+}
+
+impl Display for AtlasError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NonUniformDimensions => {
+                write!(f, "cannot build atlas texture with non uniform dimensions")
+            }
+            Self::InputEmpty => {
+                write!(f, "input was empty")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AtlasError {}
 
 pub struct DepthTexture {
     pub tex: wgpu::Texture,
