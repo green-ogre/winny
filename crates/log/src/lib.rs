@@ -30,7 +30,7 @@ impl app::plugins::Plugin for LogPlugin {
         let subscriber = util::tracing_subscriber::Registry::default();
         let subscriber = subscriber.with(
             util::tracing_subscriber::filter::EnvFilter::builder()
-                .parse_lossy("info,wgpu=warn,naga=warn,polling=error,winit=warn,calloop=warn"),
+                .parse_lossy("warn,wgpu=warn,naga=warn,polling=error,winit=warn,calloop=warn"),
         );
         // let subscriber = subscriber.with(util::tracing_error::ErrorLayer::default());
         let subscriber = subscriber.with(

@@ -193,6 +193,8 @@ enum ChunkId {
     LIST,
     fmt,
     data,
+    bext,
+    junk,
 }
 
 pub struct Chunk {
@@ -213,6 +215,8 @@ impl Chunk {
             "LIST" => ChunkId::LIST,
             "fmt " => ChunkId::fmt,
             "data" => ChunkId::data,
+            "bext" => ChunkId::bext,
+            "junk" => ChunkId::junk,
             _ => {
                 warn!("Did no parse chunk id: {}", chunk_id);
                 return Err(Error::UnknownChunkId);
