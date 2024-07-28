@@ -1,13 +1,11 @@
-use app::plugins::Plugin;
-use ecs::{Commands, Component, Query, Res, ResMut, WinnyResource};
-use render::{BindGroupHandle, BindGroups, RenderConfig, RenderDevice, RenderEncoder, RenderView};
-use winny_math::matrix::Matrix4x4f;
+use app::{plugins::Plugin, window::Window, winit::window};
+use ecs::{Commands, Query, Res, ResMut, WinnyBundle, WinnyComponent, WinnyResource};
+use render::{RenderConfig, RenderDevice, RenderEncoder, RenderQueue, RenderView};
+use winny_math::{matrix::Matrix4x4f, vector::Vec3f};
 
 use crate::{
-    create_read_only_storage_bind_group,
-    sprite::{AnimatedSprite, Sprite, TextureAtlasBindGroups},
-    transform::Transform,
-    vertex::{VertexLayout, VertexUv},
+    transform::{self, new_transform_bind_group, new_transform_bind_group_layout, Transform},
+    vertex::{Vertex, VertexLayout, FULLSCREEN_QUAD_VERTEX},
 };
 
 pub struct PrimitivesPlugin;
@@ -15,7 +13,9 @@ pub struct PrimitivesPlugin;
 impl Plugin for PrimitivesPlugin {
     fn build(&mut self, app: &mut app::app::App) {
         app.register_resource::<PrimitiveRenderer>()
-            .add_systems(ecs::Schedule::StartUp, startup);
+            .add_systems(ecs::Schedule::StartUp, startup)
+            .add_systems(ecs::Schedule::PreRender, prepare_buffers_for_render_pass)
+            .add_systems(ecs::Schedule::Render, render_primitives);
     }
 }
 
@@ -23,122 +23,64 @@ fn startup(mut commands: Commands, device: Res<RenderDevice>, config: Res<Render
     commands.insert_resource(PrimitiveRenderer::new(&device, &config));
 }
 
-#[derive(WinnyComponent)]
-pub enum Primitive {
-    Rect(RectCollider),
-    Circle(CircleCollider),
-}
-
-impl Collider {
-    pub fn absolute(&self, position: &Vec3f) -> AbsoluteCollider {
-        match self {
-            Self::Rect(rect) => {
-                let mut abs = *rect;
-                abs.tl += *position;
-                AbsoluteCollider::Rect(abs)
-            }
-            Self::Circle(circle) => {
-                let mut abs = *circle;
-                abs.position += *position;
-                AbsoluteCollider::Circle(abs)
-            }
-        }
-    }
-}
-
-pub enum AbsoluteCollider {
-    Rect(RectCollider),
-    Circle(CircleCollider),
-}
-
-impl CollidesWith<Self> for AbsoluteCollider {
-    fn collides_with(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Rect(s), Self::Rect(o)) => s.collides_with(o),
-            (Self::Rect(s), Self::Circle(o)) => s.collides_with(o),
-            (Self::Circle(s), Self::Rect(o)) => s.collides_with(o),
-            (Self::Circle(s), Self::Circle(o)) => s.collides_with(o),
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Component)]
-pub struct RectCollider {
+#[derive(Debug, Default, Clone, Copy, PartialEq, WinnyComponent)]
+pub struct RectPrimitive {
     pub tl: Vec3f,
     pub size: Vec3f,
 }
 
-impl RectCollider {
-    pub fn br(&self) -> Vec3f {
-        self.tl + self.size
+impl RectPrimitive {
+    pub fn new(tl: Vec3f, size: Vec3f) -> Self {
+        Self { tl, size }
+    }
+
+    pub(crate) fn as_vertices(&self) -> [Vertex; 12] {
+        [
+            Vertex::new(-1.0, 1.0, 0.0),
+            Vertex::new(-1.0, -1.0, 0.0),
+            Vertex::new(-0.98, -1.0, 0.0),
+            Vertex::new(-0.98, -1.0, 0.0),
+            Vertex::new(-0.98, 1.0, 0.0),
+            Vertex::new(-1.0, 1.0, 0.0),
+            Vertex::new(0.98, -1.0, 0.0),
+            Vertex::new(1.0, -1.0, 0.0),
+            Vertex::new(1.0, 1.0, 0.0),
+            Vertex::new(1.0, 1.0, 0.0),
+            Vertex::new(0.98, 1.0, 0.0),
+            Vertex::new(0.98, -1.0, 0.0),
+        ]
     }
 }
 
-impl CollidesWith<Self> for RectCollider {
-    fn collides_with(&self, other: &Self) -> bool {
-        let not_collided = other.tl.y > self.br().y
-            || other.tl.x > self.br().x
-            || other.br().y < self.tl.y
-            || other.br().x < self.tl.x;
-
-        !not_collided
-    }
+#[derive(WinnyBundle)]
+pub struct RectPrimitiveBundle {
+    pub rect: RectPrimitive,
+    pub transform: Transform,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Component)]
-pub struct CircleCollider {
+#[derive(Debug, Default, Clone, Copy, PartialEq, WinnyComponent)]
+pub struct CirclePrimitive {
     pub position: Vec3f,
     pub radius: f32,
 }
 
-impl CollidesWith<Self> for CircleCollider {
-    fn collides_with(&self, other: &Self) -> bool {
-        let distance = self.position.dist2(&other.position);
-        let combined_radii = self.radius.powi(2) + other.radius.powi(2);
-
-        distance <= combined_radii
+impl CirclePrimitive {
+    pub fn new(position: Vec3f, radius: f32) -> Self {
+        Self { position, radius }
     }
-}
 
-impl CollidesWith<RectCollider> for CircleCollider {
-    fn collides_with(&self, other: &RectCollider) -> bool {
-        let dist_x = (self.position.x - (other.tl.x - other.size.x * 0.5)).abs();
-        let dist_y = (self.position.y - (other.tl.y - other.size.y * 0.5)).abs();
-
-        if dist_x > other.size.x * 0.5 + self.radius {
-            return false;
-        }
-
-        if dist_y > other.size.y * 0.5 + self.radius {
-            return false;
-        }
-
-        if dist_x <= other.size.x * 0.5 {
-            return true;
-        }
-
-        if dist_y <= other.size.y * 0.5 {
-            return true;
-        }
-
-        let corner_dist =
-            (dist_x - other.size.x * 0.5).powi(2) + (dist_y - other.size.y * 0.5).powi(2);
-
-        corner_dist <= self.radius.powi(2)
-    }
-}
-
-impl CollidesWith<CircleCollider> for RectCollider {
-    fn collides_with(&self, other: &CircleCollider) -> bool {
-        other.collides_with(self)
+    pub(crate) fn as_vertices(&self, transform: &Transform) -> [Vertex; 6] {
+        todo!()
     }
 }
 
 #[derive(WinnyResource)]
 pub struct PrimitiveRenderer {
+    transform_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     transform_buffer: wgpu::Buffer,
     pipeline: wgpu::RenderPipeline,
+    num_verts: u32,
 }
 
 impl PrimitiveRenderer {
@@ -153,16 +95,21 @@ impl PrimitiveRenderer {
         });
 
         let transform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sprite transform"),
+            label: Some("sprite vertexes"),
             size: 0,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        let layout = new_transform_bind_group_layout(&device, 0, wgpu::ShaderStages::VERTEX);
+        let transform_bind_group = new_transform_bind_group(&device, &layout, &transform_buffer, 0);
+
         Self {
-            vertex_buffer,
+            transform_bind_group,
             transform_buffer,
+            vertex_buffer,
             pipeline,
+            num_verts: 0,
         }
     }
 }
@@ -179,26 +126,64 @@ fn create_primitive_render_pipeline(
 
     let shader = wgpu::ShaderModuleDescriptor {
         label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sprite_shader.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/primitives.wgsl").into()),
     };
 
     crate::create_render_pipeline(
-        "sprites",
+        "primitives",
         &device,
         &render_pipeline_layout,
         config.format(),
         None,
-        &[VertexUv::layout(), Matrix4x4f::layout()],
+        &[Vertex::layout()],
         shader,
         true,
     )
 }
 
+fn prepare_buffers_for_render_pass(
+    mut primitive_renderer: ResMut<PrimitiveRenderer>,
+    device: Res<RenderDevice>,
+    rects: Query<(RectPrimitive, Transform)>,
+    window: Res<Window>,
+) {
+    let verts: Vec<Vertex> = rects
+        .iter()
+        .map(|(r, _)| r.as_vertices())
+        .flatten()
+        .collect();
+    use wgpu::util::DeviceExt;
+    primitive_renderer.num_verts = verts.len() as u32;
+    primitive_renderer.vertex_buffer =
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("primitives"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+    let transforms: Vec<Matrix4x4f> = rects
+        .iter()
+        .map(|(_, t)| t.transformation_matrix(&window.viewport, 1000.))
+        .collect();
+    primitive_renderer.transform_buffer =
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("primitives"),
+            contents: bytemuck::cast_slice(&transforms),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+    let layout = new_transform_bind_group_layout(&device, 0, wgpu::ShaderStages::VERTEX);
+    let bg = new_transform_bind_group(&device, &layout, &primitive_renderer.transform_buffer, 0);
+    primitive_renderer.transform_bind_group = bg;
+}
+
+const VERTICES: u32 = 12;
+
 fn render_primitives(
     mut encoder: ResMut<RenderEncoder>,
     primitive_renderer: Res<PrimitiveRenderer>,
     view: Res<RenderView>,
-    primitives: Query<(Primitive, Transform)>,
+    query: Query<(RectPrimitive, Transform)>,
 ) {
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("primitives"),
@@ -215,33 +200,13 @@ fn render_primitives(
         timestamp_writes: None,
     });
 
-    // TODO: decide on whether to sort by bind group handle or z
-    let mut sprites = sprites.iter().collect::<Vec<_>>();
-    sprites.sort_by(|(_, s1, _), (_, s2, _)| s1.z.cmp(&s2.z));
-
-    render_pass.set_pipeline(&sprite_renderer.pipeline);
-    // sorted by bind group handle
-    render_pass.set_vertex_buffer(0, sprite_renderer.vertex_buffer.slice(..));
-    // sorted by bind group handle
-    render_pass.set_vertex_buffer(1, sprite_renderer.sprite_buffer.slice(..));
-    // sorted by bind group handle
-    render_pass.set_vertex_buffer(2, sprite_renderer.transform_buffer.slice(..));
-    // sorted by bind group handle
-    render_pass.set_bind_group(1, &sprite_renderer.atlas_uniform_bind_group, &[]);
+    render_pass.set_pipeline(&primitive_renderer.pipeline);
+    render_pass.set_vertex_buffer(0, primitive_renderer.vertex_buffer.slice(..));
+    render_pass.set_vertex_buffer(1, primitive_renderer.transform_buffer.slice(..));
+    // render_pass.draw(0..primitive_renderer.num_verts, 0..1);
 
     let mut offset = 0;
-    let previous_bind_index = usize::MAX;
-    for (handle, _, anim) in sprites.iter() {
-        if (**handle).index() != previous_bind_index {
-            let binding = if anim.is_some() {
-                atlas_bind_groups.get(**handle).unwrap()
-            } else {
-                bind_groups.get(**handle).unwrap()
-            };
-
-            render_pass.set_bind_group(0, binding, &[]);
-        }
-
+    for (_, _) in query.iter() {
         render_pass.draw(
             offset * VERTICES..offset * VERTICES + VERTICES,
             offset..offset + 1,
