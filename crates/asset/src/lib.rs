@@ -480,7 +480,7 @@ impl AssetApp for App {
                             asset_loader_events.send(AssetLoaderEvent::Err { handle })
                         }
                         AssetEvent::Loaded { asset } => {
-                            trace!(
+                            info!(
                                 "Loaded asset [{}]: {:?}",
                                 std::any::type_name::<A>(),
                                 asset.path

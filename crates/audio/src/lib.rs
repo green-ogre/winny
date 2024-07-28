@@ -1,16 +1,16 @@
 use std::{
     fmt::Debug,
     future::Future,
+    io::{BufReader, Cursor},
     sync::{
         mpsc::{channel, Receiver, Sender},
         Arc,
     },
 };
 
-use app::app::App;
 #[cfg(target_arch = "wasm32")]
 use app::input::mouse_and_key::KeyInput;
-use app::plugins::Plugin;
+use app::{app::App, plugins::Plugin};
 use asset::{Asset, AssetLoaderError, Assets, Handle, LoadedAsset};
 use asset::{AssetApp, AssetLoader};
 use cpal::{
@@ -22,12 +22,13 @@ use ecs::EventReader;
 use ecs::{
     Commands, Entity, Query, Res, ResMut, WinnyBundle, WinnyComponent, WinnyResource, Without,
 };
+use hound::{WavReader, WavSamples, WavSpec};
 use render::RenderContext;
 use util::tracing::{error, info, trace};
-use wav::WavFormat;
+// use wav::WavFormat;
 
 pub mod prelude;
-pub mod wav;
+// pub mod wav;
 
 #[derive(Debug)]
 pub enum Error {
@@ -37,6 +38,7 @@ pub enum Error {
     SupportedOutputConfigNA,
     OutputConfigNotSupported,
     BuildStream,
+    WavReader,
 }
 
 macro_rules! map_stream_err {
@@ -101,24 +103,29 @@ fn config(device: &Device) -> Result<StreamConfig, Error> {
 
 pub struct AudioSource {
     bytes: Arc<[u8]>,
-    format: WavFormat,
+    spec: WavSpec,
 }
 
 impl Asset for AudioSource {}
 
 impl AudioSource {
     pub fn new(
-        reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
+        mut reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
     ) -> Result<Self, AssetLoaderError> {
-        let (bytes, format) = wav::load_from_bytes(reader).map_err(|e| {
-            error!("{:?}", e);
-            AssetLoaderError::from(e)
-        })?;
+        let bytes = reader
+            .read_all()
+            .map_err(|_| AssetLoaderError::FailedToParse)?;
+        let reader = hound::WavReader::new(Cursor::new(&bytes))
+            .map_err(|_| AssetLoaderError::FailedToBuild)?;
+        let spec = reader.spec();
+        let bytes = bytes.into();
 
-        Ok(Self {
-            bytes: bytes.into(),
-            format,
-        })
+        // let (bytes, format) = wav::load_from_bytes(reader).map_err(|e| {
+        //     error!("{:?}", e);
+        //     AssetLoaderError::from(e)
+        // })?;
+
+        Ok(Self { bytes, spec })
     }
 
     pub fn stream(
@@ -130,10 +137,11 @@ impl AudioSource {
     ) -> Result<StreamHandle, Error> {
         let volume = global_audio.volume * playback_settings.volume;
         // info!("volume for stream: {volume}");
-        let data = self.bytes.clone();
-        let format = self.format.clone();
+        let bytes = self.bytes.clone();
+        let mut reader = WavReader::new(Cursor::new(bytes)).map_err(|_| Error::WavReader)?;
+        let spec = self.spec.clone();
 
-        let resample_ratio = format.samples_per_sec as f32 / config.sample_rate.0 as f32;
+        let resample_ratio = spec.sample_rate as f32 / config.sample_rate.0 as f32;
         trace!("resampling stream: {}", resample_ratio);
         let (eos_tx, eos_rx) = channel();
         let mut sample_cursor = 0.0;
@@ -145,12 +153,12 @@ impl AudioSource {
                 &config,
                 move |output: &mut [f32], _: &cpal::OutputCallbackInfo| resampling_stream_f32(
                     output,
-                    &data,
+                    &mut reader,
                     resample_ratio,
                     &mut stream_offset,
                     volume,
                     &mut sample_cursor,
-                    &format,
+                    &spec,
                     &eos_tx,
                     &playback_settings,
                 ),
@@ -164,109 +172,118 @@ impl AudioSource {
     }
 }
 
-#[allow(dead_code)]
-fn resampling_stream_i16(
-    output: &mut [i16],
-    data: &[u8],
-    resample_ratio: f32,
-    stream_offset: &mut usize,
-    volume: f32,
-    sample_cursor: &mut f32,
-    format: &WavFormat,
-    eos_tx: &Sender<()>,
-    playback_settings: &PlaybackSettings,
-) {
-    let bytes_per_sample = format.bits_per_sample as usize / 8;
-    let mut byte_offset = 0;
-    let mut end_of_stream = false;
-    let mut samples_read = 0;
-
-    for frame in output.chunks_mut(format.channels as usize) {
-        let stream_index = byte_offset + *stream_offset;
-        for sample in frame.iter_mut() {
-            if stream_index >= data.len() {
-                *sample = 0;
-                end_of_stream = true;
-            } else {
-                let s1 = i16::from_le_bytes([data[stream_index], data[stream_index + 1]]);
-                let s2 = i16::from_le_bytes([data[stream_index + 2], data[stream_index + 3]]);
-
-                let mut s = lerp(s1 as f32, s2 as f32, 1.0 - *sample_cursor) as i16;
-                s = (volume * s as f32) as i16;
-                *sample = s;
-            }
-
-            *sample_cursor += resample_ratio as f32;
-            if *sample_cursor >= 1.0 {
-                byte_offset += bytes_per_sample;
-                *sample_cursor = 0.0;
-                samples_read += 1;
-            }
-        }
-    }
-
-    *stream_offset += samples_read * bytes_per_sample;
-
-    if end_of_stream {
-        if playback_settings.loop_track {
-            *stream_offset = 0;
-        } else {
-            if eos_tx.send(()).is_err() {
-                error!("audio stream reciever closed");
-            }
-        }
-    }
-}
+// #[allow(dead_code)]
+// fn resampling_stream_i16(
+//     output: &mut [i16],
+//     data: &[u8],
+//     resample_ratio: f32,
+//     stream_offset: &mut usize,
+//     volume: f32,
+//     sample_cursor: &mut f32,
+//     format: &,
+//     eos_tx: &Sender<()>,
+//     playback_settings: &PlaybackSettings,
+// ) {
+//     let bytes_per_sample = format.bits_per_sample as usize / 8;
+//     let mut byte_offset = 0;
+//     let mut end_of_stream = false;
+//     let mut samples_read = 0;
+//
+//     for frame in output.chunks_mut(format.channels as usize) {
+//         let stream_index = byte_offset + *stream_offset;
+//         for sample in frame.iter_mut() {
+//             if stream_index >= data.len() {
+//                 *sample = 0;
+//                 end_of_stream = true;
+//             } else {
+//                 let s1 = i16::from_le_bytes([data[stream_index], data[stream_index + 1]]);
+//                 let s2 = i16::from_le_bytes([data[stream_index + 2], data[stream_index + 3]]);
+//
+//                 let mut s = lerp(s1 as f32, s2 as f32, 1.0 - *sample_cursor) as i16;
+//                 s = (volume * s as f32) as i16;
+//                 *sample = s;
+//             }
+//
+//             *sample_cursor += resample_ratio as f32;
+//             if *sample_cursor >= 1.0 {
+//                 byte_offset += bytes_per_sample;
+//                 *sample_cursor = 0.0;
+//                 samples_read += 1;
+//             }
+//         }
+//     }
+//
+//     *stream_offset += samples_read * bytes_per_sample;
+//
+//     if end_of_stream {
+//         if playback_settings.loop_track {
+//             *stream_offset = 0;
+//         } else {
+//             if eos_tx.send(()).is_err() {
+//                 error!("audio stream reciever closed");
+//             }
+//         }
+//     }
+// }
 
 #[allow(dead_code)]
 fn resampling_stream_f32(
     output: &mut [f32],
-    data: &[u8],
+    reader: &mut WavReader<Cursor<Arc<[u8]>>>,
     resample_ratio: f32,
     stream_offset: &mut usize,
     volume: f32,
     sample_cursor: &mut f32,
-    format: &WavFormat,
+    spec: &WavSpec,
     eos_tx: &Sender<()>,
     playback_settings: &PlaybackSettings,
 ) {
-    let bytes_per_sample = format.bits_per_sample as usize / 8;
-    let mut byte_offset = 0;
-    let mut end_of_stream = false;
-    let mut samples_read = 0;
+    // let bytes_per_sample = spec.bits_per_sample as usize / 8;
+    // let mut byte_offset = 0;
+    // let mut end_of_stream = false;
+    // let mut samples_read = 0;
 
-    for frame in output.chunks_mut(format.channels as usize) {
-        let stream_index = byte_offset + *stream_offset;
-        for sample in frame.iter_mut() {
-            if stream_index >= data.len() {
-                *sample = 0.0;
-                end_of_stream = true;
-            } else {
-                let s1 = i16::from_le_bytes([data[stream_index], data[stream_index + 1]]);
-                let s2 = i16::from_le_bytes([data[stream_index + 2], data[stream_index + 3]]);
-                let s = lerp(s1 as f32, s2 as f32, 1.0 - *sample_cursor);
-                *sample = s / i16::MAX as f32 * volume;
-            }
-
-            *sample_cursor += resample_ratio as f32;
-            if *sample_cursor >= 1.0 {
-                byte_offset += bytes_per_sample;
-                *sample_cursor = 0.0;
-                samples_read += 1;
-            }
-        }
+    for (buf, sample) in output.iter_mut().zip(reader.samples::<i32>()) {
+        // println!("{spec:#?}, {sample:?}");
+        let sample = sample.unwrap_or_default() as f32 / i32::MAX as f32;
+        *buf = sample * playback_settings.volume * volume;
     }
 
-    *stream_offset += samples_read * bytes_per_sample;
+    let remaining_samples = reader.samples::<f32>().len();
 
-    if end_of_stream {
-        if playback_settings.loop_track {
-            *stream_offset = 0;
-        } else {
-            if eos_tx.send(()).is_err() {
-                error!("audio stream reciever closed");
-            }
+    // for frame in output.chunks_mut(format.channels as usize) {
+    //
+    //     // let stream_index = byte_offset + *stream_offset;
+    //     // for sample in frame.iter_mut() {
+    //     //     if stream_index >= data.len() {
+    //     //         *sample = 0.0;
+    //     //         end_of_stream = true;
+    //     //     } else {
+    //     //         let s1 = i16::from_le_bytes([data[stream_index], data[stream_index + 1]]);
+    //     //         let s2 = i16::from_le_bytes([data[stream_index + 2], data[stream_index + 3]]);
+    //     //         let s = lerp(s1 as f32, s2 as f32, 1.0 - *sample_cursor);
+    //     //         *sample = s / i16::MAX as f32 * volume;
+    //     //     }
+    //     //
+    //     //     *sample_cursor += resample_ratio as f32;
+    //     //     if *sample_cursor >= 1.0 {
+    //     //         byte_offset += bytes_per_sample;
+    //     //         *sample_cursor = 0.0;
+    //     //         samples_read += 1;
+    //     //     }
+    //     // }
+    // }
+
+    // *stream_offset += samples_read * bytes_per_sample;
+
+    if remaining_samples == 0 {
+        // if playback_settings.loop_track {
+        //     *stream_offset = 0;
+        // } else {
+        if eos_tx.send(()).is_err() {
+            error!("audio stream reciever closed");
         }
+        // }
     }
 }
 
@@ -278,7 +295,7 @@ impl Debug for AudioSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AudioSource")
             .field("bytes: Vec<u8>", &self.bytes.len())
-            .field("format", &self.format)
+            .field("format", &self.spec)
             .finish()
     }
 }
@@ -461,15 +478,15 @@ impl AssetLoader for AudioAssetLoader {
     }
 }
 
-impl From<crate::wav::Error> for AssetLoaderError {
-    fn from(value: crate::wav::Error) -> Self {
-        if value == crate::wav::Error::InvalidPath {
-            Self::FileNotFound
-        } else {
-            Self::FailedToParse
-        }
-    }
-}
+// impl From<crate::wav::Error> for AssetLoaderError {
+//     fn from(value: crate::wav::Error) -> Self {
+//         if value == crate::wav::Error::InvalidPath {
+//             Self::FileNotFound
+//         } else {
+//             Self::FailedToParse
+//         }
+//     }
+// }
 
 pub struct AudioPlugin;
 
@@ -505,7 +522,7 @@ mod tests {
     use util::tracing;
 
     use app::{
-        app::AppExit,
+        app::{App, AppExit},
         plugins::{Plugin, PluginSet},
         prelude::{KeyCode, KeyInput},
         window::WindowPlugin,
@@ -513,7 +530,7 @@ mod tests {
     use asset::*;
     use ecs::{EventReader, EventWriter};
 
-    pub fn startup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    pub fn startup(mut commands: Commands, mut asset_server: ResMut<AssetServer>) {
         commands.spawn(AudioBundle {
             playback_settings: PlaybackSettings::default(),
             handle: asset_server.load("the_tavern.wav"),

@@ -1,4 +1,5 @@
 use app::plugins::Plugin;
+use app::time::DeltaTime;
 use app::window::Window;
 use asset::AssetId;
 use asset::{Assets, Handle};
@@ -477,7 +478,6 @@ pub fn bind_new_animated_sprite_bundles(
 ) {
     for (entity, handle) in sprites.iter() {
         if let Some(asset) = texture_atlases.get(&handle) {
-            println!("INIT");
             let dimensions = TextureDimensions(Dimensions(
                 asset.texture.tex.width(),
                 asset.texture.tex.height(),
@@ -592,15 +592,25 @@ impl Sprite {
     }
 }
 
+#[derive(WinnyComponent)]
+pub struct AnimationDuration(f32);
+
+impl From<&AnimatedSprite> for AnimationDuration {
+    fn from(value: &AnimatedSprite) -> Self {
+        Self(value.frame_delta)
+    }
+}
+
 #[derive(WinnyComponent, Debug, Clone, Copy)]
 pub struct AnimatedSprite {
     pub width: u32,
     pub height: u32,
     pub index: u32,
+    pub frame_delta: f32,
 }
 
 impl AnimatedSprite {
-    pub fn from_texture_atlas(atlas: &TextureAtlas) -> Self {
+    pub fn from_texture_atlas(atlas: &TextureAtlas, frame_delta: f32) -> Self {
         if atlas.width != 1 {
             panic!("atlas dimensions not supported");
         }
@@ -609,13 +619,18 @@ impl AnimatedSprite {
             width: atlas.width,
             height: atlas.height,
             index: 0,
+            frame_delta,
         }
     }
 
-    pub fn advance(&mut self) {
-        self.index += 1;
-        if self.index >= self.width * self.height {
-            self.index = 0;
+    pub fn advance(&mut self, delta_time: &DeltaTime, duration: &mut AnimationDuration) {
+        duration.0 -= delta_time.delta;
+        if duration.0 <= 0.0 {
+            duration.0 = self.frame_delta;
+            self.index += 1;
+            if self.index >= self.width * self.height {
+                self.index = 0;
+            }
         }
     }
 }

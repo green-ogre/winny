@@ -12,6 +12,7 @@ ecs = { path = "../ecs" }
 render = { path = "../render" }
 
 cpal = { version = "0.15.3", features = ["wasm-bindgen"] }
+hound = "3.5.1"
 
 [dev-dependencies]
 tracing-test = "0.2.5"

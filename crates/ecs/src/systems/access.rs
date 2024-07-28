@@ -30,7 +30,7 @@ impl SystemAccess {
         self
     }
 
-    // TODO: better panics
+    // TODO: cannot determine if a system with disjoint mutable and immutable access is valid
     pub fn validate_or_panic(&self) {
         let mutable_access: Vec<_> = self.components.iter().filter(|c| c.is_mutable()).collect();
         let immutable_access: Vec<_> = self
@@ -42,7 +42,7 @@ impl SystemAccess {
         for m in mutable_access.iter() {
             for i in immutable_access.iter() {
                 if i.meta.id == m.meta.id {
-                    panic!(
+                    util::tracing::error!(
                         "Query attemps to access the same Component mutably and immutably: {:#?}, {:#?}",
                         i, m
                     );
@@ -56,7 +56,7 @@ impl SystemAccess {
         for m in mutable_access.iter() {
             for i in immutable_access.iter() {
                 if i.id == m.id {
-                    panic!(
+                    util::tracing::warn!(
                         "System attemps to access the same Resource mutably and immutably: {:#?}, {:#?}",
                         i, m
                     );
