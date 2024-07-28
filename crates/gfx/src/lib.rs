@@ -9,6 +9,7 @@ pub mod model;
 pub mod noise;
 pub mod particle;
 pub mod prelude;
+pub mod primitives;
 pub mod sprite;
 #[cfg(feature = "text")]
 pub mod text;

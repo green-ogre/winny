@@ -65,6 +65,10 @@ impl<A: Asset> Handle<A> {
     pub fn dangling() -> Self {
         Self(AssetId::new(0, u32::MAX), PhantomData)
     }
+
+    pub fn is_dangling(&self) -> bool {
+        self.0.index() == u32::MAX
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
