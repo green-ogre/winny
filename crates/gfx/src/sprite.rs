@@ -244,7 +244,7 @@ pub fn prepare_for_render_pass(
     if atlas_data.len() <= sprite_renderer.atlas_uniforms.size() as usize {
         queue.write_buffer(&sprite_renderer.atlas_uniforms, 0, atlas_data);
     } else {
-        util::tracing::info!(
+        util::tracing::trace!(
             "allocating larger sprite atlas uniform buffer. current size: {}, new size: {}",
             sprite_renderer.atlas_uniforms.size(),
             atlas_data.len(),
@@ -277,7 +277,7 @@ pub fn prepare_for_render_pass(
     if vertex_data.len() <= sprite_renderer.vertex_buffer.size() as usize {
         queue.write_buffer(&sprite_renderer.vertex_buffer, 0, vertex_data);
     } else {
-        util::tracing::info!(
+        util::tracing::trace!(
             "allocating larger sprite vertex buffer. current size: {}, new size: {}",
             sprite_renderer.vertex_buffer.size(),
             vertex_data.len(),
@@ -300,7 +300,7 @@ pub fn prepare_for_render_pass(
     if sprite_data.len() <= sprite_renderer.sprite_buffer.size() as usize {
         queue.write_buffer(&sprite_renderer.sprite_buffer, 0, sprite_data);
     } else {
-        util::tracing::info!(
+        util::tracing::trace!(
             "allocating larger sprite instance buffer. current size: {}, new size: {}",
             sprite_renderer.sprite_buffer.size(),
             sprite_data.len()
@@ -324,7 +324,7 @@ pub fn prepare_for_render_pass(
     if transform_data.len() <= sprite_renderer.transform_buffer.size() as usize {
         queue.write_buffer(&sprite_renderer.transform_buffer, 0, transform_data);
     } else {
-        util::tracing::info!(
+        util::tracing::trace!(
             "allocating larger sprite transform buffer. current size: {}, new size: {}",
             sprite_renderer.transform_buffer.size(),
             transform_data.len()
@@ -499,7 +499,7 @@ pub fn bind_new_sprite_bundles(
 ) {
     for (entity, sprite, handle) in sprites.iter() {
         if let Some(asset) = textures.get(&handle) {
-            util::tracing::info!("binding new sprite bundle: {entity:?}, {handle:?}, {sprite:?}");
+            util::tracing::trace!("binding new sprite bundle: {entity:?}, {handle:?}, {sprite:?}");
             let dimensions = TextureDimensions(Dimensions(asset.tex.width(), asset.tex.height()));
             let handle = bind_groups.get_handle_or_insert_with(&asset.path, || {
                 binding_from_texture(&asset.asset, &device)
