@@ -50,7 +50,7 @@ fn vs_main(
 
     let atlas = atlas_uniforms[instance.index];
     let atlas_position = vec2<f32>(f32(atlas.index % atlas.width) / f32(atlas.width), f32(atlas.index / atlas.width) / f32(atlas.height));
-    out.uv = vec2<f32>(vert.uv.x / f32(atlas.width), vert.uv.y / f32(atlas.height + 1)) + atlas_position;
+    out.uv = vec2<f32>(vert.uv.x / f32(atlas.width), vert.uv.y / f32(atlas.height)) + atlas_position;
 
     out.clip_position = vert.position * transformation_matrix;
     out.clip_position.z = 0.0;

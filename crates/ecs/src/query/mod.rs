@@ -320,6 +320,17 @@ impl<'w, 's, T: QueryData, F: Filter> Query<'w, 's, T, F> {
         self.state.new_iter(self.world)
     }
 
+    pub fn get(
+        &self,
+        entity: Entity,
+    ) -> Option<<<T as QueryData>::ReadOnly as WorldQuery>::Item<'_>> {
+        self.state.read_only().get(entity, self.world)
+    }
+
+    pub fn get_mut(&self, entity: Entity) -> Option<T::Item<'_>> {
+        self.state.get(entity, self.world)
+    }
+
     pub fn get_single(
         &self,
     ) -> Result<<<T as QueryData>::ReadOnly as WorldQuery>::Item<'_>, SingleQueryError> {
