@@ -74,6 +74,23 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
         QueryIter::new(world, self)
     }
 
+    pub fn get<'w>(&self, entity: Entity, world: UnsafeWorldCell<'w>) -> Option<T::Item<'w>> {
+        let mut fetch = T::init_fetch(world, &self.state);
+        if let Some(meta) = unsafe { world.entities() }.meta(entity) {
+            let table_id = meta.location.table_id;
+            let arch_id = meta.location.archetype_id;
+            let table = unsafe { world.tables() }.get(table_id)?;
+            let arch = unsafe { world.archetypes() }.get(arch_id)?;
+            T::set_table(&mut fetch, &self.state, table);
+            Some(T::fetch(
+                &mut fetch,
+                &arch.entities[meta.location.arch_row.0],
+            ))
+        } else {
+            None
+        }
+    }
+
     pub fn get_single<'w>(
         &self,
         world: UnsafeWorldCell<'w>,
