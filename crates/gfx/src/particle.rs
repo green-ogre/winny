@@ -56,6 +56,7 @@ struct ComputeEmitterUniform {
 }
 
 #[derive(WinnyComponent)]
+#[allow(dead_code)]
 pub struct ParticlePipeline {
     render_pipeline: wgpu::RenderPipeline,
     compute_pipeline: wgpu::ComputePipeline,

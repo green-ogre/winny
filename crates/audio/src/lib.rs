@@ -1,7 +1,7 @@
 use std::{
     fmt::Debug,
     future::Future,
-    io::{BufReader, Cursor},
+    io::Cursor,
     sync::{
         mpsc::{channel, Receiver, Sender},
         Arc,
@@ -22,7 +22,7 @@ use ecs::EventReader;
 use ecs::{
     Commands, Entity, Query, Res, ResMut, WinnyBundle, WinnyComponent, WinnyResource, Without,
 };
-use hound::{WavReader, WavSamples, WavSpec};
+use hound::{WavReader, WavSpec};
 use render::RenderContext;
 use util::tracing::{error, info, trace};
 // use wav::WavFormat;
@@ -144,8 +144,8 @@ impl AudioSource {
         let resample_ratio = spec.sample_rate as f32 / config.sample_rate.0 as f32;
         trace!("resampling stream: {}", resample_ratio);
         let (eos_tx, eos_rx) = channel();
-        let mut sample_cursor = 0.0;
-        let mut stream_offset = 0;
+        // let mut sample_cursor = 0.0;
+        // let mut stream_offset = 0;
 
         let stream = map_stream_err!(
             Error::BuildStream,
@@ -154,11 +154,11 @@ impl AudioSource {
                 move |output: &mut [f32], _: &cpal::OutputCallbackInfo| resampling_stream_f32(
                     output,
                     &mut reader,
-                    resample_ratio,
-                    &mut stream_offset,
+                    // resample_ratio,
+                    // &mut stream_offset,
                     volume,
-                    &mut sample_cursor,
-                    &spec,
+                    // &mut sample_cursor,
+                    // &spec,
                     &eos_tx,
                     &playback_settings,
                 ),
@@ -230,11 +230,11 @@ impl AudioSource {
 fn resampling_stream_f32(
     output: &mut [f32],
     reader: &mut WavReader<Cursor<Arc<[u8]>>>,
-    resample_ratio: f32,
-    stream_offset: &mut usize,
+    // resample_ratio: f32,
+    // stream_offset: &mut usize,
     volume: f32,
-    sample_cursor: &mut f32,
-    spec: &WavSpec,
+    // sample_cursor: &mut f32,
+    // spec: &WavSpec,
     eos_tx: &Sender<()>,
     playback_settings: &PlaybackSettings,
 ) {
@@ -287,9 +287,9 @@ fn resampling_stream_f32(
     }
 }
 
-fn lerp(v1: f32, v2: f32, l: f32) -> f32 {
-    v1 * (1.0 - l) + v2 * l
-}
+// fn lerp(v1: f32, v2: f32, l: f32) -> f32 {
+//     v1 * (1.0 - l) + v2 * l
+// }
 
 impl Debug for AudioSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
