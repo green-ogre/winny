@@ -369,7 +369,7 @@ impl Deref for RenderBindGroup {
 }
 
 #[derive(WinnyComponent, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BindGroupHandle(usize);
+pub struct BindGroupHandle(pub usize);
 
 impl SparseArrayIndex for BindGroupHandle {
     fn index(&self) -> usize {
@@ -403,6 +403,10 @@ impl BindGroups {
 
             handle
         }
+    }
+
+    pub fn get_with_path(&self, path: &String) -> Option<BindGroupHandle> {
+        self.stored_bindings.get(path).cloned()
     }
 }
 

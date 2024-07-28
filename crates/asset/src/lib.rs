@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     future::Future,
+    hash::Hash,
     io::{BufReader, Cursor},
     marker::PhantomData,
     path::Path,
@@ -60,6 +61,10 @@ impl<A: Asset> Handle<A> {
     pub fn id(&self) -> AssetId {
         self.0
     }
+
+    pub fn dangling() -> Self {
+        Self(AssetId::new(0, u32::MAX), PhantomData)
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -85,7 +90,7 @@ impl<A: Asset> Into<Handle<A>> for ErasedHandle {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AssetId(u64);
 
 impl AssetId {
@@ -471,7 +476,7 @@ impl AssetApp for App {
                             asset_loader_events.send(AssetLoaderEvent::Err { handle })
                         }
                         AssetEvent::Loaded { asset } => {
-                            info!(
+                            trace!(
                                 "Loaded asset [{}]: {:?}",
                                 std::any::type_name::<A>(),
                                 asset.path
