@@ -79,6 +79,15 @@ impl<T: QueryData, F: Filter> QueryState<T, F> {
         if let Some(meta) = unsafe { world.entities() }.meta(entity) {
             let table_id = meta.location.table_id;
             let arch_id = meta.location.archetype_id;
+
+            if !self
+                .storage_locations
+                .iter()
+                .any(|l| l.archetype_id == arch_id && l.table_id == table_id)
+            {
+                return None;
+            }
+
             let table = unsafe { world.tables() }.get(table_id)?;
             let arch = unsafe { world.archetypes() }.get(arch_id)?;
             T::set_table(&mut fetch, &self.state, table);
