@@ -1,9 +1,12 @@
 use app::plugins::Plugin;
 use app::window::Window;
+use asset::AssetId;
 use asset::{Assets, Handle};
 use ecs::prelude::*;
 use ecs::SparseArrayIndex;
+use ecs::SparseSet;
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
+use fxhash::FxHashMap;
 use render::Dimensions;
 use render::{
     BindGroupHandle, BindGroups, RenderBindGroup, RenderConfig, RenderDevice, RenderEncoder,
@@ -51,10 +54,15 @@ impl Plugin for SpritePlugin {
     fn build(&mut self, app: &mut app::app::App) {
         app.register_resource::<SpriteRenderer>()
             .insert_resource(GlobalSpriteSettings::from(&*self))
+            .insert_resource(TextureAtlasBindGroups::default())
             .add_systems(ecs::Schedule::StartUp, startup)
             .add_systems(
                 ecs::Schedule::PostUpdate,
-                (bind_new_sprite_bundles, bind_new_animated_sprite_bundles),
+                (
+                    bind_new_sprite_bundles,
+                    bind_new_animated_sprite_bundles,
+                    update_sprite_atlas_bind_groups,
+                ),
             )
             .add_systems(ecs::Schedule::PreRender, prepare_for_render_pass)
             .add_systems(ecs::Schedule::Render, render_sprites);
@@ -330,12 +338,69 @@ pub fn prepare_for_render_pass(
     }
 }
 
+#[derive(WinnyResource, Default)]
+pub struct TextureAtlasBindGroups {
+    bindings: SparseSet<BindGroupHandle, RenderBindGroup>,
+    stored_bindings: FxHashMap<AssetId, BindGroupHandle>,
+}
+
+impl TextureAtlasBindGroups {
+    pub fn get(&self, handle: BindGroupHandle) -> Option<&RenderBindGroup> {
+        self.bindings.get(&handle)
+    }
+
+    pub fn get_handle_or_insert_with(
+        &mut self,
+        asset_id: AssetId,
+        bind_group: impl FnOnce() -> RenderBindGroup,
+    ) -> BindGroupHandle {
+        if let Some(handle) = self.stored_bindings.get(&asset_id) {
+            *handle
+        } else {
+            let index = self.bindings.insert_in_first_empty(bind_group());
+            let handle = BindGroupHandle(index);
+            self.stored_bindings.insert(asset_id, handle);
+
+            handle
+        }
+    }
+}
+
+pub fn update_sprite_atlas_bind_groups(
+    device: Res<RenderDevice>,
+    mut sprites: Query<
+        (
+            Handle<TextureAtlas>,
+            Mut<BindGroupHandle>,
+            Mut<TextureDimensions>,
+        ),
+        With<(AnimatedSprite, Sprite)>,
+    >,
+    texture_atlases: ResMut<Assets<TextureAtlas>>,
+    mut bind_groups: ResMut<TextureAtlasBindGroups>,
+) {
+    for (atlas, bind_handle, dimensions) in sprites.iter_mut() {
+        if let Some(asset) = texture_atlases.get(&atlas) {
+            let new_dimensions = TextureDimensions(Dimensions(
+                asset.texture.tex.width(),
+                asset.texture.tex.height(),
+            ));
+            let new_handle = bind_groups.get_handle_or_insert_with(atlas.id(), || {
+                binding_from_texture(&asset.asset.texture, &device)
+            });
+            *bind_handle = new_handle;
+            *dimensions = new_dimensions;
+        }
+    }
+}
+
 fn render_sprites(
     mut encoder: ResMut<RenderEncoder>,
     sprite_renderer: Res<SpriteRenderer>,
     view: Res<RenderView>,
-    sprites: Query<(BindGroupHandle, Sprite)>,
+    sprites: Query<(BindGroupHandle, Sprite, Option<AnimatedSprite>)>,
     bind_groups: Res<BindGroups>,
+    atlas_bind_groups: Res<TextureAtlasBindGroups>,
 ) {
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("sprites"),
@@ -354,7 +419,7 @@ fn render_sprites(
 
     // TODO: decide on whether to sort by bind group handle or z
     let mut sprites = sprites.iter().collect::<Vec<_>>();
-    sprites.sort_by(|(_, s1), (_, s2)| s1.z.cmp(&s2.z));
+    sprites.sort_by(|(_, s1, _), (_, s2, _)| s1.z.cmp(&s2.z));
 
     render_pass.set_pipeline(&sprite_renderer.pipeline);
     // sorted by bind group handle
@@ -368,9 +433,14 @@ fn render_sprites(
 
     let mut offset = 0;
     let previous_bind_index = usize::MAX;
-    for (handle, _) in sprites.iter() {
+    for (handle, _, anim) in sprites.iter() {
         if (**handle).index() != previous_bind_index {
-            let binding = bind_groups.get(**handle).unwrap();
+            let binding = if anim.is_some() {
+                atlas_bind_groups.get(**handle).unwrap()
+            } else {
+                bind_groups.get(**handle).unwrap()
+            };
+
             render_pass.set_bind_group(0, binding, &[]);
         }
 
@@ -403,15 +473,16 @@ pub fn bind_new_animated_sprite_bundles(
         (With<AnimatedSprite>, Without<BindGroupHandle>),
     >,
     texture_atlases: ResMut<Assets<TextureAtlas>>,
-    mut bind_groups: ResMut<BindGroups>,
+    mut bind_groups: ResMut<TextureAtlasBindGroups>,
 ) {
     for (entity, handle) in sprites.iter() {
         if let Some(asset) = texture_atlases.get(&handle) {
+            println!("INIT");
             let dimensions = TextureDimensions(Dimensions(
                 asset.texture.tex.width(),
                 asset.texture.tex.height(),
             ));
-            let handle = bind_groups.get_handle_or_insert_with(&asset.path, || {
+            let handle = bind_groups.get_handle_or_insert_with(handle.id(), || {
                 binding_from_texture(&asset.asset.texture, &device)
             });
             commands.get_entity(entity).insert((handle, dimensions));
@@ -523,10 +594,9 @@ impl Sprite {
 
 #[derive(WinnyComponent, Debug, Clone, Copy)]
 pub struct AnimatedSprite {
-    width: u16,
-    height: u16,
-    index: u32,
-    keyframes: usize,
+    pub width: u32,
+    pub height: u32,
+    pub index: u32,
 }
 
 impl AnimatedSprite {
@@ -536,16 +606,15 @@ impl AnimatedSprite {
         }
 
         Self {
-            width: atlas.width as u16,
-            height: atlas.height as u16,
-            keyframes: atlas.height as usize,
+            width: atlas.width,
+            height: atlas.height,
             index: 0,
         }
     }
 
     pub fn advance(&mut self) {
         self.index += 1;
-        if self.index >= self.keyframes as u32 {
+        if self.index >= self.width * self.height {
             self.index = 0;
         }
     }

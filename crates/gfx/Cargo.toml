@@ -33,6 +33,8 @@ wgpu_text = { version = "0.8.8", optional = true }
 
 # for particles
 rand = "0.8.5"
+# for atlases
+fxhash = "0.2.1"
 
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
