@@ -518,7 +518,7 @@ pub struct Sprite {
     pub rotation: Degrees,
     // linearly mixed with the sprite sample by mask.v[3] (`a`)
     pub mask: Vec4f,
-    pub z: u32,
+    pub z: i32,
     pub v_flip: bool,
     pub h_flip: bool,
 }
