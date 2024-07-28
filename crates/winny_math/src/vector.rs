@@ -231,7 +231,7 @@ impl Vec3f {
     pub fn dist2(&self, other: &Vec3f) -> f32 {
         let x = self.x - other.x;
         let y = self.y - other.y;
-        (x * x + y * y).sqrt()
+        x * x + y * y
     }
 
     pub fn is_zero(&self) -> bool {
