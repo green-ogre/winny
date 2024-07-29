@@ -675,6 +675,10 @@ impl AnimatedSprite {
         self.frame_range.clone()
     }
 
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+
     pub fn advance(&mut self, delta_time: &DeltaTime, duration: &mut AnimationDuration) {
         duration.0 -= delta_time.delta;
         if duration.0 <= 0.0 {
