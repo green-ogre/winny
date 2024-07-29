@@ -619,15 +619,27 @@ impl From<&AnimatedSprite> for AnimationDuration {
 
 #[derive(WinnyComponent, Debug, Clone)]
 pub struct AnimatedSprite {
-    pub width: u32,
-    pub height: u32,
-    pub index: u32,
-    pub frame_range: Range<u32>,
-    pub frame_delta: f32,
+    width: u32,
+    height: u32,
+    index: u32,
+    frame_range: Range<u32>,
+    frame_delta: f32,
+}
+
+impl Default for AnimatedSprite {
+    fn default() -> Self {
+        Self {
+            width: 1,
+            height: 1,
+            index: 0,
+            frame_range: 0..1,
+            frame_delta: 0.1,
+        }
+    }
 }
 
 impl AnimatedSprite {
-    pub fn from_texture_atlas(atlas: &TextureAtlas, frame_delta: f32) -> Self {
+    pub fn from_texture_atlas(atlas: &TextureAtlas) -> Self {
         if atlas.width != 1 {
             panic!("atlas dimensions not supported");
         }
@@ -637,8 +649,30 @@ impl AnimatedSprite {
             height: atlas.height,
             index: 0,
             frame_range: 0..(atlas.width * atlas.height),
-            frame_delta,
+            frame_delta: 0.1,
         }
+    }
+
+    pub fn total_frames(&self) -> u32 {
+        self.width * self.height
+    }
+
+    pub fn with_frame_delta(mut self, frame_delta: f32) -> Self {
+        self.frame_delta = frame_delta;
+        self
+    }
+
+    pub fn frame_delta(&self) -> f32 {
+        self.frame_delta
+    }
+
+    pub fn from_range(mut self, range: Range<u32>) -> Self {
+        self.frame_range = range;
+        self
+    }
+
+    pub fn range(&self) -> Range<u32> {
+        self.frame_range.clone()
     }
 
     pub fn advance(&mut self, delta_time: &DeltaTime, duration: &mut AnimationDuration) {
