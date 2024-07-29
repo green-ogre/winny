@@ -258,6 +258,7 @@ impl<'w> UnsafeWorldCell<'w> {
 
         archetype.new_entity_from(entity, table_row, |arch_index: ArchRow| {
             self.entities_mut().spawn_at(
+                entity.generation(),
                 entity,
                 bundle_meta.table_id,
                 bundle_meta.arch_id,

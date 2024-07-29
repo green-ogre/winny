@@ -65,8 +65,10 @@ impl Plugin for SpritePlugin {
                     update_sprite_atlas_bind_groups,
                 ),
             )
-            .add_systems(ecs::Schedule::PreRender, prepare_for_render_pass)
-            .add_systems(ecs::Schedule::Render, render_sprites);
+            .add_systems(
+                ecs::Schedule::Render,
+                (prepare_for_render_pass, render_sprites),
+            );
     }
 }
 
@@ -399,7 +401,13 @@ fn render_sprites(
     mut encoder: ResMut<RenderEncoder>,
     sprite_renderer: Res<SpriteRenderer>,
     view: Res<RenderView>,
-    sprites: Query<(BindGroupHandle, Sprite, Option<AnimatedSprite>)>,
+    sprites: Query<(
+        Sprite,
+        Transform,
+        BindGroupHandle,
+        TextureDimensions,
+        Option<AnimatedSprite>,
+    )>,
     bind_groups: Res<BindGroups>,
     atlas_bind_groups: Res<TextureAtlasBindGroups>,
 ) {
@@ -420,7 +428,7 @@ fn render_sprites(
 
     // TODO: decide on whether to sort by bind group handle or z
     let mut sprites = sprites.iter().collect::<Vec<_>>();
-    sprites.sort_by(|(_, s1, _), (_, s2, _)| s1.z.cmp(&s2.z));
+    sprites.sort_by(|(s1, _, _, _, _), (s2, _, _, _, _)| s1.z.cmp(&s2.z));
 
     render_pass.set_pipeline(&sprite_renderer.pipeline);
     // sorted by bind group handle
@@ -434,7 +442,7 @@ fn render_sprites(
 
     let mut offset = 0;
     let previous_bind_index = usize::MAX;
-    for (handle, _, anim) in sprites.iter() {
+    for (_, _, handle, _, anim) in sprites.iter() {
         if (**handle).index() != previous_bind_index {
             let binding = if anim.is_some() {
                 atlas_bind_groups.get(**handle).unwrap()
@@ -471,7 +479,10 @@ pub fn bind_new_animated_sprite_bundles(
     device: Res<RenderDevice>,
     sprites: Query<
         (Entity, Handle<TextureAtlas>),
-        (With<AnimatedSprite>, Without<BindGroupHandle>),
+        (
+            With<AnimatedSprite>,
+            Without<(BindGroupHandle, TextureDimensions)>,
+        ),
     >,
     texture_atlases: ResMut<Assets<TextureAtlas>>,
     mut bind_groups: ResMut<TextureAtlasBindGroups>,
@@ -493,7 +504,10 @@ pub fn bind_new_animated_sprite_bundles(
 pub fn bind_new_sprite_bundles(
     mut commands: Commands,
     device: Res<RenderDevice>,
-    sprites: Query<(Entity, Sprite, Handle<Texture>), Without<BindGroupHandle>>,
+    sprites: Query<
+        (Entity, Sprite, Handle<Texture>),
+        Without<(BindGroupHandle, TextureDimensions)>,
+    >,
     textures: ResMut<Assets<Texture>>,
     mut bind_groups: ResMut<BindGroups>,
 ) {
