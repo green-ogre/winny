@@ -586,7 +586,8 @@ impl Sprite {
         transform: &Transform,
         config: &RenderConfig,
     ) -> Matrix4x4f {
-        let scale = scale_matrix4x4f(self.scale * transform.scale);
+        let scale = scale_matrix4x4f(self.scale);
+        let t_scale = scale_matrix4x4f(transform.scale);
         let rotation = rotation_2d_matrix4x4f(self.rotation);
         let t_rotation = Matrix4::from(transform.rotation);
         let t_rotation = Matrix4x4f {
@@ -595,12 +596,15 @@ impl Sprite {
 
         let world_to_screen_space =
             world_to_screen_space_matrix4x4f(config.width(), config.height(), config.max_z);
-        let translation = translation_matrix4x4f(
-            world_to_screen_space * Vec4f::to_homogenous(self.position + transform.translation),
+        let translation =
+            translation_matrix4x4f(world_to_screen_space * Vec4f::to_homogenous(self.position));
+        let t_translation = translation_matrix4x4f(
+            world_to_screen_space * Vec4f::to_homogenous(transform.translation),
         );
 
-        // Translate first in order to keep the coordinate system uniform for sprites of any scale
-        translation * scale * rotation * t_rotation
+        // Apply entity's Transform first, then apply local transformations. Allows for rotation
+        // about the translation of the Transform.
+        t_translation * t_scale * t_rotation * translation * scale * rotation
     }
 
     // Create a fullscreen quad, then scale about the origin to the correct sprite dimensions
