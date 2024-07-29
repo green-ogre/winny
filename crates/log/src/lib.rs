@@ -5,11 +5,13 @@ use util::tracing::{
 };
 
 #[derive(Clone, Copy)]
-pub struct LogPlugin;
+pub struct LogPlugin {
+    pub level: &'static str,
+}
 
 impl Default for LogPlugin {
     fn default() -> Self {
-        Self
+        Self { level: "info" }
     }
 }
 
@@ -29,8 +31,10 @@ impl app::plugins::Plugin for LogPlugin {
 
         let subscriber = util::tracing_subscriber::Registry::default();
         let subscriber = subscriber.with(
-            util::tracing_subscriber::filter::EnvFilter::builder()
-                .parse_lossy("warn,wgpu=warn,naga=warn,polling=error,winit=warn,calloop=warn"),
+            util::tracing_subscriber::filter::EnvFilter::builder().parse_lossy(&format!(
+                "{},wgpu=warn,naga=warn,polling=error,winit=warn,calloop=warn",
+                self.level
+            )),
         );
         // let subscriber = subscriber.with(util::tracing_error::ErrorLayer::default());
         let subscriber = subscriber.with(

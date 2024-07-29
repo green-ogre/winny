@@ -11,6 +11,7 @@ use asset::AssetLoaderPlugin;
 use audio::AudioPlugin;
 use ecs::{EventReader, EventWriter};
 use gfx::{camera::CameraPlugin, model::ModelPlugin, texture::TexturePlugin};
+use log::LogPlugin;
 use render::RendererPlugin;
 
 pub extern crate app;
@@ -33,6 +34,7 @@ pub mod prelude {
     pub use gfx::prelude::*;
     #[cfg(feature = "hot_reload")]
     pub use hot_reload::prelude::*;
+    pub use log::LogPlugin;
     pub use util::prelude::*;
     pub use winny_math as math;
     pub use winny_math::prelude::*;
@@ -41,7 +43,7 @@ pub mod prelude {
 pub struct DefaultPlugins {
     pub window: WindowPlugin,
     pub asset_loader: AssetLoaderPlugin,
-    pub log: bool,
+    pub log: LogPlugin,
 }
 
 impl Default for DefaultPlugins {
@@ -53,7 +55,7 @@ impl Default for DefaultPlugins {
             asset_loader: AssetLoaderPlugin {
                 asset_folder: "res/".into(),
             },
-            log: true,
+            log: Default::default(),
         }
     }
 }
@@ -61,6 +63,7 @@ impl Default for DefaultPlugins {
 impl Plugin for DefaultPlugins {
     fn build(&mut self, app: &mut app::app::App) {
         app.add_plugins_priority((
+            self.log.clone(),
             TimePlugin,
             self.window.clone(),
             RendererPlugin,
@@ -70,15 +73,5 @@ impl Plugin for DefaultPlugins {
             ModelPlugin,
             AudioPlugin,
         ));
-        if self.log {
-            app.add_plugins_priority(log::LogPlugin);
-        }
-    }
-}
-
-impl DefaultPlugins {
-    pub fn without_log(mut self) -> Self {
-        self.log = false;
-        self
     }
 }
