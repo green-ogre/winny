@@ -1,4 +1,4 @@
-use std::ops::{Add, SubAssign};
+use std::ops::{Add, AddAssign, SubAssign};
 
 use crate::prelude::Matrix4x4f;
 
@@ -380,6 +380,15 @@ impl Add<Vec4f> for Vec4f {
         self.v[3] += rhs.v[3];
 
         self
+    }
+}
+
+impl AddAssign<Vec4f> for Vec4f {
+    fn add_assign(&mut self, rhs: Vec4f) {
+        self.v[0] += rhs.v[0];
+        self.v[1] += rhs.v[1];
+        self.v[2] += rhs.v[2];
+        self.v[3] += rhs.v[3];
     }
 }
 
