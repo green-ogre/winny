@@ -5,6 +5,7 @@ use app::time::DeltaTime;
 use app::window::Window;
 use asset::AssetId;
 use asset::{Assets, Handle};
+use cgmath::{Matrix4, Quaternion, Rad, Rotation3};
 use ecs::prelude::*;
 use ecs::SparseArrayIndex;
 use ecs::SparseSet;
@@ -591,16 +592,20 @@ impl Sprite {
 
         let scale = scale_matrix4x4f(self.scale);
         let rotation = rotation_2d_matrix4x4f(self.rotation);
+        let t_rotation = Matrix4::from(transform.rotation);
+        let t_rotation = Matrix4x4f {
+            m: t_rotation.into(),
+        };
         let world_to_screen_space =
             world_to_screen_space_matrix4x4f(config.width(), config.height(), config.max_z);
         let translation = translation_matrix4x4f(
-            world_to_screen_space
-                * Vec4f::to_homogenous(self.position + Vec3f::new(0., 0., transform.translation.z)),
+            world_to_screen_space * Vec4f::to_homogenous(self.position + transform.translation),
         );
 
         for vert in vertices.iter_mut() {
             vert.position = scale * vert.position;
             vert.position = rotation * vert.position;
+            vert.position = t_rotation * vert.position;
             vert.position = translation * vert.position;
         }
 
