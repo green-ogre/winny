@@ -71,11 +71,11 @@ impl Transform {
         let world_to_screen_space = world_to_screen_space_matrix4x4f(width, height, max_z);
         let translation =
             translation_matrix4x4f(world_to_screen_space * Vec4f::to_homogenous(self.translation));
-        let offset_translation = translation_matrix4x4f(
-            world_to_screen_space * Vec4f::new(viewport.min.v[0], viewport.min.v[1], 0., 1.),
-        );
+        // let offset_translation = translation_matrix4x4f(
+        //     world_to_screen_space * Vec4f::new(viewport.min.v[0], viewport.min.v[1], 0., 1.),
+        // );
 
-        scale * rotation * translation * offset_translation
+        scale * rotation * translation
     }
 }
 

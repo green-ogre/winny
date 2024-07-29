@@ -361,6 +361,12 @@ pub struct Vec4f {
     pub v: [f32; 4],
 }
 
+impl From<Vec4f> for Vec3f {
+    fn from(value: Vec4f) -> Self {
+        Vec3f::new(value.v[0], value.v[1], value.v[2])
+    }
+}
+
 impl SubAssign<Vec4f> for Vec4f {
     fn sub_assign(&mut self, rhs: Vec4f) {
         self.v[0] -= rhs.v[0];
