@@ -2,13 +2,14 @@ use crate::{IntoCondition, IntoSystem, OneShotSystems, System};
 
 use super::*;
 
+// WARN: CANNOT MULTITHREAD
 pub struct Commands<'w, 's> {
-    entities: &'w Entities,
+    entities: &'w mut Entities,
     queue: &'s mut CommandQueue,
 }
 
 impl<'w, 's> Commands<'w, 's> {
-    pub fn new(entities: &'w Entities, queue: &'s mut CommandQueue) -> Self {
+    pub fn new(entities: &'w mut Entities, queue: &'s mut CommandQueue) -> Self {
         Self { entities, queue }
     }
 

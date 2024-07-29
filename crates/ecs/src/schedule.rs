@@ -133,6 +133,7 @@ impl Scheduler {
     }
 
     pub fn startup(&mut self, world: &mut World) {
+        self.run_schedule(world, Schedule::RenderStartup);
         self.run_schedule(world, Schedule::PreStartUp);
         self.run_schedule(world, Schedule::StartUp);
     }
@@ -160,7 +161,8 @@ impl Scheduler {
     fn run_schedule(&mut self, world: &mut World, schedule: Schedule) {
         let executer = &mut self.executers[schedule as usize];
         let _span = util::tracing::trace_span!("schedule", name = ?executer.tag).entered();
-        executer.run(world, &mut self.one_shot_systems);
+        // executer.update_archetypes(world, &mut self.one_shot_systems);
+        executer.run(world);
         executer.apply_deffered(world, &mut self.one_shot_systems);
     }
 }
@@ -172,6 +174,7 @@ pub enum Schedule {
     PreUpdate,
     Update,
     PostUpdate,
+    RenderStartup,
     PreStartUp,
     StartUp,
     Exit,
@@ -224,22 +227,25 @@ impl ScheduleExecuter {
         }
     }
 
+    // pub fn update_archetypes(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems) {
+    //     while self.archetypes_len < world.archetypes.len() {
+    //         util::tracing::warn!("adding archetype: {:#?}", self.tag);
+    //         let arch = world
+    //             .archetypes
+    //             .get(ArchId::new(self.archetypes_len))
+    //             .expect("valid id");
+    //         self.new_archetype(arch, one_shot_systems);
+    //         self.archetypes_len += 1;
+    //     }
+    //
+    //     if one_shot_systems.is_empty() {
+    //         return;
+    //     }
+    // }
+    //
     pub fn apply_deffered(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems) {
-        // for system in self.systems.iter_mut() {
-        //     system.apply_deffered(world);
-        // }
-
-        while self.archetypes_len < world.archetypes.len() {
-            let arch = world
-                .archetypes
-                .get(ArchId::new(self.archetypes_len))
-                .expect("valid id");
-            self.new_archetype(arch, one_shot_systems);
-            self.archetypes_len += 1;
-        }
-
-        if one_shot_systems.is_empty() {
-            return;
+        for system in self.systems.iter_mut() {
+            system.apply_deffered(world, one_shot_systems);
         }
 
         let mut indexes = Vec::with_capacity(one_shot_systems.len());
@@ -263,19 +269,25 @@ impl ScheduleExecuter {
         one_shot_systems.new_archetype(arch);
     }
 
-    pub fn run(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems) {
+    pub fn run(&mut self, world: &mut World) {
+        let pre_deffered_arch_len = world.archetypes.len();
         for (sys, cond) in self.systems.iter_mut().zip(self.conditions.iter_mut()) {
+            for arch_id in self.archetypes_len..pre_deffered_arch_len {
+                let arch = world
+                    .archetypes
+                    .get(ArchId::new(arch_id))
+                    .expect("valid id");
+                sys.new_archetype(arch);
+            }
+
             if let Some(cond) = cond {
                 cond.run_unsafe(unsafe { world.as_unsafe_world() })
                     .then(|| sys.run_unsafe(unsafe { world.as_unsafe_world() }));
             } else {
                 sys.run_unsafe(unsafe { world.as_unsafe_world() });
             }
-
-            // TODO: either redo the render system so that is does not rely on commands or change
-            // the deffered system. It could be more efficient to only apply deffered if necessary
-            sys.apply_deffered(world, one_shot_systems);
         }
+        self.archetypes_len = pre_deffered_arch_len;
     }
 }
 
@@ -300,6 +312,11 @@ mod tests {
         }
     }
 
+    fn startup(mut commands: Commands) {
+        println!("spawning");
+        commands.spawn((Health(0), Size(0)));
+    }
+
     fn test_r(_r: Res<Weight>) {}
 
     #[test]
@@ -307,13 +324,16 @@ mod tests {
         let mut world = World::default();
         let mut scheduler = Scheduler::default();
         world.insert_resource(Weight(0));
+        scheduler.add_systems(Schedule::StartUp, startup);
         scheduler.add_systems(Schedule::Update, (test_q, test_r));
         scheduler.add_systems(Schedule::PostUpdate, test_r);
+        scheduler.init_systems(&mut world);
         scheduler.build_schedule(&mut world);
+        println!("GGGGGG {:#?}", scheduler);
         scheduler.startup(&mut world);
+        println!("SDFASDF {:#?}", scheduler);
         scheduler.run(&mut world);
-        world.spawn((Health(0), Size(0)));
-        scheduler.new_archetype(world.archetypes.get(ArchId::new(0)).unwrap());
+        // scheduler.new_archetype(world.archetypes.get(ArchId::new(0)).unwrap());
         scheduler.run(&mut world);
         scheduler.flush_events(&mut world);
         scheduler.exit(&mut world);

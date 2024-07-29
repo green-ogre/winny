@@ -5,10 +5,19 @@ use crate::{
     TableRow, UnsafeWorldCell, World,
 };
 
-use util::tracing::{error, trace};
+use util::tracing::trace;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Entity(u64);
+
+impl Debug for Entity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Entity")
+            .field("generation", &self.generation())
+            .field("index", &self.index())
+            .finish()
+    }
+}
 
 impl Entity {
     pub fn new(generation: u32, storage_index: u32) -> Self {
@@ -119,6 +128,10 @@ impl Entities {
         self.is_valid(entity).then(|| self.entities.get(&entity))?
     }
 
+    pub fn meta_maybe_free(&self, entity: Entity) -> Option<&EntityMeta> {
+        self.entities.get(&entity)
+    }
+
     pub fn meta_mut(&mut self, entity: Entity) -> Option<&mut EntityMeta> {
         self.is_valid(entity)
             .then(|| self.entities.get_mut(&entity))?
@@ -173,6 +186,7 @@ impl Entities {
 
     pub fn spawn_at(
         &mut self,
+        generation: u32,
         entity: Entity,
         table_id: TableId,
         arch_id: ArchId,
@@ -180,8 +194,14 @@ impl Entities {
         arch_row: ArchRow,
     ) {
         let location = MetaLocation::new(table_id, arch_id, table_row, arch_row);
-        self.entities
-            .insert(entity.index(), EntityMeta::new(location));
+        self.entities.insert(
+            entity.index(),
+            EntityMeta {
+                free: false,
+                generation,
+                location,
+            },
+        );
 
         self.reserve_index.store(
             self.entities.len() as u32,
@@ -189,11 +209,18 @@ impl Entities {
         );
     }
 
-    pub fn reserve(&self) -> Entity {
-        let index = self
-            .reserve_index
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Entity::new(0, index)
+    // WARN: CANNOT MULTITHREAD
+    pub fn reserve(&mut self) -> Entity {
+        if let Some(free_entity) = self.free_entities.pop() {
+            let meta = self.entities.get_mut(&Entity::new(0, free_entity)).unwrap();
+            meta.generation += 1;
+            Entity::new(meta.generation, free_entity)
+        } else {
+            let index = self
+                .reserve_index
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Entity::new(0, index)
+        }
     }
 
     pub fn despawn(&mut self, entity: Entity) {
@@ -233,8 +260,17 @@ impl<'w> EntityMut<'w> {
     }
 
     pub fn insert<B: Bundle>(&mut self, bundle: B) {
-        if let Some(meta) = self.world.entities.meta(self.entity).cloned() {
-            trace!("meta found: {:?}", meta);
+        if let Some(meta) = self.world.entities.meta_maybe_free(self.entity).cloned() {
+            if meta.free {
+                unsafe {
+                    self.world
+                        .as_unsafe_world()
+                        .spawn_bundle_with_entity::<B>(self.entity, bundle)
+                };
+                return;
+            }
+
+            util::tracing::info!("meta found: {:?}", meta);
 
             let mut bundle_ids = Vec::new();
             B::component_meta(&mut self.world.components, &mut |meta| {
@@ -308,7 +344,7 @@ impl<'w> EntityMut<'w> {
                 );
             }
         } else {
-            trace!("entity is reserved, spawning bundle");
+            util::tracing::info!("entity is reserved, spawning bundle");
             unsafe {
                 self.world
                     .as_unsafe_world()
@@ -339,10 +375,11 @@ impl<'w> EntityMut<'w> {
 
     pub fn remove<B: Bundle>(&mut self) {
         let Some(meta) = self.world.entities.meta(self.entity).cloned() else {
-            error!("meta not found");
             panic!("cannot remove bundle from entity that does not exist");
         };
         trace!("meta found: {:?}", meta);
+
+        assert!(!meta.free);
 
         let mut bundle_metas = Vec::new();
         B::component_meta(&mut self.world.components, &mut |meta| {
@@ -522,6 +559,6 @@ mod tests {
 
         // println!("{:#?}", world);
 
-        println!("exiting scope");
+        // println!("exiting scope");
     }
 }

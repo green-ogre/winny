@@ -1,7 +1,5 @@
 use std::marker::PhantomData;
 
-use util::tracing::warn;
-
 use super::*;
 
 pub trait SparseArrayIndex: Copy {
@@ -88,10 +86,10 @@ impl<I: SparseArrayIndex, V> SparseArray<I, V> {
         }
 
         if std::mem::replace(&mut self.values[index], Some(value)).is_some() {
-            warn!(
-                "Overwriting data stored in ['SparseArray']: {}. This is unintented behaviour...",
-                std::any::type_name::<V>()
-            );
+            // warn!(
+            //     "Overwriting data stored in ['SparseArray']: {}. This is unintented behaviour...",
+            //     std::any::type_name::<V>()
+            // );
         }
     }
 

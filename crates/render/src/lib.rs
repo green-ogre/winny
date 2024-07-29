@@ -38,8 +38,9 @@ impl Plugin for RendererPlugin {
             .insert_resource(Buffers::default())
             .add_systems(ecs::Schedule::Resized, resize)
             // .add_systems(ecs::Schedule::SubmitEncoder, submit_encoder)
-            .add_systems(ecs::Schedule::PreStartUp, startup)
-            .add_systems(ecs::Schedule::PrepareRender, (start_render, clear_screen))
+            .add_systems(ecs::Schedule::RenderStartup, startup)
+            .add_systems(ecs::Schedule::PrepareRender, start_render)
+            .add_systems(ecs::Schedule::PreRender, clear_screen)
             .add_systems(ecs::Schedule::Present, present);
     }
 }

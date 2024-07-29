@@ -43,7 +43,7 @@ impl SystemParam for Commands<'_, '_> {
         state: &'s mut Self::State,
         world: UnsafeWorldCell<'w>,
     ) -> Self::Item<'w, 's> {
-        unsafe { Commands::new(world.entities(), state) }
+        unsafe { Commands::new(world.entities_mut(), state) }
     }
 
     fn apply_deffered(

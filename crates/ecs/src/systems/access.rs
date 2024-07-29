@@ -42,7 +42,7 @@ impl SystemAccess {
         for m in mutable_access.iter() {
             for i in immutable_access.iter() {
                 if i.meta.id == m.meta.id {
-                    util::tracing::error!(
+                    util::tracing::warn!(
                         "Query attemps to access the same Component mutably and immutably: {:#?}, {:#?}",
                         i, m
                     );
