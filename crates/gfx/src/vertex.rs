@@ -54,7 +54,7 @@ pub const FULLSCREEN_QUAD_VERTEX: [Vertex; 6] = [
 ];
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, PartialEq)]
 pub struct VertexUv {
     pub position: Vec4f,
     pub uv: Vec2f,
