@@ -651,6 +651,10 @@ impl AnimatedSprite {
             }
         }
     }
+
+    pub fn is_finished(&self) -> bool {
+        self.index == self.frame_range.end - 1
+    }
 }
 
 pub fn binding_from_texture(texture: &Texture, device: &RenderDevice) -> RenderBindGroup {
