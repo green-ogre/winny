@@ -375,7 +375,7 @@ impl<'w> EntityMut<'w> {
 
     pub fn remove<B: Bundle>(&mut self) {
         let Some(meta) = self.world.entities.meta(self.entity).cloned() else {
-            panic!("cannot remove bundle from entity that does not exist");
+            return;
         };
         trace!("meta found: {:?}", meta);
 
@@ -385,7 +385,10 @@ impl<'w> EntityMut<'w> {
         B::component_meta(&mut self.world.components, &mut |meta| {
             bundle_metas.push(*meta);
         });
-        self.verify_remove_action(meta, &bundle_metas);
+        if !self.verify_remove_action(meta, &bundle_metas) {
+            self.despawn();
+            return;
+        }
         self.swap_remove_entity(meta);
 
         let mut new_metas = unsafe {
@@ -433,7 +436,7 @@ impl<'w> EntityMut<'w> {
         }
     }
 
-    fn verify_remove_action(&self, meta: EntityMeta, bundle_metas: &[ComponentMeta]) {
+    fn verify_remove_action(&self, meta: EntityMeta, bundle_metas: &[ComponentMeta]) -> bool {
         let arch = unsafe {
             self.world
                 .archetypes
@@ -457,16 +460,15 @@ impl<'w> EntityMut<'w> {
             .saturating_sub(bundle_metas.len())
             == 0
         {
-            panic!(
-                "Cannot remove last component(s) from entity: {:#?}. This should be implemented.",
-                bundle_metas
-            );
+            return false;
         }
+
+        true
     }
 
     // pub fn get_components(&self) ->
 
-    pub fn despawn(mut self) {
+    pub fn despawn(&mut self) {
         let Some(meta) = self.world.entities.meta(self.entity).cloned() else {
             trace!("entity uninitialized, noop");
             return;
