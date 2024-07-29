@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use app::plugins::Plugin;
 use app::time::DeltaTime;
 use app::window::Window;
@@ -615,11 +617,12 @@ impl From<&AnimatedSprite> for AnimationDuration {
     }
 }
 
-#[derive(WinnyComponent, Debug, Clone, Copy)]
+#[derive(WinnyComponent, Debug, Clone)]
 pub struct AnimatedSprite {
     pub width: u32,
     pub height: u32,
     pub index: u32,
+    pub frame_range: Range<u32>,
     pub frame_delta: f32,
 }
 
@@ -633,6 +636,7 @@ impl AnimatedSprite {
             width: atlas.width,
             height: atlas.height,
             index: 0,
+            frame_range: 0..(atlas.width * atlas.height),
             frame_delta,
         }
     }
@@ -642,8 +646,8 @@ impl AnimatedSprite {
         if duration.0 <= 0.0 {
             duration.0 = self.frame_delta;
             self.index += 1;
-            if self.index >= self.width * self.height {
-                self.index = 0;
+            if self.index >= self.frame_range.end {
+                self.index = self.frame_range.start;
             }
         }
     }
