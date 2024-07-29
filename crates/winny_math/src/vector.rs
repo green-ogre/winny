@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, SubAssign};
+use std::ops::{Add, AddAssign, Mul, SubAssign};
 
 use crate::prelude::Matrix4x4f;
 
@@ -62,7 +62,7 @@ impl std::ops::AddAssign<Vec2> for Vec2 {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, PartialEq)]
 pub struct Vec2f {
     pub v: [f32; 2],
 }
@@ -76,6 +76,24 @@ impl From<[f32; 2]> for Vec2f {
 impl From<[usize; 2]> for Vec2f {
     fn from(value: [usize; 2]) -> Self {
         Self::new(value[0] as f32, value[1] as f32)
+    }
+}
+
+impl Add<Vec2f> for Vec2f {
+    type Output = Self;
+    fn add(mut self, rhs: Vec2f) -> Self::Output {
+        self.v[0] += rhs.v[0];
+        self.v[1] += rhs.v[1];
+        self
+    }
+}
+
+impl Mul<Vec2f> for Vec2f {
+    type Output = Self;
+    fn mul(mut self, rhs: Vec2f) -> Self::Output {
+        self.v[0] *= rhs.v[0];
+        self.v[1] *= rhs.v[1];
+        self
     }
 }
 
@@ -356,7 +374,7 @@ impl std::ops::DivAssign<f32> for Vec3f {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, PartialEq)]
 pub struct Vec4f {
     pub v: [f32; 4],
 }

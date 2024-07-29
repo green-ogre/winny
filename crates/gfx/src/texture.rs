@@ -115,7 +115,7 @@ impl Image {
     }
 }
 
-#[derive(WinnyComponent)]
+#[derive(WinnyComponent, Debug)]
 pub struct TextureDimensions(pub Dimensions);
 
 impl TextureDimensions {

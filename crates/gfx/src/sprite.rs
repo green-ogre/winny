@@ -1,11 +1,9 @@
-use std::ops::Range;
-
 use app::plugins::Plugin;
 use app::time::DeltaTime;
-use app::window::Window;
+use app::window::{ViewPort, Window};
 use asset::AssetId;
 use asset::{Assets, Handle};
-use cgmath::{Matrix4, Quaternion, Rad, Rotation3};
+use cgmath::Matrix4;
 use ecs::prelude::*;
 use ecs::SparseArrayIndex;
 use ecs::SparseSet;
@@ -16,6 +14,7 @@ use render::{
     BindGroupHandle, BindGroups, RenderBindGroup, RenderConfig, RenderDevice, RenderEncoder,
     RenderQueue, RenderView,
 };
+use std::ops::Range;
 use winny_math::angle::Degrees;
 use winny_math::matrix::{
     rotation_2d_matrix4x4f, scale_matrix4x4f, translation_matrix4x4f,
@@ -223,6 +222,8 @@ pub fn prepare_for_render_pass(
     // TODO: change to camera
     window: Res<Window>,
 ) {
+    let viewport = &window.viewport;
+
     // TODO: decide on whether to sort by bind group handle or z
     let mut sprites = sprites.iter().collect::<Vec<_>>();
     sprites.sort_by(|(s1, _, _, _, _), (s2, _, _, _, _)| s1.z.cmp(&s2.z));
@@ -274,7 +275,7 @@ pub fn prepare_for_render_pass(
 
     let vertex_data: Vec<_> = sprites
         .iter()
-        .map(|(s, t, _, d, a)| s.to_vertices(&config, d, t, *a))
+        .map(|(s, _, _, d, a)| s.to_vertices(&viewport, d, *a))
         .flatten()
         .collect();
     let vertex_data = bytemuck::cast_slice(&vertex_data);
@@ -319,10 +320,9 @@ pub fn prepare_for_render_pass(
             });
     }
 
-    let viewport = &window.viewport;
     let transform_data = sprites
         .iter()
-        .map(|(_, t, _, _, _)| t.transformation_matrix(viewport, config.max_z))
+        .map(|(s, t, _, _, _)| s.transformation_matrix(t, &config))
         .collect::<Vec<_>>();
     let transform_data = bytemuck::cast_slice(&transform_data);
 
@@ -526,6 +526,15 @@ pub fn bind_new_sprite_bundles(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Opacity(pub f32);
+
+impl Opacity {
+    pub fn new(val: f32) -> Self {
+        Self(val.clamp(0.0, 1.0))
+    }
+}
+
 #[derive(WinnyComponent, Debug, Clone, Copy)]
 pub struct Sprite {
     // inherits from Transform
@@ -534,6 +543,7 @@ pub struct Sprite {
     pub scale: Vec2f,
     pub rotation: Degrees,
     // linearly mixed with the sprite sample by mask.v[3] (`a`)
+    pub opacity: Opacity,
     pub mask: Vec4f,
     pub z: i32,
     pub v_flip: bool,
@@ -547,6 +557,7 @@ impl Default for Sprite {
             position: Vec3f::new(0.0, 0.0, 0.0),
             rotation: Degrees(0.0),
             mask: Vec4f::zero(),
+            opacity: Opacity::new(1.0),
             z: 0,
             v_flip: false,
             h_flip: false,
@@ -558,55 +569,60 @@ impl Sprite {
     pub fn to_raw(&self) -> SpriteInstance {
         let flip_h = if self.h_flip { 0. } else { 1. };
         let flip_v = if self.v_flip { 0. } else { 1. };
+        let opacity = self.opacity.0.clamp(0.0, 1.0);
+
         SpriteInstance {
             mask: self.mask,
             flip_v,
             flip_h,
-            _padding: [0.; 2],
+            opacity,
+            _padding: 0.,
         }
     }
 
-    pub fn to_vertices(
+    // Combine the entity transformation with the local sprite transformation
+    pub fn transformation_matrix(
         &self,
-        config: &RenderConfig,
-        texture_dimension: &TextureDimensions,
         transform: &Transform,
-        animation: Option<&AnimatedSprite>,
-    ) -> [VertexUv; 6] {
-        let mut vertices = FULLSCREEN_QUAD_VERTEX_UV;
-
-        let atlas_scaling = if let Some(animation) = animation {
-            (1.0 / animation.width as f32, 1.0 / animation.height as f32)
-        } else {
-            (1.0, 1.0)
-        };
-
-        let normalized_scale = Vec2f::new(
-            atlas_scaling.0 * texture_dimension.0 .0 as f32 / config.width() as f32,
-            atlas_scaling.1 * texture_dimension.0 .1 as f32 / config.height() as f32,
-        );
-        let image_scale = scale_matrix4x4f(normalized_scale);
-        for vert in vertices.iter_mut() {
-            vert.position = image_scale * vert.position;
-        }
-
-        let scale = scale_matrix4x4f(self.scale);
+        config: &RenderConfig,
+    ) -> Matrix4x4f {
+        let scale = scale_matrix4x4f(self.scale * transform.scale);
         let rotation = rotation_2d_matrix4x4f(self.rotation);
         let t_rotation = Matrix4::from(transform.rotation);
         let t_rotation = Matrix4x4f {
             m: t_rotation.into(),
         };
+
         let world_to_screen_space =
             world_to_screen_space_matrix4x4f(config.width(), config.height(), config.max_z);
         let translation = translation_matrix4x4f(
             world_to_screen_space * Vec4f::to_homogenous(self.position + transform.translation),
         );
 
+        // Translate first in order to keep the coordinate system uniform for sprites of any scale
+        translation * scale * rotation * t_rotation
+    }
+
+    // Create a fullscreen quad, then scale about the origin to the correct sprite dimensions
+    pub fn to_vertices(
+        &self,
+        viewport: &ViewPort,
+        texture_dimension: &TextureDimensions,
+        animation: Option<&AnimatedSprite>,
+    ) -> [VertexUv; 6] {
+        let mut vertices = FULLSCREEN_QUAD_VERTEX_UV;
+        let mut atlas_scaling = (1.0, 1.0);
+        if let Some(animation) = animation {
+            atlas_scaling.0 /= animation.width as f32;
+            atlas_scaling.1 /= animation.height as f32;
+        }
+        let normalized_scale = Vec2f::new(
+            atlas_scaling.0 * texture_dimension.0 .0 as f32 / viewport.width(),
+            atlas_scaling.1 * texture_dimension.0 .1 as f32 / viewport.height(),
+        );
+        let image_scale = scale_matrix4x4f(normalized_scale);
         for vert in vertices.iter_mut() {
-            vert.position = scale * vert.position;
-            vert.position = rotation * vert.position;
-            vert.position = t_rotation * vert.position;
-            vert.position = translation * vert.position;
+            vert.position = image_scale * vert.position;
         }
 
         vertices
@@ -680,6 +696,14 @@ impl AnimatedSprite {
         self.frame_range.clone()
     }
 
+    pub fn with_index(mut self, index: u32) -> Self {
+        self.index = index;
+        if self.index >= self.frame_range.end {
+            self.index = self.frame_range.start;
+        }
+        self
+    }
+
     pub fn index(&self) -> u32 {
         self.index
     }
@@ -747,7 +771,8 @@ pub struct SpriteInstance {
     mask: Vec4f,
     flip_v: f32,
     flip_h: f32,
-    _padding: [f32; 2],
+    opacity: f32,
+    _padding: f32,
 }
 
 impl VertexLayout for SpriteInstance {
@@ -770,6 +795,11 @@ impl VertexLayout for SpriteInstance {
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
                     shader_location: 4,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 6]>() as wgpu::BufferAddress,
+                    shader_location: 5,
                     format: wgpu::VertexFormat::Float32,
                 },
             ],

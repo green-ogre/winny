@@ -89,4 +89,12 @@ impl ViewPort {
     pub fn new(min: Vec2f, max: Vec2f) -> Self {
         Self { min, max }
     }
+
+    pub fn width(&self) -> f32 {
+        self.max.v[0] - self.min.v[0]
+    }
+
+    pub fn height(&self) -> f32 {
+        self.max.v[1] - self.min.v[1]
+    }
 }

@@ -15,6 +15,7 @@ fn main() {
                     close_on_escape: true,
                     // Sprite rotation will stretch in a non square window / viewport
                     window_size: Vec2f::new(1200., 1200.),
+                    viewport_size: Vec2f::new(1200., 1200.),
                     ..Default::default()
                 },
                 ..Default::default()
