@@ -1,4 +1,5 @@
 use app::{
+    app::Schedule,
     plugins::Plugin,
     window::{ViewPort, Window},
 };
@@ -177,6 +178,6 @@ impl Plugin for EditorPlugin {
         app.register_resource::<UiState>()
             .add_plugins(EguiPlugin::<UiState>::new())
             .add_systems(Schedule::StartUp, startup)
-            .add_systems(ecs::Schedule::PostUpdate, update_camera_viewport);
+            .add_systems(Schedule::PostUpdate, update_camera_viewport);
     }
 }

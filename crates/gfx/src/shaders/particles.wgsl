@@ -75,10 +75,6 @@ struct EmitterUniform {
     m2: vec4<f32>,
     m3: vec4<f32>,
     m4: vec4<f32>,
-    m5: vec4<f32>,
-    m6: vec4<f32>,
-    m7: vec4<f32>,
-    m8: vec4<f32>,
 }
 
 @group(2) @binding(0)
@@ -98,8 +94,11 @@ var<storage, read> particle_storage: array<ParticleInstance>;
 
 struct ParticleInstance {
   translation: vec4<f32>,
+  velocity: vec4<f32>,
+  acceleration: vec4<f32>,
   scale: vec2<f32>,
-  rotation: f32,
+  creation_time: f32,
+  lifetime: f32,
 }
 
 struct VertexOutput {
@@ -109,29 +108,20 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(vert: VertexInput, instance: InstanceInput) -> VertexOutput {
-  var out: VertexOutput;
-  let emitter_transformation = mat4x4<f32>(
-    emitter.m1,
-    emitter.m2,
-    emitter.m3,
-    emitter.m4,
-  );
-  let particle_transformation = mat4x4<f32>(
-    emitter.m5,
-    emitter.m6,
-    emitter.m7,
-    emitter.m8,
-  );
+    var out: VertexOutput;
+    let particle_transformation = mat4x4<f32>(
+        emitter.m1,
+        emitter.m2,
+        emitter.m3,
+        emitter.m4,
+    );
 
-  let particle = particle_storage[instance.alive_index];
-
-
-  out.clip_position = vert.position * emitter_transformation;
-  out.clip_position = out.clip_position * particle_transformation;
-  out.clip_position += vec4<f32>(particle.translation.xy, 0.0, 0.0);
-  out.clip_position.z = 0.0;
-  out.uv = vert.uv;
-  return out;
+    let particle = particle_storage[instance.alive_index];
+    out.clip_position = vert.position * particle_transformation;
+    out.clip_position += vec4<f32>(particle.translation.xy, 0.0, 0.0);
+    out.clip_position.z = 0.0;
+    out.uv = vert.uv;
+    return out;
 }
 
 @group(0) @binding(0)

@@ -14,6 +14,7 @@ fn main() {
                     close_on_escape: true,
                     title: "Particles-example",
                     window_size: Vec2f::new(1200., 1200.),
+                    viewport_size: Vec2f::new(1200., 1200.),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -60,8 +61,13 @@ impl UiState {
         Self {
             transform: Transform::default(),
             emitter: ParticleEmitter {
-                num_particles: 1000,
+                num_particles: 10000,
                 particle_scale: Vec2f::new(0.05, 0.05),
+                width: 500.0,
+                height: 500.0,
+                lifetime: 5.0..6.0,
+                acceleration: Vec3f::new(400., -400., 0.),
+                initial_velocity: Vec3f::new(0., 400., 0.),
                 ..Default::default()
             },
             lifetime_min: 0.5,
@@ -106,7 +112,7 @@ impl UiRenderState for UiState {
                         if self.lifetime_min == self.lifetime_max {
                             self.lifetime_max += 0.01;
                         }
-                        self.emitter.lifetime = self.lifetime_min..self.lifetime_max;
+                        // self.emitter.lifetime = self.lifetime_min..self.lifetime_max;
 
                         // ui.add(
                         //     egui::Slider::new(&mut self.emitter.radius, 0.0..=1000.).text("radius"),

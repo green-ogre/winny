@@ -75,7 +75,7 @@ impl Transform {
         //     world_to_screen_space * Vec4f::new(viewport.min.v[0], viewport.min.v[1], 0., 1.),
         // );
 
-        scale * rotation * translation
+        translation * scale * rotation
     }
 }
 
