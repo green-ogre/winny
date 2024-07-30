@@ -24,7 +24,7 @@ impl asset::AssetLoader for TextureAtlasLoader {
         _path: String,
         _ext: &str,
     ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>> {
-        async move { unimplemented!() }
+        async move { panic!() }
     }
 }
 
@@ -417,6 +417,21 @@ impl TextureAtlas {
         Ok(TextureAtlas {
             width,
             height,
+            texture,
+        })
+    }
+
+    pub fn from_image(
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        atlas_dimensions: (u32, u32),
+        image: &Image,
+    ) -> Result<Self, AtlasError> {
+        let texture = Texture::from_image(device, queue, &image.image, Some("texure atlas"));
+
+        Ok(TextureAtlas {
+            width: atlas_dimensions.0,
+            height: atlas_dimensions.1,
             texture,
         })
     }

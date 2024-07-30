@@ -56,6 +56,10 @@ impl<'c> EntityCommands<'c> {
         Self { entity, queue }
     }
 
+    pub fn entity(&self) -> Entity {
+        self.entity
+    }
+
     pub fn insert<B: Bundle>(&mut self, bundle: B) -> &mut Self {
         self.push(insert::<B>(bundle));
         self

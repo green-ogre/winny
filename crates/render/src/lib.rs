@@ -347,7 +347,7 @@ impl RenderConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(WinnyComponent, Debug, Copy, Clone)]
 pub struct Dimensions(pub u32, pub u32);
 
 #[derive(WinnyComponent)]

@@ -666,10 +666,6 @@ impl Default for AnimatedSprite {
 
 impl AnimatedSprite {
     pub fn from_texture_atlas(atlas: &TextureAtlas) -> Self {
-        if atlas.width != 1 {
-            panic!("atlas dimensions not supported");
-        }
-
         Self {
             width: atlas.width,
             height: atlas.height,
