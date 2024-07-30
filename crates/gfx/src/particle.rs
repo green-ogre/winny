@@ -293,7 +293,6 @@ fn bind_new_particle_bundles(
 pub struct ParticleBundle {
     pub emitter: ParticleEmitter,
     pub handle: Handle<Texture>,
-    pub transform: Transform,
 }
 
 #[derive(WinnyComponent, Clone)]
