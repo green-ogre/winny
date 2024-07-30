@@ -29,11 +29,13 @@ fn main() {
 }
 
 fn startup(mut commands: Commands, mut server: ResMut<AssetServer>) {
-    commands.spawn(ParticleBundle {
-        emitter: ParticleEmitter::default(),
-        handle: server.load("particle.png"),
-        transform: Transform::default(),
-    });
+    commands.spawn((
+        ParticleBundle {
+            emitter: ParticleEmitter::default(),
+            handle: server.load("particle.png"),
+        },
+        Transform::default(),
+    ));
 }
 
 fn update_emitter(

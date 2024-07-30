@@ -668,7 +668,12 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
 
         std::thread::spawn(move || {
             let _span = trace_span!("load thread").entered();
-            let binary = pollster::block_on(load_binary(path.as_str())).unwrap();
+            let binary = match pollster::block_on(load_binary(path.as_str())) {
+                Ok(f) => f,
+                Err(_) => {
+                    panic!("Could not find file: {:?}", path);
+                }
+            };
             let reader = ByteReader::new(BufReader::new(Cursor::new(binary)));
 
             let result = pollster::block_on(L::load(context, reader, path.clone(), ext.as_str()))
