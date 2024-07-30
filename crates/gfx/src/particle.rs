@@ -1,31 +1,30 @@
-use std::ops::Range;
-
+use crate::{
+    create_buffer_bind_group, create_compute_pipeline, create_render_pipeline,
+    create_texture_bind_group,
+    noise::NoisePlugin,
+    texture::Texture,
+    transform::{new_transform_bind_group, new_transform_bind_group_layout, Transform},
+    vertex::{VertexLayout, VertexUv, FULLSCREEN_QUAD_VERTEX_UV},
+};
 use app::{
     app::{AppSchedule, Schedule},
     plugins::Plugin,
     time::DeltaTime,
-    window::Window,
 };
 use asset::{Assets, Handle};
+use cgmath::Matrix4;
 use ecs::{prelude::*, WinnyBundle, WinnyComponent, WinnyResource};
 use rand::Rng;
 use render::prelude::*;
+use std::ops::Range;
 use wgpu::util::DeviceExt;
 use winny_math::{
     angle::Radf,
     matrix::{
-        rotation_2d_matrix4x4f, scale_matrix4x4f, world_to_screen_space_matrix4x4f, Matrix4x4f,
+        rotation_2d_matrix4x4f, scale_matrix4x4f, translation_matrix4x4f,
+        world_to_screen_space_matrix4x4f, Matrix4x4f,
     },
     vector::{Vec2f, Vec3f, Vec4f},
-};
-
-use crate::{
-    create_buffer_bind_group, create_compute_pipeline, create_render_pipeline,
-    create_texture_bind_group,
-    noise::{NoisePlugin, NoiseTexture},
-    texture::Texture,
-    transform::{new_transform_bind_group, new_transform_bind_group_layout, Transform},
-    vertex::{VertexLayout, VertexUv, FULLSCREEN_QUAD_VERTEX_UV},
 };
 
 // WARN: Particles and Sprites exist within different contexts, therefore they're z position has no
@@ -44,20 +43,39 @@ impl Plugin for ParticlePlugin {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct VertexEmitterUniform {
-    emitter_transform: Matrix4x4f,
     particle_transform: Matrix4x4f,
 }
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct ComputeEmitterUniform {
-    // Seconds
+    initial_velocity: Vec4f,
+    acceleration: Vec4f,
     time_delta: f32,
     time_elapsed: f32,
     width: f32,
     height: f32,
     max_lifetime: f32,
     min_lifetime: f32,
+    screen_width: f32,
+    screen_height: f32,
+}
+
+impl ComputeEmitterUniform {
+    pub fn new(config: &RenderConfig, emitter: &ParticleEmitter) -> Self {
+        Self {
+            initial_velocity: Vec4f::to_homogenous(emitter.initial_velocity),
+            acceleration: Vec4f::to_homogenous(emitter.acceleration),
+            time_delta: 0.,
+            time_elapsed: 0.,
+            width: emitter.width / config.width(),
+            height: emitter.height / config.height(),
+            min_lifetime: emitter.lifetime.start,
+            max_lifetime: emitter.lifetime.end,
+            screen_width: config.width(),
+            screen_height: config.height(),
+        }
+    }
 }
 
 #[derive(WinnyComponent)]
@@ -85,7 +103,6 @@ pub struct ParticlePipeline {
     dead_indexes: Vec<u32>,
 
     texture_binding: wgpu::BindGroup,
-    noise_texture_binding: wgpu::BindGroup,
     vertex_buffer: ParticleVertexBuffer,
 }
 
@@ -96,48 +113,22 @@ impl ParticlePipeline {
         device: &RenderDevice,
         config: &RenderConfig,
         transform: &Transform,
-        window: &Window,
         texture: &Texture,
         buffer_len: usize,
-        noise: &Texture,
     ) -> Self {
-        let noise_texture_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: None,
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                }],
-            });
-
-        let noise_texture_binding = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &noise_texture_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&noise.view),
-            }],
-        });
-
         let (texture_layout, texture_binding) =
             create_texture_bind_group(None, &device, &texture.view, &texture.sampler);
 
         let vertex_particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
-            size: (buffer_len * std::mem::size_of::<Particle>()) as u64,
+            size: (buffer_len * std::mem::size_of::<RawParticle>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let compute_particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
-            size: (buffer_len * std::mem::size_of::<Particle>()) as u64,
+            size: (buffer_len * std::mem::size_of::<RawParticle>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -181,8 +172,7 @@ impl ParticlePipeline {
         );
 
         let vertex_emitter_uniform = VertexEmitterUniform {
-            emitter_transform: transform.transformation_matrix(&window.viewport, 1000.),
-            particle_transform: emitter.particle_transformation_matrix(),
+            particle_transform: emitter.particle_transformation_matrix(&config, transform),
         };
         let vertex_emitter_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("particles"),
@@ -208,14 +198,7 @@ impl ParticlePipeline {
             ],
         );
 
-        let compute_emitter_uniform = ComputeEmitterUniform {
-            time_delta: 0.,
-            time_elapsed: 0.,
-            width: emitter.width,
-            height: emitter.height,
-            min_lifetime: emitter.lifetime.start,
-            max_lifetime: emitter.lifetime.end,
-        };
+        let compute_emitter_uniform = ComputeEmitterUniform::new(&config, &emitter);
         let compute_emitter_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("particles"),
             contents: bytemuck::cast_slice(&[compute_emitter_uniform]),
@@ -236,11 +219,7 @@ impl ParticlePipeline {
         };
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("particle compute"),
-            bind_group_layouts: &[
-                &compute_particle_layout,
-                &compute_emitter_layout,
-                &noise_texture_layout,
-            ],
+            bind_group_layouts: &[&compute_particle_layout, &compute_emitter_layout],
             push_constant_ranges: &[],
         });
         let compute_pipeline =
@@ -270,7 +249,6 @@ impl ParticlePipeline {
             dead_indexes,
 
             texture_binding,
-            noise_texture_binding,
             vertex_buffer,
         }
     }
@@ -281,32 +259,32 @@ fn bind_new_particle_bundles(
     device: Res<RenderDevice>,
     config: Res<RenderConfig>,
     queue: Res<RenderQueue>,
-    window: Res<Window>,
     bundles: Query<
         (Entity, Handle<Texture>, Transform, ParticleEmitter),
         Without<ParticlePipeline>,
     >,
     textures: Res<Assets<Texture>>,
-    noise: Res<NoiseTexture>,
+    delta: Res<DeltaTime>,
 ) {
     for (entity, handle, transform, emitter) in bundles.iter() {
         if let Some(texture) = textures.get(handle) {
-            // TODO: dont make new binding
-            if let Some(noise) = textures.get(&noise.0) {
-                let mut particle_render_pipeline = ParticlePipeline::new(
-                    emitter,
-                    &device,
-                    &config,
-                    &transform,
-                    &window,
-                    &texture,
-                    emitter.num_particles,
-                    &noise.asset,
-                );
-                init_emitter(emitter, &mut particle_render_pipeline, &queue, &window);
+            let mut particle_render_pipeline = ParticlePipeline::new(
+                emitter,
+                &device,
+                &config,
+                &transform,
+                &texture,
+                emitter.num_particles,
+            );
+            init_emitter(
+                emitter,
+                &mut particle_render_pipeline,
+                &queue,
+                &delta,
+                &config,
+            );
 
-                commands.get_entity(entity).insert(particle_render_pipeline);
-            }
+            commands.get_entity(entity).insert(particle_render_pipeline);
         }
     }
 }
@@ -327,6 +305,8 @@ pub struct ParticleEmitter {
     pub height: f32,
     pub particle_scale: Vec2f,
     pub particle_rotation: Radf,
+    pub initial_velocity: Vec3f,
+    pub acceleration: Vec3f,
 }
 
 impl Default for ParticleEmitter {
@@ -334,43 +314,74 @@ impl Default for ParticleEmitter {
         Self {
             is_emitting: true,
             num_particles: 10,
-            lifetime: 0.5..1.0,
+            lifetime: 0.5..1.5,
             width: 400.,
             height: 400.,
             particle_scale: Vec2f::new(1., 1.),
             particle_rotation: Radf(0.),
+            initial_velocity: Vec3f::zero(),
+            acceleration: Vec3f::new(0., -200., 0.),
         }
     }
 }
 
 impl ParticleEmitter {
-    pub(crate) fn particle_transformation_matrix(&self) -> Matrix4x4f {
+    pub(crate) fn particle_transformation_matrix(
+        &self,
+        config: &RenderConfig,
+        emitter_transform: &Transform,
+    ) -> Matrix4x4f {
         let scale = scale_matrix4x4f(self.particle_scale);
+        let t_scale = scale_matrix4x4f(emitter_transform.scale);
         let rotation = rotation_2d_matrix4x4f(self.particle_rotation);
+        let t_rotation = Matrix4::from(emitter_transform.rotation);
+        let t_rotation = Matrix4x4f {
+            m: t_rotation.into(),
+        };
 
-        scale * rotation
+        let world_to_screen_space =
+            world_to_screen_space_matrix4x4f(config.width(), config.height(), config.max_z);
+        let t_translation = translation_matrix4x4f(
+            world_to_screen_space * Vec4f::to_homogenous(emitter_transform.translation),
+        );
+
+        // Apply entity's Transform first, then apply local transformations. Allows for rotation
+        // about the translation of the Transform.
+        t_translation * t_scale * t_rotation * scale * rotation
     }
 }
 
+/// Defines the ParticleInstance stored within the GPU particle buffer. The acceleration and
+/// velocity are in world space.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Particle {
-    // Within screen space
+pub struct RawParticle {
     translation: Vec4f,
+    velocity: Vec4f,
+    acceleration: Vec4f,
     scale: Vec2f,
-    // Radians
-    rotation: f32,
+    /// From [`DeltaTime`] elapsed
+    creation_time: f32,
     // Seconds
     lifetime: f32,
 }
 
-impl Particle {
-    pub fn new(translation: Vec4f, scale: Vec2f, rotation: f32, lifetime: f32) -> Self {
+impl RawParticle {
+    pub fn new(
+        translation: Vec4f,
+        velocity: Vec4f,
+        acceleration: Vec4f,
+        scale: Vec2f,
+        lifetime: f32,
+        delta: &DeltaTime,
+    ) -> Self {
         Self {
             translation,
+            velocity,
+            acceleration,
             scale,
-            rotation,
             lifetime,
+            creation_time: delta.wrapping_elapsed_as_seconds(),
         }
     }
 }
@@ -379,9 +390,10 @@ fn init_emitter(
     emitter: &ParticleEmitter,
     pipeline: &mut ParticlePipeline,
     queue: &RenderQueue,
-    window: &Window,
+    delta: &DeltaTime,
+    config: &RenderConfig,
 ) {
-    let particles = generate_particles_with_conditions(emitter, window);
+    let particles = generate_particles_with_conditions(emitter, delta, config);
     queue.write_buffer(
         &pipeline.compute_particle_buffer,
         0,
@@ -396,21 +408,26 @@ fn init_emitter(
     );
 }
 
-fn generate_particles_with_conditions(emitter: &ParticleEmitter, window: &Window) -> Vec<Particle> {
+fn generate_particles_with_conditions(
+    emitter: &ParticleEmitter,
+    delta: &DeltaTime,
+    config: &RenderConfig,
+) -> Vec<RawParticle> {
     let mut rng = rand::thread_rng();
     let mut particles = Vec::with_capacity(emitter.num_particles);
-    let size = window.winit_window.inner_size();
-    let world_to_screen =
-        world_to_screen_space_matrix4x4f(size.width as f32, size.height as f32, 1000.);
+    let world_to_screen_space =
+        world_to_screen_space_matrix4x4f(config.width(), config.height(), 1000.);
     for _ in 0..emitter.num_particles {
-        let x = rng.gen_range(-emitter.width..emitter.width);
-        let y = rng.gen_range(-emitter.height..emitter.height);
-        let lifetime = rng.gen_range(emitter.lifetime.clone());
-        particles.push(Particle::new(
-            world_to_screen * Vec4f::to_homogenous(Vec3f::new(x, y, 0.)),
+        let x = rng.gen_range(0.0..emitter.width) - 0.5 * emitter.width;
+        let y = rng.gen_range(0.0..emitter.height) - 0.5 * emitter.height;
+        let lifetime = rng.gen_range(0.0..emitter.lifetime.end);
+        particles.push(RawParticle::new(
+            world_to_screen_space * Vec4f::to_homogenous(Vec3f::new(x, y, 0.)),
+            Vec4f::to_homogenous(emitter.initial_velocity),
+            Vec4f::to_homogenous(emitter.acceleration),
             Vec2f::new(1., 1.),
-            0.,
             lifetime,
+            delta,
         ));
     }
 
@@ -462,6 +479,7 @@ struct ParticleVertexBuffer {
     buffer: wgpu::Buffer,
 }
 
+// TODO: reduce vertices to 3, then draw_indexed to greatly limit vertex count
 impl ParticleVertexBuffer {
     // scales a particle to it's original physical size
     pub fn new(texture: &Texture, device: &RenderDevice, config: &RenderConfig) -> Self {
@@ -488,16 +506,12 @@ impl ParticleVertexBuffer {
 fn update_emitter_transforms(
     mut emitters: Query<(Mut<ParticlePipeline>, Transform, ParticleEmitter)>,
     queue: Res<RenderQueue>,
-    window: Res<Window>,
-    // TODO: assumes that render happens during every update loop
     dt: Res<DeltaTime>,
     config: Res<RenderConfig>,
 ) {
     for (pipeline, transform, emitter) in emitters.iter_mut() {
-        pipeline.vertex_emitter_uniform.emitter_transform =
-            transform.transformation_matrix(&window.viewport, 1000.);
         pipeline.vertex_emitter_uniform.particle_transform =
-            emitter.particle_transformation_matrix();
+            emitter.particle_transformation_matrix(&config, transform);
 
         queue.write_buffer(
             &pipeline.vertex_emitter_buffer,
@@ -506,13 +520,16 @@ fn update_emitter_transforms(
         );
 
         pipeline.compute_emitter_uniform = ComputeEmitterUniform {
+            initial_velocity: Vec4f::to_homogenous(emitter.initial_velocity),
+            acceleration: Vec4f::to_homogenous(emitter.acceleration),
             time_delta: dt.delta,
             time_elapsed: dt.wrapping_elapsed_as_seconds(),
-            // TODO: the radius needs
-            width: emitter.width / config.width(),
-            height: emitter.height / config.height(),
+            width: emitter.width / config.width() * transform.scale.v[0],
+            height: emitter.height / config.height() * transform.scale.v[1],
             min_lifetime: emitter.lifetime.start,
             max_lifetime: emitter.lifetime.end,
+            screen_width: config.width(),
+            screen_height: config.height(),
         };
 
         queue.write_buffer(
@@ -537,7 +554,6 @@ fn compute_emitters(
             compute_pass.set_pipeline(&pipeline.compute_pipeline);
             compute_pass.set_bind_group(0, &pipeline.compute_particle_binding, &[]);
             compute_pass.set_bind_group(1, &pipeline.compute_emitter_bind_group, &[]);
-            compute_pass.set_bind_group(2, &pipeline.noise_texture_binding, &[]);
             compute_pass.dispatch_workgroups(emitter.num_particles as u32, 1, 1);
         }
 
@@ -556,10 +572,6 @@ fn render_emitters(
     view: Res<RenderView>,
     emitters: Query<(ParticlePipeline, ParticleEmitter), With<Transform>>,
 ) {
-    if !emitters.iter().any(|(_, e)| e.is_emitting) {
-        return;
-    }
-
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("particles"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 
 use app::{
-    app::App,
+    app::{App, AppSchedule, Schedule},
     input::mouse_and_key::{KeyCode, KeyInput, KeyState, MouseButton, MouseInput, MouseMotion},
     plugins::Plugin,
     window::Window,
@@ -304,9 +304,9 @@ impl<S: UiRenderState> EguiPlugin<S> {
 
 impl<S: UiRenderState> Plugin for EguiPlugin<S> {
     fn build(&mut self, app: &mut App) {
-        app.add_systems(ecs::Schedule::StartUp, startup)
-            .add_systems(ecs::Schedule::PreUpdate, handle_input)
-            .add_systems(ecs::Schedule::PostRender, render_gui::<S>)
+        app.add_systems(Schedule::StartUp, startup)
+            .add_systems(Schedule::PreUpdate, handle_input)
+            .add_systems(AppSchedule::PostRender, render_gui::<S>)
             .register_resource::<EguiRenderer>();
     }
 }
