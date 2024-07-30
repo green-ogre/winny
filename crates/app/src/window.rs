@@ -1,9 +1,15 @@
 use std::sync::Arc;
 
-use self::prelude::{AppExit, KeyCode, MouseMotion};
+use self::{
+    app::AppSchedule,
+    prelude::{AppExit, KeyCode, MouseMotion},
+};
 
 use super::*;
-use ecs::{EventReader, EventWriter, WinnyResource};
+use ecs::{
+    events::{EventReader, EventWriter},
+    WinnyResource,
+};
 use plugins::Plugin;
 use prelude::{KeyInput, MouseInput};
 use winny_math::vector::Vec2f;
@@ -32,7 +38,7 @@ impl Default for WindowPlugin {
 impl Plugin for WindowPlugin {
     fn build(&mut self, app: &mut crate::app::App) {
         if self.close_on_escape {
-            app.add_systems(ecs::Schedule::Platform, should_exit);
+            app.add_systems(AppSchedule::Platform, should_exit);
         }
 
         app.insert_resource(self.clone())

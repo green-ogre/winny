@@ -1,8 +1,9 @@
 use core::panic;
 use proc_macro2::Ident;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
@@ -185,6 +186,72 @@ fn parse_bundle(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
                     }
                 }
             }.into()
+        }
+    }
+}
+
+#[proc_macro_derive(ScheduleLabel)]
+pub fn schedule_label_impl(input: TokenStream) -> TokenStream {
+    parse_schedule_label(input, quote! { winny::ecs })
+}
+
+#[proc_macro_derive(WinnyScheduleLabel)]
+pub fn winny_schedule_label_impl(input: TokenStream) -> TokenStream {
+    parse_schedule_label(input, quote! { ::ecs })
+}
+
+#[proc_macro_derive(InternalScheduleLabel)]
+pub fn internal_schedule_label_impl(input: TokenStream) -> TokenStream {
+    parse_schedule_label(input, quote! { crate })
+}
+
+fn parse_schedule_label(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let data = &input.data;
+
+    match data {
+        syn::Data::Enum(data) => {
+            let variants = &data
+                .variants
+                .iter()
+                .map(|v| format!("{}{}", name.to_string(), v.ident.to_string()))
+                .collect::<Vec<_>>();
+            let generics = &input.generics;
+            let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+            let mut variant_hashes = Vec::new();
+            for variant in variants.iter() {
+                let mut s = DefaultHasher::new();
+                variant.hash(&mut s);
+                variant_hashes.push(s.finish().to_token_stream());
+            }
+
+            let variants = &data.variants.iter().map(|v| &v.ident).collect::<Vec<_>>();
+
+            quote! {
+                impl #impl_generics #path_to_ecs::schedule::ScheduleLabel for #name #ty_generics #where_clause {}
+
+                impl #impl_generics #path_to_ecs::sets::LabelId for #name #ty_generics #where_clause {
+                    fn id(&self) -> usize {
+                        match self {
+                            #(Self::#variants => #variant_hashes as usize),*
+                        }
+                    }
+                }
+
+                // impl #impl_generics Into<#path_to_ecs::sets::LeakedLabel<dyn #path_to_ecs::schedule::ScheduleLabel>> for #name #ty_generics #where_clause {
+                //     fn into(self) -> #path_to_ecs::sets::LeakedLabel<dyn #path_to_ecs::schedule::ScheduleLabel> {
+                //         #path_to_ecs::sets::LeakedLabel::new(Box::new(self))
+                //     }
+                // }
+            }.into()
+        }
+        syn::Data::Union(_) => {
+            panic!("ScheduleLabel must be an Enum: {}", name.to_string());
+        }
+        syn::Data::Struct(_) => {
+            panic!("ScheduleLabel must be an Enum: {}", name.to_string());
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, marker::PhantomData};
+use std::fmt::Debug;
 
 use util::tracing::trace;
 
@@ -6,9 +6,10 @@ use access::SystemAccess;
 use ecs_macro::all_tuples;
 use system_param::SystemParam;
 
-use crate::{unsafe_world::UnsafeWorldCell, Archetype, OneShotSystems, Schedule, World};
+use crate::{unsafe_world::UnsafeWorldCell, Archetype, OneShotSystems, World};
 
 pub mod access;
+pub mod sets;
 pub mod system_param;
 
 pub type StoredSystem = Box<dyn System<Out = ()>>;
@@ -19,224 +20,6 @@ impl<O: 'static> Debug for dyn System<Out = O> {
         f.debug_struct("System")
             .field("name", &self.name())
             .finish()
-    }
-}
-
-#[derive(Debug)]
-pub struct ScheduleBuilder {
-    pub sets: Vec<SystemSet>,
-    pub tag: Schedule,
-}
-
-impl ScheduleBuilder {
-    pub fn new(tag: Schedule) -> Self {
-        Self {
-            sets: Vec::new(),
-            tag,
-        }
-    }
-
-    pub fn push_set(&mut self, set: SystemSet) {
-        self.sets.push(set);
-    }
-
-    pub fn build_schedule(self, world: &mut World) -> Vec<SystemSet> {
-        optimize_schedule(world, self.sets)
-    }
-}
-
-fn optimize_schedule(world: &mut World, sets: Vec<SystemSet>) -> Vec<SystemSet> {
-    let mut schedule = Vec::new();
-
-    for set in sets.iter() {
-        set.validate_nodes_or_panic(world);
-    }
-
-    for set in sets.into_iter() {
-        if set.is_invalid(world) {
-            // TODO: pull apart sets?
-            // TODO: not fullproof yet, platform for instance does not correctly see nested
-            // invalid accesses
-            schedule.push(set.chain());
-        } else {
-            // TODO: combine sets?
-            schedule.push(set);
-        }
-    }
-
-    schedule
-}
-
-#[derive(Debug)]
-pub enum Node {
-    Leaf(StoredSystem),
-    Branch(SystemSet),
-}
-
-impl Node {
-    pub fn access(&self, world: &mut World) -> Vec<SystemAccess> {
-        match self {
-            Self::Leaf(system) => vec![system.access(world)],
-            Self::Branch(set) => set.access(world),
-        }
-    }
-
-    pub fn init_state(&mut self, world: &mut World) {
-        match self {
-            Self::Leaf(system) => system.init_state(world),
-            Self::Branch(set) => set.init_state(world),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SystemSet {
-    pub nodes: Vec<Node>,
-    pub condition: Option<StoredCondition>,
-    pub chain: bool,
-}
-
-impl SystemSet {
-    pub fn join_disjoint(sets: Vec<Self>) -> Self {
-        let mut nodes = Vec::new();
-
-        for mut set in sets.into_iter() {
-            if set.nodes.len() == 1 && set.condition.is_none() {
-                match set.nodes.pop().unwrap() {
-                    Node::Leaf(system) => nodes.push(Node::Leaf(system)),
-                    Node::Branch(set) => panic!("{:#?}", set),
-                }
-            } else {
-                nodes.push(Node::Branch(set));
-            }
-        }
-
-        Self {
-            chain: false,
-            condition: None,
-            nodes,
-        }
-    }
-
-    pub fn new_system(system: StoredSystem) -> Self {
-        Self {
-            nodes: vec![Node::Leaf(system)],
-            condition: None,
-            chain: false,
-        }
-    }
-
-    pub fn new_nodes(nodes: Vec<Node>) -> Self {
-        Self {
-            nodes,
-            condition: None,
-            chain: false,
-        }
-    }
-
-    fn access(&self, world: &mut World) -> Vec<SystemAccess> {
-        self.nodes
-            .iter()
-            .map(|s| s.access(world))
-            .flatten()
-            .collect::<Vec<_>>()
-    }
-
-    pub fn run_if<M, F: IntoCondition<M>>(mut self, condition: F) -> Self {
-        self.condition = Some(Box::new(condition.into_system()));
-        self
-    }
-
-    pub fn chain(mut self) -> Self {
-        self.chain = true;
-        self
-    }
-
-    pub fn validate_nodes_or_panic(&self, world: &mut World) {
-        for system in self.access(world).iter() {
-            system.validate_or_panic();
-        }
-    }
-
-    pub fn is_invalid(&self, world: &mut World) -> bool {
-        if self.chain {
-            return false;
-        }
-
-        let access = self.access(world);
-
-        for i in 0..access.len() - 1 {
-            for j in i + 1..access.len() {
-                if access[i].conflicts_with(&access[j]) {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    pub fn init_state(&mut self, world: &mut World) {
-        for node in self.nodes.iter_mut() {
-            node.init_state(world);
-        }
-    }
-
-    pub fn run(&mut self, _world: &mut World) {
-        // if let Some(condition) = &mut self.condition {
-        //     if !condition.run_unsafe(unsafe { world.as_unsafe_world() }) {
-        //         return;
-        //     }
-        // }
-
-        // std::thread::scope(|s| {
-        //     let world = unsafe { world.as_unsafe_world() };
-        //     let mut handles = Vec::new();
-        //     for node in self.nodes.iter_mut() {
-        //         match node {
-        //             Node::Leaf(system) => {
-        //                 if self.chain {
-        //                     system.run_unsafe(world);
-        //                 } else {
-        //                     let h = s.spawn(|| system.run_unsafe(world));
-        //                     handles.push(h);
-        //                 }
-        //             }
-        //             Node::Branch(set) => {
-        //                 if self.chain {
-        //                     set.run(world);
-        //                 } else {
-        //                     let h = s.spawn(|| set.run(world));
-        //                     handles.push(h);
-        //                 }
-        //             }
-        //         }
-        //     }
-
-        //     handles.into_iter().all(|h| {
-        //         h.join()
-        //             .map_err(|_| {
-        //                 exit(1);
-        //             })
-        //             .is_ok()
-        //     });
-        // });
-
-        // for node in self.nodes.iter_mut() {
-        //     match node {
-        //         Node::Leaf(system) => system.apply_deffered(world),
-        //         Node::Branch(set) => set.apply_deffered(world),
-        //     }
-        // }
-    }
-
-    pub fn apply_deffered(&mut self, _world: &mut World) {
-        // for node in self.nodes.iter_mut() {
-        //     match node {
-        //         Node::Leaf(system) => // system.apply_deffered(world),
-        //         Node::Branch(set) => set.apply_deffered(world),
-        //     }
-        // }
     }
 }
 
@@ -280,7 +63,7 @@ where
     f: F,
     name: &'static str,
     param_state: Option<<F::Param as SystemParam>::State>,
-    _phantom: PhantomData<fn() -> Out>,
+    // _phantom: PhantomData<fn(Marker) -> Out>,
 }
 
 impl<Marker, F> IntoSystem<Marker> for F
@@ -297,7 +80,7 @@ where
             f: self,
             name,
             param_state: None,
-            _phantom: PhantomData,
+            // _phantom: PhantomData,
         }
     }
 }
@@ -364,7 +147,7 @@ macro_rules! impl_system {
         {
             type Param = ($($params,)*);
 
-#[allow(clippy::too_many_arguments)]
+            #[allow(clippy::too_many_arguments)]
             fn run(&mut self, params: <($($params,)*) as SystemParam>::Item<'_, '_>) -> Out {
                 fn call_inner<$($params),*, Out>(
                     mut f: impl FnMut($($params),*) -> Out,
@@ -402,53 +185,7 @@ where
             f: self,
             name,
             param_state: None,
-            _phantom: PhantomData,
+            // _phantom: PhantomData,
         }
     }
 }
-
-pub trait IntoSystemStorage<Marker>
-where
-    Self: Sized,
-{
-    fn into_set(self) -> SystemSet;
-    fn chain(self) -> SystemSet {
-        self.into_set().chain()
-    }
-    fn run_if<M, F: IntoCondition<M>>(self, condition: F) -> SystemSet {
-        self.into_set().run_if(condition)
-    }
-}
-
-impl IntoSystemStorage<()> for SystemSet {
-    fn into_set(self) -> SystemSet {
-        self
-    }
-}
-
-impl<M, F> IntoSystemStorage<M> for F
-where
-    F: IntoSystem<M>,
-{
-    fn into_set(self) -> SystemSet {
-        SystemSet::new_system(Box::new(self.into_system()))
-    }
-}
-
-macro_rules! impl_into_system_tuple {
-    ($(($t:ident, $p:ident)),*) => {
-        #[allow(non_snake_case)]
-        impl<$($t: 'static + Send + Sync, $p: 'static),*> IntoSystemStorage<($($p,)*)> for ($($t,)*)
-            where
-                $($t: IntoSystemStorage<$p>,)*
-                {
-                    fn into_set(self) -> SystemSet {
-                        let ($($t,)*) = self;
-
-                        SystemSet::join_disjoint(vec![$($t.into_set(),)*])
-                    }
-                }
-    }
-}
-
-all_tuples!(impl_into_system_tuple, 1, 10, F, P);

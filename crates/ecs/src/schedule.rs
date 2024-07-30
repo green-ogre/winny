@@ -1,39 +1,82 @@
+use fxhash::FxHashMap;
+
+use self::sets::{IntoSystemStorage, LabelId, SystemSet};
+
 use super::*;
 
-#[derive(Debug)]
-struct SchedulerBuilder {
-    schedules: Vec<ScheduleBuilder>,
+pub trait ScheduleLabel: LabelId {}
+
+#[derive(Debug, Default)]
+pub struct Scheduler {
+    executers: FxHashMap<usize, ScheduleExecuter>,
+    one_shot_systems: OneShotSystems,
 }
 
-impl Default for SchedulerBuilder {
-    fn default() -> Self {
-        let schedules = Schedule::VALUES().map(ScheduleBuilder::new).collect();
+impl Scheduler {
+    pub fn add_systems<M, S: IntoSystemStorage<M>>(
+        &mut self,
+        schedule: impl ScheduleLabel,
+        systems: S,
+    ) {
+        let systems = systems.into_set();
+        self.executers
+            .entry(schedule.id())
+            .or_insert_with(|| ScheduleExecuter::default())
+            .add_systems(systems);
+    }
 
-        Self { schedules }
+    pub fn init_schedule(&mut self, world: &mut World) {
+        self.executers
+            .values_mut()
+            .for_each(|e| e.init_systems(world));
+    }
+
+    pub fn run_schedule(&mut self, world: &mut World, schedule: impl ScheduleLabel) {
+        if let Some(executer) = &mut self.executers.get_mut(&schedule.id()) {
+            let _span = util::tracing::trace_span!("schedule", name = ?schedule).entered();
+            executer.run(world);
+            executer.apply_deffered(world, &mut self.one_shot_systems);
+        }
     }
 }
 
-impl SchedulerBuilder {
-    pub fn new() -> Self {
-        Self {
-            schedules: Vec::new(),
+#[derive(Debug, Default)]
+pub(crate) struct ScheduleExecuter {
+    system_sets: Vec<SystemSet>,
+}
+
+impl ScheduleExecuter {
+    pub fn new(system_sets: Vec<SystemSet>) -> Self {
+        Self { system_sets }
+    }
+
+    pub fn add_systems(&mut self, system_set: SystemSet) {
+        self.system_sets.push(system_set);
+    }
+
+    pub fn init_systems(&mut self, world: &mut World) {
+        for set in self.system_sets.iter_mut() {
+            set.validate_systems_and_conditions_or_panic(world);
+            set.init_state(world);
         }
     }
 
-    pub fn add_systems<M, S: IntoSystemStorage<M>>(&mut self, schedule: Schedule, systems: S) {
-        self.schedules[schedule as usize].push_set(systems.into_set());
+    pub fn apply_deffered(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems) {
+        for set in self.system_sets.iter_mut() {
+            set.apply_deffered(world, one_shot_systems);
+        }
     }
 
-    pub fn build_schedules(&mut self, world: &mut World) -> Vec<ScheduleExecuter> {
-        let mut executers = Vec::new();
-        for schedule in self.schedules.drain(..) {
-            executers.push(ScheduleExecuter::new(
-                schedule.tag,
-                schedule.build_schedule(world),
-            ));
-        }
+    // pub fn new_archetype(&mut self, arch: &Archetype, one_shot_systems: &mut OneShotSystems) {
+    //     for set in self.system_sets.iter_mut() {
+    //         set.new_archetype(arch, one_shot_systems);
+    //     }
+    // }
 
-        executers
+    pub fn run(&mut self, world: &mut World) {
+        for set in self.system_sets.iter_mut() {
+            set.run(world);
+        }
     }
 }
 
@@ -91,206 +134,6 @@ impl OneShotSystems {
     }
 }
 
-// TODO: fix system tree
-#[derive(Debug, Default)]
-pub struct Scheduler {
-    pub(crate) executers: Vec<ScheduleExecuter>,
-    one_shot_systems: OneShotSystems,
-    builder: SchedulerBuilder,
-}
-
-impl Scheduler {
-    pub fn add_systems<M, S: IntoSystemStorage<M>>(&mut self, schedule: Schedule, systems: S) {
-        self.builder.add_systems::<M, S>(schedule, systems);
-    }
-
-    pub fn build_schedule(&mut self, world: &mut World) {
-        self.executers
-            .append(&mut self.builder.build_schedules(world));
-
-        self.executers
-            .iter_mut()
-            .for_each(|e| e.init_systems(world));
-    }
-
-    pub fn init_systems(&mut self, world: &mut World) {
-        for executer in self.executers.iter_mut() {
-            executer.init_systems(world);
-        }
-    }
-
-    pub fn new_archetype(&mut self, archetype: &Archetype) {
-        for executer in self.executers.iter_mut() {
-            executer.new_archetype(archetype, &mut self.one_shot_systems);
-        }
-    }
-
-    pub fn run(&mut self, world: &mut World) {
-        self.run_schedule(world, Schedule::Platform);
-        self.run_schedule(world, Schedule::PreUpdate);
-        self.run_schedule(world, Schedule::Update);
-        self.run_schedule(world, Schedule::PostUpdate);
-    }
-
-    pub fn startup(&mut self, world: &mut World) {
-        self.run_schedule(world, Schedule::RenderStartup);
-        self.run_schedule(world, Schedule::PreStartUp);
-        self.run_schedule(world, Schedule::StartUp);
-    }
-
-    pub fn flush_events(&mut self, world: &mut World) {
-        self.run_schedule(world, Schedule::FlushEvents);
-    }
-
-    pub fn resized(&mut self, world: &mut World) {
-        self.run_schedule(world, Schedule::Resized);
-    }
-
-    pub fn render(&mut self, world: &mut World) {
-        self.run_schedule(world, Schedule::PrepareRender);
-        self.run_schedule(world, Schedule::PreRender);
-        self.run_schedule(world, Schedule::Render);
-        self.run_schedule(world, Schedule::PostRender);
-        self.run_schedule(world, Schedule::Present);
-    }
-
-    pub fn exit(&mut self, world: &mut World) {
-        self.run_schedule(world, Schedule::Exit);
-    }
-
-    fn run_schedule(&mut self, world: &mut World, schedule: Schedule) {
-        let executer = &mut self.executers[schedule as usize];
-        let _span = util::tracing::trace_span!("schedule", name = ?executer.tag).entered();
-        // executer.update_archetypes(world, &mut self.one_shot_systems);
-        executer.run(world);
-        executer.apply_deffered(world, &mut self.one_shot_systems);
-    }
-}
-
-// TODO: pull out backend schedules
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
-pub enum Schedule {
-    Platform,
-    PreUpdate,
-    Update,
-    PostUpdate,
-    RenderStartup,
-    PreStartUp,
-    StartUp,
-    Exit,
-    FlushEvents,
-    Resized,
-    SubmitEncoder,
-    PrepareRender,
-    PreRender,
-    Render,
-    PostRender,
-    Present,
-}
-
-#[derive(Debug)]
-pub(crate) struct ScheduleExecuter {
-    pub(crate) tag: Schedule,
-    pub(crate) systems: Vec<StoredSystem>,
-    pub(crate) conditions: Vec<Option<StoredCondition>>,
-    pub(crate) archetypes_len: usize,
-}
-
-impl ScheduleExecuter {
-    pub fn new(tag: Schedule, sets: Vec<SystemSet>) -> Self {
-        let mut systems = Vec::new();
-        let mut conditions = Vec::new();
-
-        for mut set in sets.into_iter() {
-            for node in set.nodes.into_iter() {
-                match node {
-                    Node::Leaf(system) => {
-                        systems.push(system);
-                        conditions.push(set.condition.take());
-                    }
-                    _ => panic!(),
-                }
-            }
-        }
-
-        Self {
-            tag,
-            systems,
-            conditions,
-            archetypes_len: 0,
-        }
-    }
-
-    pub fn init_systems(&mut self, world: &mut World) {
-        for system in self.systems.iter_mut() {
-            system.init_state(world);
-        }
-    }
-
-    // pub fn update_archetypes(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems) {
-    //     while self.archetypes_len < world.archetypes.len() {
-    //         util::tracing::warn!("adding archetype: {:#?}", self.tag);
-    //         let arch = world
-    //             .archetypes
-    //             .get(ArchId::new(self.archetypes_len))
-    //             .expect("valid id");
-    //         self.new_archetype(arch, one_shot_systems);
-    //         self.archetypes_len += 1;
-    //     }
-    //
-    //     if one_shot_systems.is_empty() {
-    //         return;
-    //     }
-    // }
-    //
-    pub fn apply_deffered(&mut self, world: &mut World, one_shot_systems: &mut OneShotSystems) {
-        for system in self.systems.iter_mut() {
-            system.apply_deffered(world, one_shot_systems);
-        }
-
-        let mut indexes = Vec::with_capacity(one_shot_systems.len());
-        let mut temp = OneShotSystems::default();
-        for (index, (one_shot, condition)) in one_shot_systems.iter_mut() {
-            if condition.run_unsafe(unsafe { world.as_unsafe_world() }) {
-                indexes.push(index);
-                one_shot.init_state(world);
-                one_shot.run_unsafe(unsafe { world.as_unsafe_world() });
-                one_shot.apply_deffered(world, &mut temp);
-            }
-        }
-        one_shot_systems.remove_indexes(indexes.into_iter());
-        one_shot_systems.append(temp);
-    }
-
-    pub fn new_archetype(&mut self, arch: &Archetype, one_shot_systems: &mut OneShotSystems) {
-        for system in self.systems.iter_mut() {
-            system.new_archetype(arch);
-        }
-        one_shot_systems.new_archetype(arch);
-    }
-
-    pub fn run(&mut self, world: &mut World) {
-        let pre_deffered_arch_len = world.archetypes.len();
-        for (sys, cond) in self.systems.iter_mut().zip(self.conditions.iter_mut()) {
-            for arch_id in self.archetypes_len..pre_deffered_arch_len {
-                let arch = world
-                    .archetypes
-                    .get(ArchId::new(arch_id))
-                    .expect("valid id");
-                sys.new_archetype(arch);
-            }
-
-            if let Some(cond) = cond {
-                cond.run_unsafe(unsafe { world.as_unsafe_world() })
-                    .then(|| sys.run_unsafe(unsafe { world.as_unsafe_world() }));
-            } else {
-                sys.run_unsafe(unsafe { world.as_unsafe_world() });
-            }
-        }
-        self.archetypes_len = pre_deffered_arch_len;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,38 +147,71 @@ mod tests {
     #[derive(Debug, InternalComponent)]
     struct Size(u32);
 
-    fn test_q(q: Query<(Health, Size)>) {
-        if q.get_single().is_ok() {
-            println!("match single");
-        } else {
-            println!("mismatch single");
-        }
+    fn test_q(_q: Query<(Health, Size)>) {
+        println!("Hello, ");
     }
 
-    fn startup(mut commands: Commands) {
-        println!("spawning");
-        commands.spawn((Health(0), Size(0)));
+    fn startup(mut _commands: Commands) {
+        println!("AHHHH");
     }
 
-    fn test_r(_r: Res<Weight>) {}
+    fn test_r(_r: Res<Weight>) {
+        println!("world!");
+    }
+
+    fn should_run(_r: Res<Weight>) -> bool {
+        true
+    }
+
+    fn should_run_inner(_r: Res<Weight>) -> bool {
+        false
+    }
+
+    fn test_run(_r: Res<Weight>) -> bool {
+        true
+    }
 
     #[test]
-    fn miri() {
+    fn run_if() {
         let mut world = World::default();
-        let mut scheduler = Scheduler::default();
         world.insert_resource(Weight(0));
-        scheduler.add_systems(Schedule::StartUp, startup);
-        scheduler.add_systems(Schedule::Update, (test_q, test_r));
-        scheduler.add_systems(Schedule::PostUpdate, test_r);
-        scheduler.init_systems(&mut world);
-        scheduler.build_schedule(&mut world);
-        println!("GGGGGG {:#?}", scheduler);
-        scheduler.startup(&mut world);
-        println!("SDFASDF {:#?}", scheduler);
-        scheduler.run(&mut world);
-        // scheduler.new_archetype(world.archetypes.get(ArchId::new(0)).unwrap());
-        scheduler.run(&mut world);
-        scheduler.flush_events(&mut world);
-        scheduler.exit(&mut world);
+        let mut scheduler = Scheduler::default();
+        scheduler.add_systems(TestLabel::Render, (startup,));
+        scheduler.init_schedule(&mut world);
+        scheduler.run_schedule(&mut world, TestLabel::Render);
+        // println!("{scheduler:#?}");
     }
+
+    #[derive(InternalScheduleLabel, Debug)]
+    pub enum TestLabel {
+        Render,
+    }
+
+    // #[test]
+    // fn schedule_labels() {
+    //     let render = Schedule::Render;
+    //     let test_render = TestLabel::Render;
+    //     // println!("{}, {}", render.id(), test_render.id());
+    //     assert!(render.id() != test_render.id());
+    // }
+    //
+    // #[test]
+    // fn miri() {
+    //     // let mut world = World::default();
+    //     // let mut scheduler = Scheduler::default();
+    //     // world.insert_resource(Weight(0));
+    //     // scheduler.add_systems(Schedule::StartUp, startup);
+    //     // scheduler.add_systems(Schedule::Update, (test_q, test_r));
+    //     // scheduler.add_systems(Schedule::PostUpdate, test_r);
+    //     // scheduler.init_systems(&mut world);
+    //     // scheduler.build_schedule(&mut world);
+    //     // println!("GGGGGG {:#?}", scheduler);
+    //     // scheduler.startup(&mut world);
+    //     // println!("SDFASDF {:#?}", scheduler);
+    //     // scheduler.run(&mut world);
+    //     // // scheduler.new_archetype(world.archetypes.get(ArchId::new(0)).unwrap());
+    //     // scheduler.run(&mut world);
+    //     // scheduler.flush_events(&mut world);
+    //     // scheduler.exit(&mut world);
+    // }
 }

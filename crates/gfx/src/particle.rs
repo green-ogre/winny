@@ -1,6 +1,11 @@
 use std::ops::Range;
 
-use app::{plugins::Plugin, time::DeltaTime, window::Window};
+use app::{
+    app::{AppSchedule, Schedule},
+    plugins::Plugin,
+    time::DeltaTime,
+    window::Window,
+};
 use asset::{Assets, Handle};
 use ecs::{prelude::*, WinnyBundle, WinnyComponent, WinnyResource};
 use rand::Rng;
@@ -31,8 +36,8 @@ impl Plugin for ParticlePlugin {
     fn build(&mut self, app: &mut app::app::App) {
         app.add_plugins(NoisePlugin::new("noise/particles.png"))
             .add_systems(Schedule::PostUpdate, bind_new_particle_bundles)
-            .add_systems(Schedule::PreRender, update_emitter_transforms)
-            .add_systems(Schedule::Render, (compute_emitters, render_emitters));
+            .add_systems(AppSchedule::PreRender, update_emitter_transforms)
+            .add_systems(AppSchedule::Render, (compute_emitters, render_emitters));
     }
 }
 

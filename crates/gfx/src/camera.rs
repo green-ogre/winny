@@ -1,4 +1,5 @@
 use app::{
+    app::AppSchedule,
     plugins::Plugin,
     window::{ViewPort, Window},
 };
@@ -15,7 +16,7 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&mut self, app: &mut app::app::App) {
         app.add_systems(
-            ecs::Schedule::PreRender,
+            AppSchedule::PreRender,
             (generate_camera_bindings, update_camera_view),
         );
         // .add_systems(ecs::Schedule::Render, render_cameras);

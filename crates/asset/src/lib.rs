@@ -14,7 +14,10 @@ use std::{
     },
 };
 
-use app::{app::App, plugins::Plugin};
+use app::{
+    app::{App, AppSchedule},
+    plugins::Plugin,
+};
 use ecs::{
     DumbVec, EventWriter, Res, ResMut, SparseArrayIndex, SparseSet, WinnyComponent, WinnyEvent,
     WinnyResource,
@@ -471,7 +474,7 @@ impl AssetApp for App {
         let asset_result_rx = ecs::threads::ChannelReciever::new(asset_result_rx);
 
         self.add_systems(
-            ecs::Schedule::Platform,
+            AppSchedule::Platform,
             move |mut assets: ResMut<Assets<A>>,
                   mut asset_loader_events: EventWriter<AssetLoaderEvent<A>>| {
                 match asset_result_rx.try_recv() {
@@ -740,8 +743,8 @@ impl Plugin for AssetLoaderPlugin {
     fn build(&mut self, app: &mut App) {
         let server = AssetServer::new(self.asset_folder.clone());
         app.insert_resource(server)
-            .add_systems(ecs::Schedule::PreStartUp, update_asset_server_context)
-            .add_systems(ecs::Schedule::Platform, update_asset_server_context);
+            .add_systems(AppSchedule::PreStartUp, update_asset_server_context)
+            .add_systems(AppSchedule::Platform, update_asset_server_context);
     }
 }
 

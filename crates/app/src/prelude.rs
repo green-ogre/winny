@@ -1,3 +1,4 @@
+pub use crate::app::Schedule;
 pub use crate::app::{App, AppExit};
 #[cfg(feature = "controller")]
 pub use crate::input::controller::*;

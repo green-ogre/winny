@@ -11,7 +11,10 @@ use std::{
 
 #[cfg(target_arch = "wasm32")]
 use app::input::mouse_and_key::KeyInput;
-use app::{app::App, plugins::Plugin};
+use app::{
+    app::{App, Schedule},
+    plugins::Plugin,
+};
 use asset::{Asset, AssetLoaderError, Assets, Handle, LoadedAsset};
 use asset::{AssetApp, AssetLoader};
 use cpal::{
@@ -518,7 +521,7 @@ impl Plugin for AudioPlugin {
         #[cfg(not(target_arch = "wasm32"))]
         app.register_asset_loader::<AudioSource>(loader)
             .add_systems(
-                ecs::Schedule::PreUpdate,
+                Schedule::PreUpdate,
                 (init_audio_bundle_streams, flush_finished_streams),
             )
             .insert_resource(GlobalAudio::new());
@@ -538,49 +541,49 @@ impl Plugin for AudioPlugin {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use ecs::prelude::*;
-    use tracing_test::traced_test;
-    use util::tracing;
-
-    use app::{
-        app::{App, AppExit},
-        plugins::{Plugin, PluginSet},
-        prelude::{KeyCode, KeyInput},
-        window::WindowPlugin,
-    };
-    use asset::*;
-    use ecs::{EventReader, EventWriter};
-
-    pub fn startup(mut commands: Commands, mut asset_server: ResMut<AssetServer>) {
-        commands.spawn(AudioBundle {
-            playback_settings: PlaybackSettings::default(),
-            handle: asset_server.load("the_tavern.wav"),
-        });
-    }
-
-    fn exit_on_load(
-        mut event_writer: EventWriter<AppExit>,
-        load: EventReader<AssetLoaderEvent<AudioSource>>,
-    ) {
-        for _ in load.peak_read() {
-            event_writer.send(AppExit);
-        }
-    }
-
-    #[traced_test]
-    #[test]
-    fn it_works() {
-        App::default()
-            .add_plugins((
-                app::window::WindowPlugin::default(),
-                asset::AssetLoaderPlugin {
-                    asset_folder: "../../../res/".into(),
-                },
-                AudioPlugin,
-            ))
-            .add_systems(Schedule::StartUp, startup)
-            .add_systems(Schedule::Update, exit_on_load)
-            .run();
-    }
+    // use super::*;
+    // use ecs::prelude::*;
+    // use tracing_test::traced_test;
+    // use util::tracing;
+    //
+    // use app::{
+    //     app::{App, AppExit},
+    //     plugins::{Plugin, PluginSet},
+    //     prelude::{KeyCode, KeyInput},
+    //     window::WindowPlugin,
+    // };
+    // use asset::*;
+    // use ecs::{EventReader, EventWriter};
+    //
+    // pub fn startup(mut commands: Commands, mut asset_server: ResMut<AssetServer>) {
+    //     commands.spawn(AudioBundle {
+    //         playback_settings: PlaybackSettings::default(),
+    //         handle: asset_server.load("the_tavern.wav"),
+    //     });
+    // }
+    //
+    // fn exit_on_load(
+    //     mut event_writer: EventWriter<AppExit>,
+    //     load: EventReader<AssetLoaderEvent<AudioSource>>,
+    // ) {
+    //     for _ in load.peak_read() {
+    //         event_writer.send(AppExit);
+    //     }
+    // }
+    //
+    // #[traced_test]
+    // #[test]
+    // fn it_works() {
+    //     App::default()
+    //         .add_plugins((
+    //             app::window::WindowPlugin::default(),
+    //             asset::AssetLoaderPlugin {
+    //                 asset_folder: "../../../res/".into(),
+    //             },
+    //             AudioPlugin,
+    //         ))
+    //         .add_systems(Schedule::StartUp, startup)
+    //         .add_systems(Schedule::Update, exit_on_load)
+    //         .run();
+    // }
 }

@@ -1,3 +1,4 @@
+use app::app::AppSchedule;
 use asset::{
     Asset, AssetApp, AssetLoader, AssetLoaderError, AssetLoaderEvent, AssetServer, Assets, Handle,
 };
@@ -28,8 +29,8 @@ impl Plugin for TextPlugin {
             .insert_resource(TextPath(self.text_path.clone()))
             .register_resource::<TextHandle>()
             .register_resource::<TextRenderer>()
-            .add_systems(ecs::Schedule::StartUp, startup)
-            .add_systems(ecs::Schedule::Render, render_pass);
+            .add_systems(AppSchedule::PreStartUp, startup)
+            .add_systems(AppSchedule::Render, render_pass);
     }
 }
 

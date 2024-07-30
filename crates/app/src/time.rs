@@ -1,15 +1,18 @@
 use chrono::{DateTime, Local, TimeDelta};
 use ecs::{prelude::*, WinnyComponent, WinnyResource};
 
-use crate::prelude::{App, Plugin};
+use crate::{
+    app::AppSchedule,
+    prelude::{App, Plugin},
+};
 
 pub struct TimePlugin;
 
 impl Plugin for TimePlugin {
     fn build(&mut self, app: &mut crate::app::App) {
         app.register_resource::<DeltaTime>()
-            .add_systems(Schedule::PreStartUp, insert_delta)
-            .add_systems(Schedule::Platform, update_delta);
+            .add_systems(AppSchedule::PreStartUp, insert_delta)
+            .add_systems(AppSchedule::Platform, update_delta);
     }
 }
 
@@ -56,7 +59,7 @@ pub trait TimeApp {
 impl TimeApp for App {
     fn register_timer<E: Event>(&mut self) -> &mut App {
         self.register_event::<E>()
-            .add_systems(Schedule::Platform, emit_timer::<E>);
+            .add_systems(AppSchedule::Platform, emit_timer::<E>);
 
         self
     }
