@@ -4,7 +4,7 @@ use crate::{
     noise::NoisePlugin,
     texture::Texture,
     transform::{new_transform_bind_group, new_transform_bind_group_layout, Transform},
-    vertex::{VertexLayout, VertexUv, FULLSCREEN_QUAD_VERTEX_UV},
+    vertex::{VertexLayout, VertexUv},
 };
 use app::{
     app::{AppSchedule, Schedule},
@@ -482,7 +482,30 @@ struct ParticleVertexBuffer {
 impl ParticleVertexBuffer {
     // scales a particle to it's original physical size
     pub fn new(texture: &Texture, device: &RenderDevice, config: &RenderConfig) -> Self {
-        let mut vertices = FULLSCREEN_QUAD_VERTEX_UV.to_vec();
+        let mut vertices = [
+            VertexUv {
+                position: Vec4f {
+                    v: [-1.0, -1.0, 0.0, 1.0],
+                },
+                uv: Vec2f { v: [0.0, 1.0] },
+                _padding: [0.0, 0.0],
+            },
+            VertexUv {
+                position: Vec4f {
+                    v: [3.0, -1.0, 0.0, 1.0],
+                },
+                uv: Vec2f { v: [2.0, 1.0] },
+                _padding: [0.0, 0.0],
+            },
+            VertexUv {
+                position: Vec4f {
+                    v: [-1.0, 3.0, 0.0, 1.0],
+                },
+                uv: Vec2f { v: [0.0, -1.0] },
+                _padding: [0.0, 0.0],
+            },
+        ];
+
         let normalized_scale = Vec2f::new(
             texture.tex.width() as f32 / config.width() as f32,
             texture.tex.height() as f32 / config.height() as f32,
@@ -593,6 +616,6 @@ fn render_emitters(
         render_pass.set_bind_group(0, &pipeline.texture_binding, &[]);
         render_pass.set_bind_group(1, &pipeline.vertex_particle_binding, &[]);
         render_pass.set_bind_group(2, &pipeline.vertex_emitter_bind_group, &[]);
-        render_pass.draw(0..6, 0..pipeline.alive_indexes.len() as u32);
+        render_pass.draw(0..3, 0..pipeline.alive_indexes.len() as u32);
     }
 }

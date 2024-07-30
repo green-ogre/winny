@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, Mul, SubAssign};
+use std::ops::{Add, AddAssign, Mul, Neg, SubAssign};
 
 use crate::prelude::Matrix4x4f;
 
@@ -290,6 +290,16 @@ impl Vec3f {
 
     pub fn magnitude(&self) -> f32 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+}
+
+impl Neg for Vec3f {
+    type Output = Vec3f;
+    fn neg(mut self) -> Self::Output {
+        self.x = -self.x;
+        self.y = -self.y;
+        self.z = -self.z;
+        self
     }
 }
 
