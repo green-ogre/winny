@@ -5,6 +5,7 @@ use std::{
 };
 
 use app::{
+    app::AppSchedule,
     plugins::Plugin,
     window::{Window, WindowResized},
 };
@@ -36,12 +37,12 @@ impl Plugin for RendererPlugin {
             .register_resource::<RenderConfig>()
             .insert_resource(BindGroups::default())
             .insert_resource(Buffers::default())
-            .add_systems(ecs::Schedule::Resized, resize)
-            // .add_systems(ecs::Schedule::SubmitEncoder, submit_encoder)
-            .add_systems(ecs::Schedule::RenderStartup, startup)
-            .add_systems(ecs::Schedule::PrepareRender, start_render)
-            .add_systems(ecs::Schedule::PreRender, clear_screen)
-            .add_systems(ecs::Schedule::Present, present);
+            .add_systems(AppSchedule::Resized, resize)
+            // .add_systems(AppSchedule::SubmitEncoder, submit_encoder)
+            .add_systems(AppSchedule::RenderStartup, startup)
+            .add_systems(AppSchedule::PrepareRender, start_render)
+            .add_systems(AppSchedule::PreRender, clear_screen)
+            .add_systems(AppSchedule::Present, present);
     }
 }
 

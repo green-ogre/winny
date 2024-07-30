@@ -1,4 +1,4 @@
-use app::plugins::Plugin;
+use app::{app::Schedule, plugins::Plugin};
 use asset::{AssetServer, Handle};
 use ecs::{Commands, Res, ResMut, WinnyResource};
 
@@ -18,7 +18,7 @@ impl Plugin for NoisePlugin {
     fn build(&mut self, app: &mut app::app::App) {
         app.register_resource::<NoiseTexture>()
             .insert_resource(NoiseTexturePath(self.path))
-            .add_systems(ecs::Schedule::StartUp, startup);
+            .add_systems(Schedule::StartUp, startup);
     }
 }
 

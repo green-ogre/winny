@@ -1,19 +1,18 @@
-#![allow(unused)]
-use std::{
-    collections::VecDeque,
-    sync::{mpsc::channel, Arc},
-    thread::JoinHandle,
-};
+use std::{collections::VecDeque, sync::Arc};
 
-use ecs::{prelude::*, Events, Scheduler, UnsafeWorldCell, WinnyEvent, WinnyResource, World};
+use ecs::{
+    events::Events,
+    prelude::*,
+    schedule::{ScheduleLabel, Scheduler},
+    WinnyEvent, WinnyScheduleLabel,
+};
 use mouse_and_key::MouseMotion;
 use winit::{
     application::ApplicationHandler,
-    dpi::{PhysicalPosition, PhysicalSize},
-    event::{self, DeviceEvent, DeviceId, ElementState, WindowEvent},
-    event_loop::{self, ActiveEventLoop, ControlFlow, EventLoop},
+    dpi::PhysicalSize,
+    event::{self, DeviceEvent, DeviceId, ElementState},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::PhysicalKey,
-    window::WindowId,
 };
 use winny_math::vector::Vec2f;
 
@@ -30,6 +29,30 @@ use crate::{
 
 #[derive(Debug, WinnyEvent)]
 pub struct AppExit;
+
+#[derive(WinnyScheduleLabel, Debug, Clone, Copy)]
+pub enum Schedule {
+    PreUpdate,
+    Update,
+    PostUpdate,
+    StartUp,
+    Exit,
+}
+
+#[derive(WinnyScheduleLabel, Debug, Clone, Copy)]
+pub enum AppSchedule {
+    Platform,
+    RenderStartup,
+    PreStartUp,
+    FlushEvents,
+    Resized,
+    SubmitEncoder,
+    PrepareRender,
+    PreRender,
+    Render,
+    PostRender,
+    Present,
+}
 
 pub struct App {
     world: World,
@@ -106,14 +129,14 @@ impl App {
 
     pub fn register_event<E: Event>(&mut self) -> &mut Self {
         self.world.register_event::<E>();
-        self.add_systems(Schedule::FlushEvents, flush_event_queue::<E>);
+        self.add_systems(AppSchedule::FlushEvents, flush_event_queue::<E>);
 
         self
     }
 
     pub fn add_systems<M, B: IntoSystemStorage<M>>(
         &mut self,
-        schedule: Schedule,
+        schedule: impl ScheduleLabel,
         systems: B,
     ) -> &mut Self {
         self.scheduler.add_systems(schedule, systems);
@@ -158,10 +181,7 @@ impl App {
             plugin.build(self);
         }
 
-        self.scheduler.build_schedule(&mut self.world);
-
-        // println!("{:#?}", self.scheduler);
-        // panic!();
+        self.scheduler.init_schedule(&mut self.world);
 
         let mut app = App::empty();
         std::mem::swap(self, &mut app);
@@ -172,97 +192,46 @@ impl App {
         event_loop.set_control_flow(ControlFlow::Poll);
         let _ = event_loop.run_app(&mut win_app);
     }
-
-    fn update(&mut self) -> Result<(), ExitCode> {
-        update_ecs(&mut self.world, &mut self.scheduler)
-    }
-
-    fn startup(&mut self) {
-        self.scheduler.startup(&mut self.world);
-    }
-
-    fn flush_events(&mut self) {
-        self.scheduler.flush_events(&mut self.world);
-    }
-
-    fn exit(&mut self) {
-        self.scheduler.exit(&mut self.world);
-    }
 }
 
 fn flush_event_queue<E: Event>(queue: EventReader<E>) {
     queue.flush();
 }
 
-fn update_ecs(world: &mut World, scheduler: &mut Scheduler) -> Result<(), ExitCode> {
-    run_and_handle_panic(world, scheduler, |world, scheduler| {
-        scheduler.run(world);
-        check_for_exit(world, scheduler)
-    })
+fn update(scheduler: &mut Scheduler, world: &mut World) {
+    scheduler.run_schedule(world, AppSchedule::Platform);
+    scheduler.run_schedule(world, Schedule::PreUpdate);
+    scheduler.run_schedule(world, Schedule::Update);
+    scheduler.run_schedule(world, Schedule::PostUpdate);
 }
 
-fn resize_ecs(world: &mut World, scheduler: &mut Scheduler) -> Result<(), ExitCode> {
-    run_and_handle_panic(world, scheduler, |world, scheduler| {
-        scheduler.resized(world);
-        false
-    })
+fn startup(scheduler: &mut Scheduler, world: &mut World) {
+    scheduler.run_schedule(world, AppSchedule::RenderStartup);
+    scheduler.run_schedule(world, AppSchedule::PreStartUp);
+    scheduler.run_schedule(world, Schedule::StartUp);
 }
 
-fn render_ecs(world: &mut World, scheduler: &mut Scheduler) -> Result<(), ExitCode> {
-    run_and_handle_panic(world, scheduler, |world, scheduler| {
-        scheduler.render(world);
-        check_for_exit(world, scheduler)
-    })
+fn flush_events(scheduler: &mut Scheduler, world: &mut World) {
+    scheduler.run_schedule(world, AppSchedule::FlushEvents);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn run_and_handle_panic<F>(
-    world: &mut World,
-    scheduler: &mut Scheduler,
-    f: F,
-) -> Result<(), ExitCode>
-where
-    F: FnOnce(&mut World, &mut Scheduler) -> bool + Send,
-{
-    let mut exit = false;
-    let mut panicking = false;
-    // NOTE: on macos, the window is non send, it causes deadlock on `inner_size`
-    // std::thread::scope(|s| {
-    //     let h = s.spawn(|| exit = f(world, scheduler));
-    //
-    //     if let Err(_) = h.join() {
-    //         panicking = true;
-    //     }
-    // });
-
-    exit = f(world, scheduler);
-
-    if panicking {
-        Err(ExitCode::Panicking)
-    } else if exit {
-        Err(ExitCode::ExitApp)
-    } else {
-        Ok(())
-    }
+fn resized(scheduler: &mut Scheduler, world: &mut World) {
+    scheduler.run_schedule(world, AppSchedule::Resized);
 }
 
-#[cfg(target_arch = "wasm32")]
-fn run_and_handle_panic<F>(
-    world: &mut World,
-    scheduler: &mut Scheduler,
-    f: F,
-) -> Result<(), ExitCode>
-where
-    F: FnOnce(&mut World, &mut Scheduler) -> bool,
-{
-    if f(world, scheduler) {
-        Err(ExitCode::ExitApp)
-    } else {
-        Ok(())
-    }
+fn render(scheduler: &mut Scheduler, world: &mut World) {
+    scheduler.run_schedule(world, AppSchedule::PrepareRender);
+    scheduler.run_schedule(world, AppSchedule::PreRender);
+    scheduler.run_schedule(world, AppSchedule::Render);
+    scheduler.run_schedule(world, AppSchedule::PostRender);
+    scheduler.run_schedule(world, AppSchedule::Present);
 }
 
-fn check_for_exit(world: &mut World, scheduler: &mut Scheduler) -> bool {
+fn exit(scheduler: &mut Scheduler, world: &mut World) {
+    scheduler.run_schedule(world, Schedule::Exit);
+}
+
+fn check_for_exit(world: &mut World) -> bool {
     world
         .resource_mut::<Events<AppExit>>()
         .read()
@@ -286,11 +255,6 @@ struct WinitApp {
     clock: chrono::DateTime<chrono::Local>,
 }
 
-enum ExitCode {
-    ExitApp,
-    Panicking,
-}
-
 impl WinitApp {
     pub fn new(app: App) -> Self {
         Self {
@@ -301,14 +265,6 @@ impl WinitApp {
             presented_frames: 0,
             clock: chrono::Local::now(),
         }
-    }
-
-    pub fn update(&mut self) -> Result<(), ExitCode> {
-        self.app.update()
-    }
-
-    pub fn render(&mut self) -> Result<(), ExitCode> {
-        render_ecs(&mut self.app.world, &mut self.app.scheduler)
     }
 }
 
@@ -365,7 +321,7 @@ impl ApplicationHandler for WinitApp {
         if !startup {
             return;
         }
-        self.app.startup();
+        startup(&mut self.app.scheduler, &mut self.app.world);
         self.startup = true;
     }
 
@@ -388,23 +344,16 @@ impl ApplicationHandler for WinitApp {
                 self.app
                     .world
                     .insert_resource(WindowResized(size.width, size.height));
-                resize_ecs(&mut self.app.world, &mut self.app.scheduler);
+                resized(&mut self.app.scheduler, &mut self.app.world);
                 self.app.world.take_resource::<WindowResized>();
             }
             winit::event::WindowEvent::KeyboardInput { event, .. } => self
                 .app
                 .insert_winit_event(WinitEvent::KeyboardInput(event)),
-            winit::event::WindowEvent::MouseInput {
-                device_id,
-                state,
-                button,
-            } => self
+            winit::event::WindowEvent::MouseInput { state, button, .. } => self
                 .app
                 .insert_winit_event(WinitEvent::MouseInput(state, button)),
-            winit::event::WindowEvent::CursorMoved {
-                device_id,
-                position,
-            } => self
+            winit::event::WindowEvent::CursorMoved { position, .. } => self
                 .app
                 .insert_winit_event(WinitEvent::MouseMotion(position.x, position.y)),
             winit::event::WindowEvent::RedrawRequested => {
@@ -417,9 +366,9 @@ impl ApplicationHandler for WinitApp {
 
     fn device_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
-        device_id: DeviceId,
-        event: DeviceEvent,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        _event: DeviceEvent,
     ) {
         // match event {}
     }
@@ -429,33 +378,19 @@ impl ApplicationHandler for WinitApp {
             return;
         }
 
-        let app = &mut self.app;
         let start = chrono::Local::now();
-        if let Err(e) = self.update() {
-            match e {
-                ExitCode::ExitApp => self.exit_requested = true,
-                ExitCode::Panicking => {
-                    event_loop.exit();
-                    return;
-                }
-            }
-        }
+        update(&mut self.app.scheduler, &mut self.app.world);
         let update_end = chrono::Local::now().signed_duration_since(start);
 
         let start = chrono::Local::now();
-        if let Err(e) = self.render() {
-            match e {
-                ExitCode::ExitApp => self.exit_requested = true,
-                ExitCode::Panicking => {
-                    event_loop.exit();
-                    return;
-                }
-            }
-        }
+        render(&mut self.app.scheduler, &mut self.app.world);
         let render_end = chrono::Local::now().signed_duration_since(start);
         self.presented_frames += 1;
 
-        self.app.scheduler.flush_events(&mut self.app.world);
+        if check_for_exit(&mut self.app.world) {
+            self.exit_requested = true;
+        }
+        flush_events(&mut self.app.scheduler, &mut self.app.world);
 
         if chrono::Local::now().signed_duration_since(self.clock) >= chrono::TimeDelta::seconds(1) {
             let fps = self.presented_frames;
@@ -476,7 +411,7 @@ impl ApplicationHandler for WinitApp {
         }
 
         if self.exit_requested {
-            self.app.exit();
+            exit(&mut self.app.scheduler, &mut self.app.world);
             event_loop.exit();
         }
     }

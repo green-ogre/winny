@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use app::app::App;
+use app::app::{App, Schedule};
 use app::plugins::Plugin;
 use ecs::{ResMut, WinnyResource};
 use util::tracing::{error, info, trace};
@@ -198,7 +198,7 @@ impl Plugin for HotReloadPlugin {
                     .expect("Could not find library");
 
             app.insert_resource(linked_lib);
-            app.add_systems(ecs::Schedule::PreUpdate, reload_if_changed);
+            app.add_systems(Schedule::PreUpdate, reload_if_changed);
         }
     }
 }

@@ -1,3 +1,4 @@
+use app::app::{AppSchedule, Schedule};
 use app::plugins::Plugin;
 use app::time::DeltaTime;
 use app::window::{ViewPort, Window};
@@ -58,9 +59,9 @@ impl Plugin for SpritePlugin {
         app.register_resource::<SpriteRenderer>()
             .insert_resource(GlobalSpriteSettings::from(&*self))
             .insert_resource(TextureAtlasBindGroups::default())
-            .add_systems(ecs::Schedule::StartUp, startup)
+            .add_systems(Schedule::StartUp, startup)
             .add_systems(
-                ecs::Schedule::PostUpdate,
+                Schedule::PostUpdate,
                 (
                     bind_new_sprite_bundles,
                     bind_new_animated_sprite_bundles,
@@ -68,7 +69,7 @@ impl Plugin for SpritePlugin {
                 ),
             )
             .add_systems(
-                ecs::Schedule::Render,
+                AppSchedule::Render,
                 (prepare_for_render_pass, render_sprites),
             );
     }

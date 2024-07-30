@@ -22,6 +22,7 @@ pub extern crate gfx;
 #[cfg(feature = "hot_reload")]
 pub extern crate hot_reload;
 pub extern crate render;
+extern crate self as winny;
 pub extern crate util;
 pub extern crate winny_math as math;
 
