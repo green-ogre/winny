@@ -2,6 +2,7 @@ use std::{
     fmt::Debug,
     future::Future,
     io::Cursor,
+    ops::Range,
     sync::{
         mpsc::{channel, Receiver, Sender},
         Arc,
@@ -23,6 +24,7 @@ use ecs::{
     Commands, Entity, Query, Res, ResMut, WinnyBundle, WinnyComponent, WinnyResource, Without,
 };
 use hound::{WavReader, WavSpec};
+use rand::Rng;
 use render::RenderContext;
 use util::tracing::{error, info, trace};
 // use wav::WavFormat;
@@ -320,8 +322,28 @@ impl Default for PlaybackSettings {
 }
 
 impl PlaybackSettings {
+    pub fn with_volume(mut self, volume: f32) -> Self {
+        self.volume = volume;
+        self
+    }
+
+    pub fn with_speed(mut self, speed: f32) -> Self {
+        self.speed = speed;
+        self
+    }
+
+    pub fn with_speed_variation(mut self, speed: Range<f32>) -> Self {
+        self.speed = rand::thread_rng().gen_range(speed);
+        self
+    }
+
     pub fn loop_track(mut self) -> Self {
         self.loop_track = true;
+        self
+    }
+
+    pub fn play_on_creation(mut self, play: bool) -> Self {
+        self.play_on_creation = play;
         self
     }
 }
