@@ -1,6 +1,7 @@
 use winny::{
     gfx::{
         cgmath::{Quaternion, Rad, Rotation3},
+        material::{MaterialShaderPlugin, Opacity, ShaderMaterial2d},
         sprite::{Sprite, SpriteBundle, SpritePlugin},
         transform::Transform,
     },
@@ -22,6 +23,7 @@ fn main() {
             },
             SpritePlugin::default(),
             EguiPlugin::<UiState>::new(),
+            MaterialShaderPlugin,
         ))
         .insert_resource(UiState::new())
         .add_systems(Schedule::StartUp, startup)
@@ -40,6 +42,10 @@ fn startup(mut commands: Commands, mut server: ResMut<AssetServer>) {
         },
         // Required for the `SpriteRenderer` to "see" the Sprite
         Transform::default(),
+        ShaderMaterial2d {
+            opacity: Opacity(0.5),
+            ..Default::default()
+        },
         Marked,
     ));
 
@@ -129,12 +135,12 @@ impl UiRenderState for UiState {
                         ui.add(egui::Slider::new(&mut self.sprite.scale.v[0], 0.0..=1.).text("x"));
                         ui.add(egui::Slider::new(&mut self.sprite.scale.v[1], 0.0..=1.).text("y"));
                     });
-                    ui.collapsing("mask", |ui| {
-                        ui.add(egui::Slider::new(&mut self.sprite.mask.v[0], 0.0..=1.).text("r"));
-                        ui.add(egui::Slider::new(&mut self.sprite.mask.v[1], 0.0..=1.).text("g"));
-                        ui.add(egui::Slider::new(&mut self.sprite.mask.v[2], 0.0..=1.).text("b"));
-                        ui.add(egui::Slider::new(&mut self.sprite.mask.v[3], 0.0..=1.).text("a"));
-                    });
+                    // ui.collapsing("mask", |ui| {
+                    //     ui.add(egui::Slider::new(&mut self.sprite.mask.v[0], 0.0..=1.).text("r"));
+                    //     ui.add(egui::Slider::new(&mut self.sprite.mask.v[1], 0.0..=1.).text("g"));
+                    //     ui.add(egui::Slider::new(&mut self.sprite.mask.v[2], 0.0..=1.).text("b"));
+                    //     ui.add(egui::Slider::new(&mut self.sprite.mask.v[3], 0.0..=1.).text("a"));
+                    // });
                     ui.add(
                         egui::Slider::new(&mut self.sprite.rotation.0, 0.0..=360.).text("rotation"),
                     );

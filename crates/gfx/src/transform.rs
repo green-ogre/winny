@@ -61,14 +61,14 @@ impl VertexLayout for Matrix4x4f {
 }
 
 impl Transform {
-    pub fn transformation_matrix(&self, viewport: &ViewPort, max_z: f32) -> Matrix4x4f {
+    pub fn transformation_matrix(&self, viewport: &ViewPort) -> Matrix4x4f {
         let width = viewport.max.v[0] - viewport.min.v[0];
         let height = viewport.max.v[1] - viewport.min.v[1];
 
         let scale = scale_matrix4x4f(self.scale);
         let rotation = cgmath::Matrix4::from(self.rotation);
         let rotation = Matrix4x4f { m: rotation.into() };
-        let world_to_screen_space = world_to_screen_space_matrix4x4f(width, height, max_z);
+        let world_to_screen_space = world_to_screen_space_matrix4x4f(width, height);
         let translation =
             translation_matrix4x4f(world_to_screen_space * Vec4f::to_homogenous(self.translation));
         // let offset_translation = translation_matrix4x4f(

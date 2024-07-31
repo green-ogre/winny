@@ -146,42 +146,38 @@ fn parse_bundle(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let data = &input.data;
-
     match data {
-        syn::Data::Enum(_) => {
-            panic!("{} bundle must have fields", name.to_string());
-        }
-        syn::Data::Union(_) => {
+        syn::Data::Enum(_) | syn::Data::Union(_) => {
             panic!("{} bundle must have fields", name.to_string());
         }
         syn::Data::Struct(data) => {
             let mut fields = Vec::new();
-            let mut tys = Vec::new();
-
+            let mut component_metas = Vec::new();
+            let tys = &data.fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
             match &data.fields {
                 Fields::Named(data) => {
                     for field in data.named.iter() {
-                        fields.push(field.ident.as_ref().unwrap());
-                        tys.push(&field.ty);
+                        let field_name = field.ident.as_ref().unwrap();
+                        fields.push(field_name);
+                        let ty = &field.ty;
+
+                        component_metas.push(quote! {
+                            <#ty as #path_to_ecs::storage::Bundle>::component_meta(components, ids);
+                        });
                     }
                 }
-                _ => panic!("helo"),
+                _ => panic!("Invalid Bundle"),
             }
-
             let generics = &input.generics;
             let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-
             quote! {
                 impl #impl_generics #path_to_ecs::storage::Bundle for #name #ty_generics #where_clause {
                     fn component_meta<F: FnMut(&#path_to_ecs::components::ComponentMeta)>(components: &mut #path_to_ecs::components::Components, ids: &mut F) {
-                        #(
-                            ids(components.register::<#tys>());
-                        )*
+                        #(#component_metas)*
                     }
-                    // Inserted in the order of [`component_ids`]
                     fn insert_components<F: FnMut(#path_to_ecs::storage::OwnedPtr)>(self, f: &mut F) {
                         #(
-                            #path_to_ecs::storage::OwnedPtr::make(self.#fields, |self_ptr| f(self_ptr));
+                            <#tys as #path_to_ecs::storage::Bundle>::insert_components(self.#fields, f);
                         )*
                     }
                 }

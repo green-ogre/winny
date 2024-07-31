@@ -1,10 +1,8 @@
 use crate::{
     create_buffer_bind_group, create_compute_pipeline, create_render_pipeline,
-    create_texture_bind_group,
     noise::NoisePlugin,
-    texture::Texture,
+    texture::{Texture, TextureDimensions},
     transform::{new_transform_bind_group, new_transform_bind_group_layout, Transform},
-    vertex::{VertexLayout, VertexUv},
 };
 use app::{
     app::{AppSchedule, Schedule},
@@ -13,7 +11,7 @@ use app::{
 };
 use asset::{Assets, Handle};
 use cgmath::Matrix4;
-use ecs::{prelude::*, WinnyBundle, WinnyComponent, WinnyResource};
+use ecs::{prelude::*, WinnyBundle, WinnyComponent};
 use rand::Rng;
 use render::prelude::*;
 use std::ops::Range;
@@ -68,12 +66,12 @@ impl ComputeEmitterUniform {
             acceleration: Vec4f::to_homogenous(emitter.acceleration),
             time_delta: 0.,
             time_elapsed: 0.,
-            width: emitter.width / config.width(),
-            height: emitter.height / config.height(),
+            width: emitter.width / config.widthf(),
+            height: emitter.height / config.heightf(),
             min_lifetime: emitter.lifetime.start,
             max_lifetime: emitter.lifetime.end,
-            screen_width: config.width(),
-            screen_height: config.height(),
+            screen_width: config.widthf(),
+            screen_height: config.heightf(),
         }
     }
 }
@@ -97,13 +95,11 @@ pub struct ParticlePipeline {
     compute_particle_buffer: wgpu::Buffer,
 
     alive_index_buffer: wgpu::Buffer,
-    // Must maintain alignment with buffer
     alive_indexes: Vec<u32>,
     // dead_index_buffer: wgpu::Buffer,
     dead_indexes: Vec<u32>,
 
     texture_binding: wgpu::BindGroup,
-    vertex_buffer: ParticleVertexBuffer,
 }
 
 // TODO: does not share texture bindings
@@ -116,8 +112,11 @@ impl ParticlePipeline {
         texture: &Texture,
         buffer_len: usize,
     ) -> Self {
-        let (texture_layout, texture_binding) =
-            create_texture_bind_group(None, &device, &texture.view, &texture.sampler);
+        let (texture_layout, texture_binding) = texture.new_binding(
+            &device,
+            Some("particle texture"),
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         let vertex_particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
@@ -172,7 +171,11 @@ impl ParticlePipeline {
         );
 
         let vertex_emitter_uniform = VertexEmitterUniform {
-            particle_transform: emitter.particle_transformation_matrix(&config, transform),
+            particle_transform: emitter.particle_transformation_matrix(
+                &config,
+                transform,
+                &TextureDimensions::from_texture(&texture),
+            ),
         };
         let vertex_emitter_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("particles"),
@@ -225,8 +228,6 @@ impl ParticlePipeline {
         let compute_pipeline =
             create_compute_pipeline("particle compute", &device, &layout, shader, "main");
 
-        let vertex_buffer = ParticleVertexBuffer::new(&texture, &device, &config);
-
         Self {
             render_pipeline,
             compute_pipeline,
@@ -249,7 +250,6 @@ impl ParticlePipeline {
             dead_indexes,
 
             texture_binding,
-            vertex_buffer,
         }
     }
 }
@@ -284,7 +284,10 @@ fn bind_new_particle_bundles(
                 &config,
             );
 
-            commands.get_entity(entity).insert(particle_render_pipeline);
+            let dimensions = TextureDimensions::from_texture(&texture);
+            commands
+                .get_entity(entity)
+                .insert((particle_render_pipeline, dimensions));
         }
     }
 }
@@ -329,6 +332,7 @@ impl ParticleEmitter {
         &self,
         config: &RenderConfig,
         emitter_transform: &Transform,
+        texture: &TextureDimensions,
     ) -> Matrix4x4f {
         let scale = scale_matrix4x4f(self.particle_scale);
         let t_scale = scale_matrix4x4f(emitter_transform.scale);
@@ -339,14 +343,20 @@ impl ParticleEmitter {
         };
 
         let world_to_screen_space =
-            world_to_screen_space_matrix4x4f(config.width(), config.height(), config.max_z);
+            world_to_screen_space_matrix4x4f(config.widthf(), config.heightf());
         let t_translation = translation_matrix4x4f(
             world_to_screen_space * Vec4f::to_homogenous(emitter_transform.translation),
         );
 
+        let normalized_scale = Vec2f::new(
+            texture.width() / config.width() as f32,
+            texture.height() / config.height() as f32,
+        );
+        let image_scale = scale_matrix4x4f(normalized_scale);
+
         // Apply entity's Transform first, then apply local transformations. Allows for rotation
         // about the translation of the Transform.
-        t_translation * t_scale * t_rotation * scale * rotation
+        t_translation * t_scale * t_rotation * scale * rotation * image_scale
     }
 }
 
@@ -414,8 +424,7 @@ fn generate_particles_with_conditions(
 ) -> Vec<RawParticle> {
     let mut rng = rand::thread_rng();
     let mut particles = Vec::with_capacity(emitter.num_particles);
-    let world_to_screen_space =
-        world_to_screen_space_matrix4x4f(config.width(), config.height(), 1000.);
+    let world_to_screen_space = world_to_screen_space_matrix4x4f(config.widthf(), config.heightf());
     for _ in 0..emitter.num_particles {
         let x = rng.gen_range(0.0..emitter.width) - 0.5 * emitter.width;
         let y = rng.gen_range(0.0..emitter.height) - 0.5 * emitter.height;
@@ -455,7 +464,7 @@ fn create_particle_render_pipeline(
         &layout,
         config.format,
         None,
-        &[VertexUv::layout(), alive_index_layout()],
+        &[alive_index_layout()],
         shader,
         true,
     )
@@ -467,73 +476,26 @@ fn alive_index_layout() -> wgpu::VertexBufferLayout<'static> {
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &[wgpu::VertexAttribute {
             offset: 0,
-            shader_location: 2,
+            shader_location: 0,
             format: wgpu::VertexFormat::Uint32,
         }],
     }
 }
 
-#[derive(WinnyResource)]
-struct ParticleVertexBuffer {
-    buffer: wgpu::Buffer,
-}
-
-// TODO: reduce vertices to 3, then draw_indexed to greatly limit vertex count
-impl ParticleVertexBuffer {
-    // scales a particle to it's original physical size
-    pub fn new(texture: &Texture, device: &RenderDevice, config: &RenderConfig) -> Self {
-        let mut vertices = [
-            VertexUv {
-                position: Vec4f {
-                    v: [-1.0, -1.0, 0.0, 1.0],
-                },
-                uv: Vec2f { v: [0.0, 1.0] },
-                _padding: [0.0, 0.0],
-            },
-            VertexUv {
-                position: Vec4f {
-                    v: [3.0, -1.0, 0.0, 1.0],
-                },
-                uv: Vec2f { v: [2.0, 1.0] },
-                _padding: [0.0, 0.0],
-            },
-            VertexUv {
-                position: Vec4f {
-                    v: [-1.0, 3.0, 0.0, 1.0],
-                },
-                uv: Vec2f { v: [0.0, -1.0] },
-                _padding: [0.0, 0.0],
-            },
-        ];
-
-        let normalized_scale = Vec2f::new(
-            texture.tex.width() as f32 / config.width() as f32,
-            texture.tex.height() as f32 / config.height() as f32,
-        );
-        let image_scale = scale_matrix4x4f(normalized_scale);
-        for vert in vertices.iter_mut() {
-            vert.position = image_scale * vert.position;
-        }
-
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("particle vertices"),
-            usage: wgpu::BufferUsages::VERTEX,
-            contents: bytemuck::cast_slice(&vertices),
-        });
-
-        Self { buffer }
-    }
-}
-
 fn update_emitter_transforms(
-    mut emitters: Query<(Mut<ParticlePipeline>, Transform, ParticleEmitter)>,
+    mut emitters: Query<(
+        Mut<ParticlePipeline>,
+        Transform,
+        ParticleEmitter,
+        TextureDimensions,
+    )>,
     queue: Res<RenderQueue>,
     dt: Res<DeltaTime>,
     config: Res<RenderConfig>,
 ) {
-    for (pipeline, transform, emitter) in emitters.iter_mut() {
+    for (pipeline, transform, emitter, dimensions) in emitters.iter_mut() {
         pipeline.vertex_emitter_uniform.particle_transform =
-            emitter.particle_transformation_matrix(&config, transform);
+            emitter.particle_transformation_matrix(&config, transform, dimensions);
 
         queue.write_buffer(
             &pipeline.vertex_emitter_buffer,
@@ -546,12 +508,12 @@ fn update_emitter_transforms(
             acceleration: Vec4f::to_homogenous(emitter.acceleration),
             time_delta: dt.delta,
             time_elapsed: dt.wrapping_elapsed_as_seconds(),
-            width: emitter.width / config.width() * transform.scale.v[0],
-            height: emitter.height / config.height() * transform.scale.v[1],
+            width: emitter.width / config.width() as f32 * transform.scale.v[0],
+            height: emitter.height / config.height() as f32 * transform.scale.v[1],
             min_lifetime: emitter.lifetime.start,
             max_lifetime: emitter.lifetime.end,
-            screen_width: config.width(),
-            screen_height: config.height(),
+            screen_width: config.width() as f32,
+            screen_height: config.height() as f32,
         };
 
         queue.write_buffer(
@@ -611,8 +573,7 @@ fn render_emitters(
 
     for (pipeline, _) in emitters.iter().filter(|(_, e)| e.is_emitting) {
         render_pass.set_pipeline(&pipeline.render_pipeline);
-        render_pass.set_vertex_buffer(0, pipeline.vertex_buffer.buffer.slice(..));
-        render_pass.set_vertex_buffer(1, pipeline.alive_index_buffer.slice(..));
+        render_pass.set_vertex_buffer(0, pipeline.alive_index_buffer.slice(..));
         render_pass.set_bind_group(0, &pipeline.texture_binding, &[]);
         render_pass.set_bind_group(1, &pipeline.vertex_particle_binding, &[]);
         render_pass.set_bind_group(2, &pipeline.vertex_emitter_bind_group, &[]);

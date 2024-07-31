@@ -166,20 +166,20 @@ impl Material {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                    resource: wgpu::BindingResource::TextureView(diffuse_texture.view()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                    resource: wgpu::BindingResource::Sampler(diffuse_texture.sampler()),
                 },
                 // NEW!
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&normal_texture.view),
+                    resource: wgpu::BindingResource::TextureView(normal_texture.view()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&normal_texture.sampler),
+                    resource: wgpu::BindingResource::Sampler(normal_texture.sampler()),
                 },
             ],
             label: Some(name),
@@ -304,19 +304,19 @@ async fn load_model(
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                    resource: wgpu::BindingResource::TextureView(diffuse_texture.view()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                    resource: wgpu::BindingResource::Sampler(diffuse_texture.sampler()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&normal_texture.view),
+                    resource: wgpu::BindingResource::TextureView(normal_texture.view()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&normal_texture.sampler),
+                    resource: wgpu::BindingResource::Sampler(normal_texture.sampler()),
                 },
             ],
             label: None,
@@ -711,6 +711,14 @@ impl NormalTexture {
         });
 
         Self { tex, view, sampler }
+    }
+
+    pub fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+
+    pub fn sampler(&self) -> &wgpu::Sampler {
+        &self.sampler
     }
 }
 

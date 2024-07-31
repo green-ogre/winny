@@ -1,4 +1,3 @@
 pub use crate::{
-    RenderConfig, RenderContext, RenderDevice, RenderEncoder, RenderLayer, RenderOutput,
-    RenderQueue, RenderView,
+    RenderConfig, RenderContext, RenderDevice, RenderEncoder, RenderOutput, RenderQueue, RenderView,
 };

@@ -10,6 +10,7 @@ pub mod noise;
 pub mod particle;
 pub mod prelude;
 // pub mod primitives;
+pub mod material;
 pub mod sprite;
 #[cfg(feature = "text")]
 pub mod text;
@@ -24,52 +25,6 @@ pub extern crate egui;
 pub extern crate wgpu;
 #[cfg(feature = "text")]
 pub extern crate wgpu_text;
-
-pub fn create_texture_bind_group(
-    label: Option<&str>,
-    device: &RenderDevice,
-    view: &wgpu::TextureView,
-    sampler: &wgpu::Sampler,
-) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label,
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
-
-    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label,
-        layout: &layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-        ],
-    });
-
-    (layout, bg)
-}
 
 pub fn create_uniform_bind_group(
     label: Option<&str>,

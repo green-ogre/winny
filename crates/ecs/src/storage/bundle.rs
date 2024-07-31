@@ -2,6 +2,7 @@ use util::tracing::{trace, warn};
 
 use super::*;
 
+/// A collection of [`Component`]'s
 // https://github.com/bevyengine/bevy/blob/main/crates/bevy_ecs/src/bundle.rs#L146C1-L150C3
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a `Bundle`",
@@ -9,18 +10,21 @@ use super::*;
     note = "consider annotating `{Self}` with `#[derive(Component)]` or `#[derive(Bundle)]`"
 )]
 pub trait Bundle: 'static + Send + Sync {
+    /// Describes the [`Component`]'s of this bundle, as well as the order they will be inserted
+    /// within [`Bundle::insert_components`]
     fn component_meta<F: FnMut(&ComponentMeta)>(components: &mut Components, ids: &mut F);
-    // Inserted in the order of [`component_ids`]
+
+    /// Inserted in the order of [`Bundle::component_meta`]
     fn insert_components<F: FnMut(OwnedPtr)>(self, f: &mut F);
 }
 
 impl<C: Component> Bundle for C {
     fn component_meta<F: FnMut(&ComponentMeta)>(components: &mut Components, ids: &mut F) {
-        ids(components.register::<C>())
+        ids(components.register::<C>());
     }
-    // Inserted in the order of [`component_ids`]
+
     fn insert_components<F: FnMut(OwnedPtr)>(self, f: &mut F) {
-        OwnedPtr::make(self, |self_ptr| f(self_ptr))
+        OwnedPtr::make(self, |self_ptr| f(self_ptr));
     }
 }
 

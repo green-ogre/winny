@@ -10,7 +10,7 @@ use app::{
 use asset::AssetLoaderPlugin;
 use audio::AudioPlugin;
 use ecs::{EventReader, EventWriter};
-use gfx::{camera::CameraPlugin, model::ModelPlugin, texture::TexturePlugin};
+use gfx::{model::ModelPlugin, texture::TexturePlugin};
 use log::LogPlugin;
 use render::RendererPlugin;
 
@@ -69,7 +69,7 @@ impl Plugin for DefaultPlugins {
             self.window.clone(),
             RendererPlugin,
             self.asset_loader.clone(),
-            CameraPlugin,
+            // CameraPlugin,
             TexturePlugin,
             ModelPlugin,
             AudioPlugin,

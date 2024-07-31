@@ -1,20 +1,18 @@
-use std::{
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
-
 use app::{
     app::AppSchedule,
     plugins::Plugin,
     window::{Window, WindowResized},
 };
-use fxhash::FxHashMap;
-use util::tracing::trace;
-
 use ecs::{
     Commands, Res, ResMut, SparseArrayIndex, SparseSet, Take, WinnyComponent, WinnyResource,
 };
+use fxhash::FxHashMap;
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
+use util::tracing::trace;
 use wgpu::TextureFormat;
 
 pub mod prelude;
@@ -36,7 +34,7 @@ impl Plugin for RendererPlugin {
             .register_resource::<RenderDevice>()
             .register_resource::<RenderConfig>()
             .insert_resource(BindGroups::default())
-            .insert_resource(Buffers::default())
+            // .insert_resource(Buffers::default())
             .add_systems(AppSchedule::Resized, resize)
             // .add_systems(AppSchedule::SubmitEncoder, submit_encoder)
             .add_systems(AppSchedule::RenderStartup, startup)
@@ -70,7 +68,6 @@ fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>) {
     }
 }
 
-// NOTE: this MUST be the first system ran as the StartUp schedule EXPECTS the renderer and its resources to exist
 fn startup(mut commands: Commands, window: Res<Window>) {
     let (device, queue, renderer) = Renderer::new(Arc::clone(&window.winit_window));
     let config = renderer.config();
@@ -83,6 +80,7 @@ fn startup(mut commands: Commands, window: Res<Window>) {
         .insert_resource(renderer);
 }
 
+/// Handle to the [`wgpu::Surface`]. Used to present the active [`RenderOutput`].
 #[derive(WinnyResource)]
 pub struct Renderer {
     pub surface: wgpu::Surface<'static>,
@@ -222,18 +220,7 @@ pub fn present(
     output.into_inner().present();
 }
 
-pub fn submit_encoder(
-    mut commands: Commands,
-    queue: Res<RenderQueue>,
-    device: Res<RenderDevice>,
-    encoder: Take<RenderEncoder>,
-) {
-    queue.submit(std::iter::once(encoder.into_inner().finish()));
-    commands.insert_resource(RenderEncoder::new(
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default()),
-    ));
-}
-
+/// Handle to the active [`wgpu::CommandEncoder`] in the render app schedule
 #[derive(Debug, WinnyResource)]
 pub struct RenderEncoder(pub wgpu::CommandEncoder);
 
@@ -255,11 +242,12 @@ impl RenderEncoder {
         Self(encoder)
     }
 
-    pub fn finish(self) -> wgpu::CommandBuffer {
+    pub(crate) fn finish(self) -> wgpu::CommandBuffer {
         self.0.finish()
     }
 }
 
+/// Handle to the active [`wgpu::TextureView`] in the render app schedule
 #[derive(Debug, WinnyResource)]
 pub struct RenderView(wgpu::TextureView);
 
@@ -276,6 +264,7 @@ impl RenderView {
     }
 }
 
+/// Wraps the [`wgpu::SurfaceTexture`].
 #[derive(Debug, WinnyResource)]
 pub struct RenderOutput(wgpu::SurfaceTexture);
 
@@ -291,13 +280,14 @@ impl RenderOutput {
         Self(texture)
     }
 
-    pub fn present(self) {
+    pub(crate) fn present(self) {
         self.0.present();
     }
 }
 
-#[derive(Debug, WinnyResource, Clone)]
-pub struct RenderQueue(pub Arc<wgpu::Queue>);
+/// Wraps the [`wgpu::Queue`].
+#[derive(WinnyResource, Debug, Clone)]
+pub struct RenderQueue(Arc<wgpu::Queue>);
 
 impl Deref for RenderQueue {
     type Target = wgpu::Queue;
@@ -306,8 +296,9 @@ impl Deref for RenderQueue {
     }
 }
 
-#[derive(Debug, WinnyResource, Clone)]
-pub struct RenderDevice(pub Arc<wgpu::Device>);
+/// Wraps the [`wgpu::Device`].
+#[derive(WinnyResource, Debug, Clone)]
+pub struct RenderDevice(Arc<wgpu::Device>);
 
 impl Deref for RenderDevice {
     type Target = wgpu::Device;
@@ -316,30 +307,35 @@ impl Deref for RenderDevice {
     }
 }
 
-#[derive(Debug, WinnyResource, Clone)]
+/// Wraps the [`wgpu::SurfaceConfiguration`].
+#[derive(WinnyResource, Debug, Clone)]
 pub struct RenderConfig {
-    pub dimensions: Dimensions,
+    pub dimensions: Dimensions<u32>,
     pub format: wgpu::TextureFormat,
-    pub max_z: f32,
 }
 
 impl RenderConfig {
     fn from_config(value: &wgpu::SurfaceConfiguration) -> Self {
         Self {
-            dimensions: Dimensions(value.width, value.height),
+            dimensions: Dimensions::new(value.width, value.height),
             format: value.format,
-            max_z: 1000.,
         }
     }
-}
 
-impl RenderConfig {
-    pub fn width(&self) -> f32 {
-        self.dimensions.0 as f32
+    pub fn width(&self) -> u32 {
+        self.dimensions.width()
     }
 
-    pub fn height(&self) -> f32 {
-        self.dimensions.1 as f32
+    pub fn height(&self) -> u32 {
+        self.dimensions.height()
+    }
+
+    pub fn widthf(&self) -> f32 {
+        self.dimensions.width() as f32
+    }
+
+    pub fn heightf(&self) -> f32 {
+        self.dimensions.height() as f32
     }
 
     pub fn format(&self) -> TextureFormat {
@@ -347,19 +343,35 @@ impl RenderConfig {
     }
 }
 
+/// Described a width and height of unit T
 #[derive(WinnyComponent, Debug, Copy, Clone)]
-pub struct Dimensions(pub u32, pub u32);
+pub struct Dimensions<T: 'static + Copy + Send + Sync>((T, T));
 
-#[derive(WinnyComponent)]
-pub struct RenderBuffer(pub wgpu::Buffer);
+impl<T: 'static + Copy + Send + Sync> Dimensions<T> {
+    pub fn new(width: T, height: T) -> Self {
+        Self((width, height))
+    }
 
-impl Deref for RenderBuffer {
-    type Target = wgpu::Buffer;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    pub fn width(&self) -> T {
+        self.0 .0
+    }
+
+    pub fn height(&self) -> T {
+        self.0 .1
     }
 }
 
+// #[derive(WinnyComponent)]
+// pub struct RenderBuffer(pub wgpu::Buffer);
+//
+// impl Deref for RenderBuffer {
+//     type Target = wgpu::Buffer;
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+
+/// Handle to a [`wgpu::BindGroup`].
 #[derive(WinnyComponent)]
 pub struct RenderBindGroup(pub wgpu::BindGroup);
 
@@ -370,6 +382,7 @@ impl Deref for RenderBindGroup {
     }
 }
 
+/// Handle to a [`RenderBindGroup`] stored within the [`BindGroups`] resource.
 #[derive(WinnyComponent, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BindGroupHandle(pub usize);
 
@@ -379,6 +392,8 @@ impl SparseArrayIndex for BindGroupHandle {
     }
 }
 
+/// Stores [`RenderBindGroup`]s. Register and retrieve a RenderBindGroup with a
+/// [`BindGroupHandle`].
 #[derive(WinnyResource, Default)]
 pub struct BindGroups {
     bindings: SparseSet<BindGroupHandle, RenderBindGroup>,
@@ -412,44 +427,45 @@ impl BindGroups {
     }
 }
 
-#[derive(WinnyComponent, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BufferHandle(usize);
+// #[derive(WinnyComponent, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// pub struct BufferHandle(usize);
+//
+// impl SparseArrayIndex for BufferHandle {
+//     fn index(&self) -> usize {
+//         self.0
+//     }
+// }
+//
+// #[derive(WinnyResource, Default)]
+// pub struct Buffers {
+//     buffers: SparseSet<BufferHandle, RenderBuffer>,
+//     stored_buffers: FxHashMap<String, BufferHandle>,
+// }
+//
+// impl Buffers {
+//     pub fn get(&self, handle: BufferHandle) -> Option<&RenderBuffer> {
+//         self.buffers.get(&handle)
+//     }
+//
+//     pub fn get_handle_or_insert_with(
+//         &mut self,
+//         path: &String,
+//         bind_group: impl FnOnce() -> RenderBuffer,
+//     ) -> BufferHandle {
+//         if let Some(handle) = self.stored_buffers.get(path) {
+//             *handle
+//         } else {
+//             util::tracing::info!("inserting new buffer");
+//             let index = self.buffers.insert_in_first_empty(bind_group());
+//             let handle = BufferHandle(index);
+//             self.stored_buffers.insert(path.clone(), handle);
+//
+//             handle
+//         }
+//     }
+// }
 
-impl SparseArrayIndex for BufferHandle {
-    fn index(&self) -> usize {
-        self.0
-    }
-}
-
-#[derive(WinnyResource, Default)]
-pub struct Buffers {
-    buffers: SparseSet<BufferHandle, RenderBuffer>,
-    stored_buffers: FxHashMap<String, BufferHandle>,
-}
-
-impl Buffers {
-    pub fn get(&self, handle: BufferHandle) -> Option<&RenderBuffer> {
-        self.buffers.get(&handle)
-    }
-
-    pub fn get_handle_or_insert_with(
-        &mut self,
-        path: &String,
-        bind_group: impl FnOnce() -> RenderBuffer,
-    ) -> BufferHandle {
-        if let Some(handle) = self.stored_buffers.get(path) {
-            *handle
-        } else {
-            util::tracing::info!("inserting new buffer");
-            let index = self.buffers.insert_in_first_empty(bind_group());
-            let handle = BufferHandle(index);
-            self.stored_buffers.insert(path.clone(), handle);
-
-            handle
-        }
-    }
-}
-
+/// Handle to the resources required by the [`AssetServer`].
 #[derive(Debug, Clone)]
 pub struct RenderContext {
     pub queue: RenderQueue,
@@ -457,8 +473,8 @@ pub struct RenderContext {
     pub config: RenderConfig,
 }
 
-#[derive(WinnyComponent, PartialEq, Eq)]
-pub struct RenderLayer(pub u8);
+// #[derive(WinnyComponent, PartialEq, Eq)]
+// pub struct RenderLayer(pub u8);
 
 // pub trait RenderPassCommand: Send + Sync + 'static {
 //     // TODO: errors?

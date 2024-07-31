@@ -440,6 +440,30 @@ impl Vec4f {
             v: [v.x, v.y, v.z, 1.0],
         }
     }
+
+    pub fn normalize(&self) -> Vec4f {
+        let m = self.magnitude();
+
+        Vec4f {
+            v: [self.v[0] / m, self.v[1] / m, self.v[2] / m, self.v[3] / m],
+        }
+    }
+
+    pub fn normalize_homogenous(&self) -> Vec4f {
+        let m = self.magnitude();
+
+        Vec4f {
+            v: [self.v[0] / m, self.v[1] / m, self.v[2] / m, 1.0],
+        }
+    }
+
+    pub fn magnitude(&self) -> f32 {
+        (self.v[0] * self.v[0]
+            + self.v[1] * self.v[1]
+            + self.v[2] * self.v[2]
+            + self.v[3] * self.v[3])
+            .sqrt()
+    }
 }
 
 #[cfg(test)]

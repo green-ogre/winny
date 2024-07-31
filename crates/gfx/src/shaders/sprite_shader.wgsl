@@ -5,10 +5,8 @@ struct VertexInput {
 
 struct InstanceInput {
     @builtin(instance_index) index: u32,
-    @location(2) mask: vec4<f32>,
-    @location(3) flip_v: f32,
-    @location(4) flip_h: f32,
-    @location(5) opacity: f32,
+    @location(2) flip_v: f32,
+    @location(3) flip_h: f32,
 }
 
 struct TransformInput {
@@ -23,8 +21,6 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) flip_h: f32,
     @location(2) flip_v: f32,
-    @location(3) mask: vec4<f32>,
-    @location(4) opacity: f32,
 }
 
 struct AtlasUniform {
@@ -57,10 +53,8 @@ fn vs_main(
 
     out.clip_position = vert.position * transformation_matrix;
     out.clip_position.z = 0.0;
-    out.mask = instance.mask;
     out.flip_h = instance.flip_h;
     out.flip_v = instance.flip_v;
-    out.opacity = instance.opacity;
 
     return out;
 }
@@ -75,8 +69,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let x = (in.uv.x * in.flip_h) + ((1.0 - in.uv.x) * (1.0 - in.flip_h));
     let y = (in.uv.y * in.flip_v) + ((1.0 - in.uv.y) * (1.0 - in.flip_v));
     var tex = textureSample(t_diffuse, s_diffuse, vec2<f32>(x, y));
-    let alpha_mask = step(0.001, tex.a);
-    let output_color = mix(tex.rgb, in.mask.rgb, in.mask.a * alpha_mask);
-    return vec4<f32>(output_color, tex.a * in.opacity);
+    return tex;
 }
 

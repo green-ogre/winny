@@ -122,17 +122,13 @@ impl Matrix4x4f {
     }
 }
 
-pub fn world_to_screen_space_matrix4x4f(
-    screen_width: f32,
-    screen_height: f32,
-    max_z: f32,
-) -> Matrix4x4f {
+pub fn world_to_screen_space_matrix4x4f(screen_width: f32, screen_height: f32) -> Matrix4x4f {
     #[cfg_attr(rustfmt, rustfmt_skip)]
     Matrix4x4f {
         m: [
             [2. / screen_width, 0.,                  0.,         0.],
             [0.,                -2. / screen_height, 0.,         0.],
-            [0.,                0.,                  1. / max_z, 0.],
+            [0.,                0.,                  1. / 1000., 0.],
             [0.,                0.,                  0.,         1.],
         ]
     }
