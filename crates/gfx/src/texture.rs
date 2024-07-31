@@ -1,13 +1,23 @@
-use std::{fmt::Display, future::Future, io::Cursor};
-
-// use crate::sprite::{SpriteBinding, SpriteData};
 use asset::{load_binary, reader::ByteReader, Asset, AssetApp, AssetLoaderError};
-
 use ecs::WinnyComponent;
 use image::{DynamicImage, GenericImageView};
+use render::{Dimensions, RenderConfig, RenderContext, RenderDevice, RenderQueue};
+use std::{fmt::Display, future::Future, io::Cursor};
 use util::tracing::trace;
 
-use render::{Dimensions, RenderConfig, RenderContext, RenderDevice, RenderQueue};
+pub struct TexturePlugin;
+
+impl app::plugins::Plugin for TexturePlugin {
+    fn build(&mut self, app: &mut app::app::App) {
+        let texture_loader = TextureAssetLoader {};
+        let image_loader = ImageAssetLoader {};
+        let atlas_loader = TextureAtlasLoader {};
+
+        app.register_asset_loader::<Texture>(texture_loader)
+            .register_asset_loader::<TextureAtlas>(atlas_loader)
+            .register_asset_loader::<Image>(image_loader);
+    }
+}
 
 struct TextureAtlasLoader;
 
@@ -84,20 +94,6 @@ impl asset::AssetLoader for TextureAssetLoader {
     }
 }
 
-pub struct TexturePlugin;
-
-impl app::plugins::Plugin for TexturePlugin {
-    fn build(&mut self, app: &mut app::app::App) {
-        let texture_loader = TextureAssetLoader {};
-        let image_loader = ImageAssetLoader {};
-        let atlas_loader = TextureAtlasLoader {};
-
-        app.register_asset_loader::<Texture>(texture_loader)
-            .register_asset_loader::<TextureAtlas>(atlas_loader)
-            .register_asset_loader::<Image>(image_loader);
-    }
-}
-
 pub struct Image {
     pub image: DynamicImage,
 }
@@ -115,27 +111,44 @@ impl Image {
     }
 }
 
+/// Dimensions of a [`Texture`] in pixels.
 #[derive(WinnyComponent, Debug)]
-pub struct TextureDimensions(pub Dimensions);
+pub struct TextureDimensions(Dimensions<f32>);
 
 impl TextureDimensions {
     pub fn from_texture(texture: &Texture) -> Self {
-        Self(Dimensions(texture.tex.width(), texture.tex.height()))
+        Self(Dimensions::new(
+            texture.texture.width() as f32,
+            texture.texture.height() as f32,
+        ))
     }
 
     pub fn from_texture_atlas(atlas: &TextureAtlas) -> Self {
-        Self(Dimensions(
-            atlas.texture.tex.width() * atlas.width,
-            atlas.texture.tex.height() * atlas.height,
-        ))
+        Self::from_texture(&atlas.texture)
+    }
+
+    pub fn width(&self) -> f32 {
+        self.0.width()
+    }
+
+    pub fn height(&self) -> f32 {
+        self.0.height()
     }
 }
 
+///// Configuration for a [`wgpu::Texture`] and [`wgpu::Sampler`] within the [`asset::AssetServer`].
+//#[derive(WinnyComponent, Debug)]
+//pub struct TextureImportSettings {
+//    pub texture: Arc<wgpu::TextureDescriptor>,
+//    pub sampler: Arc<wgpu::SamplerDescriptor>,
+//}
+
+/// Handle to a GPU texture. Provides a [`wgpu::TextureView`] and [`wgpu::Sampler`].
 #[derive(Debug)]
 pub struct Texture {
-    pub tex: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
 }
 
 impl asset::Asset for Texture {}
@@ -146,12 +159,13 @@ unsafe impl Send for Texture {}
 unsafe impl Sync for Texture {}
 
 impl Texture {
+    pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
     pub async fn load_texture(
         file_name: &str,
         device: &RenderDevice,
         queue: &RenderQueue,
     ) -> Result<Texture, ()> {
-        trace!("Loading texture: {:?}", file_name);
         let data = load_binary(file_name).await.map_err(|_| ())?;
         Texture::from_image_bytes(device, queue, &data, file_name)
     }
@@ -160,10 +174,10 @@ impl Texture {
         device: &RenderDevice,
         queue: &RenderQueue,
         bytes: &[u8],
-        label: &str,
+        file_name: &str,
     ) -> Result<Self, ()> {
         let img = image::load_from_memory(bytes).map_err(|_| ())?;
-        Ok(Self::from_image(device, queue, &img, Some(label)))
+        Ok(Self::from_image(device, queue, &img, Some(file_name)))
     }
 
     pub fn from_image(
@@ -186,8 +200,10 @@ impl Texture {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            format: Texture::TEXTURE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
@@ -219,7 +235,7 @@ impl Texture {
         });
 
         Self {
-            tex: texture,
+            texture,
             view,
             sampler,
         }
@@ -237,20 +253,20 @@ impl Texture {
             depth_or_array_layers: 1,
         };
 
-        let diffuse_tex = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: Texture::TEXTURE_FORMAT,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            label: Some("diffuse_texture"),
+            label: None,
             view_formats: &[],
         });
 
         queue.write_texture(
             wgpu::ImageCopyTexture {
-                texture: &diffuse_tex,
+                texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -266,7 +282,7 @@ impl Texture {
             size,
         );
 
-        let view = diffuse_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -278,38 +294,35 @@ impl Texture {
         });
 
         Self {
-            tex: diffuse_tex,
+            texture,
             view,
             sampler,
         }
     }
 
     pub fn empty(
-        dimensions: (u32, u32),
+        dimensions: Dimensions<u32>,
         device: &RenderDevice,
-        format: wgpu::TextureFormat,
-        override_usage: Option<wgpu::TextureUsages>,
+        usage: wgpu::TextureUsages,
     ) -> Self {
         let size = wgpu::Extent3d {
-            width: dimensions.0,
-            height: dimensions.1,
+            width: dimensions.width(),
+            height: dimensions.height(),
             depth_or_array_layers: 1,
         };
 
-        let diffuse_tex = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: override_usage.unwrap_or_else(|| {
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
-            }),
-            label: Some("diffuse_texture"),
+            format: Texture::TEXTURE_FORMAT,
+            usage,
+            label: None,
             view_formats: &[],
         });
 
-        let view = diffuse_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -321,18 +334,92 @@ impl Texture {
         });
 
         Self {
-            tex: diffuse_tex,
+            texture,
             view,
             sampler,
         }
     }
+
+    pub fn texture(&self) -> &wgpu::Texture {
+        &self.texture
+    }
+
+    pub fn width(&self) -> u32 {
+        self.texture.width()
+    }
+
+    pub fn height(&self) -> u32 {
+        self.texture.height()
+    }
+
+    pub fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+
+    pub fn sampler(&self) -> &wgpu::Sampler {
+        &self.sampler
+    }
+
+    pub fn new_layout(
+        device: &RenderDevice,
+        label: Option<&'static str>,
+        visibility: wgpu::ShaderStages,
+    ) -> wgpu::BindGroupLayout {
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+            label,
+        })
+    }
+
+    pub fn new_binding(
+        &self,
+        device: &RenderDevice,
+        label: Option<&'static str>,
+        visibility: wgpu::ShaderStages,
+    ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+        let layout = Self::new_layout(device, label, visibility);
+        let binding = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+            label,
+        });
+
+        (layout, binding)
+    }
 }
 
+/// Handle to a sprite sheet [`Texture`].
 #[derive(WinnyComponent, Debug)]
 pub struct TextureAtlas {
-    // Number of Textures horizontally
+    /// Number of Textures horizontally
     pub width: u32,
-    // Number of Textures vertically
+    /// Number of Textures vertically
     pub height: u32,
     pub texture: Texture,
 }
@@ -376,7 +463,7 @@ impl TextureAtlas {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: Texture::TEXTURE_FORMAT,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -409,7 +496,7 @@ impl TextureAtlas {
         });
 
         let texture = Texture {
-            tex: texture,
+            texture,
             view,
             sampler,
         };
@@ -424,14 +511,14 @@ impl TextureAtlas {
     pub fn from_image(
         device: &RenderDevice,
         queue: &RenderQueue,
-        atlas_dimensions: (u32, u32),
+        atlas_dimensions: &Dimensions<u32>,
         image: &Image,
     ) -> Result<Self, AtlasError> {
         let texture = Texture::from_image(device, queue, &image.image, Some("texure atlas"));
 
         Ok(TextureAtlas {
-            width: atlas_dimensions.0,
-            height: atlas_dimensions.1,
+            width: atlas_dimensions.width(),
+            height: atlas_dimensions.height(),
             texture,
         })
     }
@@ -458,6 +545,7 @@ impl Display for AtlasError {
 
 impl std::error::Error for AtlasError {}
 
+/// Handle to a GPU texture. Provides a [`wgpu::TextureView`] and [`wgpu::Sampler`].
 pub struct DepthTexture {
     pub tex: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -481,22 +569,20 @@ impl DepthTexture {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT // 3.
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         };
         let tex = device.create_texture(&desc);
 
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            // 4.
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
+            compare: Some(wgpu::CompareFunction::LessEqual),
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            compare: Some(wgpu::CompareFunction::LessEqual), // 5.
             lod_min_clamp: 0.0,
             lod_max_clamp: 100.0,
             ..Default::default()

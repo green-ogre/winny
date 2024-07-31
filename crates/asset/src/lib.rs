@@ -30,10 +30,33 @@ use util::tracing::{error, info, trace, trace_span};
 pub mod prelude;
 pub mod reader;
 
+/// Tracks change between ticks.
+#[derive(Debug, Copy, Clone, Default)]
+pub struct HandleGeneration {
+    previous: u32,
+    current: u32,
+}
+
+impl HandleGeneration {
+    /// Checks if generation has changed, then increments current generation.
+    pub fn is_changed(&mut self) -> bool {
+        let changed = self.previous != self.current;
+        if changed {
+            self.previous = self.current;
+        }
+
+        changed
+    }
+
+    pub(crate) fn increment(&mut self) {
+        self.current += 1;
+    }
+}
+
 // TODO: could become enum with strong and weak variants which determine
 // dynamic loading behaviour
-#[derive(WinnyComponent, Copy)]
-pub struct Handle<A: Asset>(AssetId, PhantomData<A>);
+#[derive(WinnyComponent)]
+pub struct Handle<A: Asset>(AssetId, HandleGeneration, PhantomData<Arc<A>>);
 
 impl<A: Asset> Debug for Handle<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -58,7 +81,7 @@ impl<A: Asset> PartialEq for Handle<A> {
 
 impl<A: Asset> Handle<A> {
     pub fn new(id: AssetId) -> Self {
-        Self(id, PhantomData)
+        Self(id, HandleGeneration::default(), PhantomData)
     }
 
     pub fn id(&self) -> AssetId {
@@ -66,11 +89,24 @@ impl<A: Asset> Handle<A> {
     }
 
     pub fn dangling() -> Self {
-        Self(AssetId::new(0, u32::MAX), PhantomData)
+        Self(
+            AssetId::new(0, u32::MAX),
+            HandleGeneration::default(),
+            PhantomData,
+        )
     }
 
     pub fn is_dangling(&self) -> bool {
         self.0.index() == u32::MAX
+    }
+
+    pub fn point_to(&mut self, other: &Handle<A>) {
+        self.0 = other.id();
+        self.1.increment();
+    }
+
+    pub fn is_changed(&mut self) -> bool {
+        self.1.is_changed()
     }
 }
 
@@ -217,6 +253,10 @@ where
 
     pub fn get(&self, handle: &Handle<A>) -> Option<&LoadedAsset<A>> {
         self.storage.get(&handle.id())
+    }
+
+    pub fn get_mut(&mut self, handle: &Handle<A>) -> Option<&mut LoadedAsset<A>> {
+        self.storage.get_mut(&handle.id())
     }
 
     pub fn remove(&mut self, handle: &Handle<A>) -> LoadedAsset<A> {
@@ -805,5 +845,29 @@ pub async fn load_binary(file_name: &str) -> Result<Vec<u8>, ()> {
             .join("res")
             .join(file_name);
         std::fs::read(path).map_err(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Texture;
+    impl Asset for Texture {}
+
+    #[test]
+    fn handle() {
+        let mut h: Handle<Texture> = Handle::new(AssetId(0));
+        let new_h: Handle<Texture> = Handle::new(AssetId(1));
+        println!("PRE: h: {h:?}, new_h: {new_h:?}");
+        assert!(h.is_changed() == false);
+
+        // Cannot dereference a handle
+        // *h = new_h;
+        h.point_to(&new_h);
+
+        println!("POST: h: {h:?}, new_h: {new_h:?}");
+        assert!(h.is_changed());
+        println!("IS_CHANGED: h: {h:?}, new_h: {new_h:?}");
     }
 }

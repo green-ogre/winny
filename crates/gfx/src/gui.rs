@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use std::marker::PhantomData;
+use std::{marker::PhantomData, ops::Deref};
 
 use app::{
     app::{App, AppSchedule, Schedule},
@@ -180,10 +180,6 @@ impl EguiRenderer {
         window_surface_view: &RenderView,
         run_ui: impl FnOnce(&Context),
     ) {
-        // let Some(callback) = self.ui_callback.take() else {
-        //     return;
-        // };
-
         let size = window.winit_window.inner_size();
         let pixels_per_point = window.winit_window.scale_factor() as f32;
 
@@ -191,28 +187,23 @@ impl EguiRenderer {
             size_in_pixels: [size.width as u32, size.height as u32],
             pixels_per_point,
         };
-        // self.state.set_pixels_per_point(window.scale_factor() as f32);
-        // let raw_input = self.state.take_egui_input(window.window().as_ref());
         let raw_input = self.take_egui_input(window);
         let full_output = self.context.run(raw_input, |ui| {
             // callback(ui);
             run_ui(ui);
         });
 
-        // self.state
-        //     .handle_platform_output(window.window().as_ref(), full_output.platform_output);
-
         let tris = self
             .context
             .tessellate(full_output.shapes, full_output.pixels_per_point);
         for (id, image_delta) in &full_output.textures_delta.set {
             self.renderer
-                .update_texture(device.0.as_ref(), queue.0.as_ref(), *id, &image_delta);
+                .update_texture(device.deref(), queue.deref(), *id, &image_delta);
         }
 
         self.renderer.update_buffers(
-            device.0.as_ref(),
-            queue.0.as_ref(),
+            device.deref(),
+            queue.deref(),
             &mut encoder.0,
             &tris,
             &screen_descriptor,
