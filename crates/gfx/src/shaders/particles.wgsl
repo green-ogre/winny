@@ -5,11 +5,16 @@ struct EmitterUniform {
     m4: vec4<f32>,
 }
 
-@group(2) @binding(0)
+@group(0) @binding(0)
 var<uniform> emitter: EmitterUniform;
 
+struct VertexInput {
+    @location(0) position: vec4<f32>,
+    @location(1) uv: vec2<f32>,
+}
+
 struct InstanceInput {
-    @location(0) alive_index: u32,
+    @location(2) alive_index: u32,
 }
 
 @group(1) @binding(0)
@@ -30,42 +35,23 @@ struct VertexOutput {
 }
 
 @vertex
-fn vs_main(@builtin(vertex_index) vert_id: u32, instance: InstanceInput) -> VertexOutput {
+fn vs_main(vert: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
-
-    let x = f32(i32(vert_id) & 1);
-    let y = f32(i32(vert_id) >> 1);
-    out.clip_position = vec4<f32>(
-        x * 4.0 - 1.0,
-        y * 4.0 - 1.0,
-        0.0,
-        1.0
-    );
-
-    let particle_transformation = mat4x4<f32>(
+    var particle_transformation = mat4x4<f32>(
         emitter.m1,
         emitter.m2,
         emitter.m3,
         emitter.m4,
     );
 
+    particle_transformation[0][3] *= 2.0 / 1000.0;
+    particle_transformation[1][3] *= -2.0 / 1000.0;
+    particle_transformation[2][3] *= 1.0 / 1000.0;
+
     let particle = particle_storage[instance.alive_index];
-    out.clip_position *= particle_transformation;
+    out.clip_position = vert.position * particle_transformation;
     out.clip_position += vec4<f32>(particle.translation.xy, 0.0, 0.0);
     out.clip_position.z = 0.0;
-    out.uv = vec2<f32>(x * 2.0, 1.0 - y * 2.0);
+    out.uv = vert.uv;
     return out;
-}
-
-@group(0) @binding(0)
-var texture: texture_2d<f32>;
-@group(0) @binding(1)
-var texture_sampler: sampler;
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let in_bounds = step(vec2<f32>(0.0), in.uv) * step(in.uv, vec2<f32>(1.0));
-    let factor = in_bounds.x * in_bounds.y;
-    let texel = textureSample(texture, texture_sampler, in.uv);
-    return texel * factor;
 }

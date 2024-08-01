@@ -8,7 +8,7 @@ use wgpu_text::glyph_brush::{Extra, Section};
 use wgpu_text::{BrushBuilder, TextBrush};
 
 use app::plugins::Plugin;
-use render::{RenderConfig, RenderDevice, RenderEncoder, RenderQueue, RenderView};
+use render::{RenderConfig, RenderContext, RenderDevice, RenderEncoder, RenderQueue, RenderView};
 
 pub struct TextPlugin {
     text_path: String,
@@ -84,13 +84,16 @@ fn should_run_text_setup(events: EventReader<AssetLoaderEvent<Ttf>>) -> bool {
 
 fn text_setup(
     mut commands: Commands,
-    device: Res<RenderDevice>,
-    config: Res<RenderConfig>,
+    context: Res<RenderContext>,
     fonts: Res<Assets<Ttf>>,
     handle: Res<TextHandle>,
 ) {
     let font_bytes = &fonts.get(&handle.0).unwrap().bytes;
-    commands.insert_resource(TextRenderer::new(font_bytes, &device, &config));
+    commands.insert_resource(TextRenderer::new(
+        font_bytes,
+        &context.device,
+        &context.config,
+    ));
 }
 
 #[derive(WinnyResource)]

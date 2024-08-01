@@ -441,6 +441,10 @@ impl Vec4f {
         }
     }
 
+    pub fn is_homogenous(&self) -> bool {
+        self.v[3] == 1.0
+    }
+
     pub fn normalize(&self) -> Vec4f {
         let m = self.magnitude();
 

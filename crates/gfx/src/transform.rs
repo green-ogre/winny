@@ -1,18 +1,16 @@
-use app::window::ViewPort;
-use cgmath::{Quaternion, Zero};
+use cgmath::{Matrix4, Quaternion, Zero};
 use ecs::WinnyComponent;
-use render::RenderDevice;
 use winny_math::{
-    matrix::{
-        scale_matrix4x4f, translation_matrix4x4f, world_to_screen_space_matrix4x4f, Matrix4x4f,
-    },
+    matrix::{scale_matrix4x4f, translation_matrix4x4f, Matrix4x4f},
     vector::{Vec2f, Vec3f, Vec4f},
 };
 
-use crate::vertex::VertexLayout;
+use crate::render_pipeline::vertex::VertexLayout;
 
+/// Position of an entity in world space.
 #[derive(WinnyComponent, Debug, Clone, Copy)]
 pub struct Transform {
+    /// Translations are described in world space and converted to clip space on the GPU
     pub translation: Vec3f,
     pub rotation: Quaternion<f32>,
     pub scale: Vec2f,
@@ -28,7 +26,7 @@ impl Default for Transform {
     }
 }
 
-impl VertexLayout for Matrix4x4f {
+impl<const Offset: u32> VertexLayout<Offset> for Matrix4x4f {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
         wgpu::VertexBufferLayout {
@@ -37,22 +35,22 @@ impl VertexLayout for Matrix4x4f {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: 6,
+                    shader_location: Offset,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 7,
+                    shader_location: Offset + 1,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: 8,
+                    shader_location: Offset + 2,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
-                    shader_location: 9,
+                    shader_location: Offset + 3,
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],
@@ -61,56 +59,21 @@ impl VertexLayout for Matrix4x4f {
 }
 
 impl Transform {
-    pub fn transformation_matrix(&self, viewport: &ViewPort) -> Matrix4x4f {
-        let width = viewport.max.v[0] - viewport.min.v[0];
-        let height = viewport.max.v[1] - viewport.min.v[1];
-
-        let scale = scale_matrix4x4f(self.scale);
-        let rotation = cgmath::Matrix4::from(self.rotation);
-        let rotation = Matrix4x4f { m: rotation.into() };
-        let world_to_screen_space = world_to_screen_space_matrix4x4f(width, height);
-        let translation =
-            translation_matrix4x4f(world_to_screen_space * Vec4f::to_homogenous(self.translation));
-        // let offset_translation = translation_matrix4x4f(
-        //     world_to_screen_space * Vec4f::new(viewport.min.v[0], viewport.min.v[1], 0., 1.),
-        // );
-
-        translation * scale * rotation
+    pub fn scale_matrix(&self) -> Matrix4x4f {
+        scale_matrix4x4f(self.scale)
     }
-}
 
-pub fn new_transform_bind_group_layout(
-    device: &RenderDevice,
-    binding: u32,
-    visibility: wgpu::ShaderStages,
-) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-        label: Some("transform"),
-    })
-}
+    pub fn rotation_matrix(&self) -> Matrix4x4f {
+        let rotation = Matrix4::from(self.rotation);
+        Matrix4x4f { m: rotation.into() }
+    }
 
-pub fn new_transform_bind_group(
-    device: &RenderDevice,
-    transform_bind_group_layout: &wgpu::BindGroupLayout,
-    transform_buffer: &wgpu::Buffer,
-    binding: u32,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &transform_bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding,
-            resource: transform_buffer.as_entire_binding(),
-        }],
-        label: Some("transform"),
-    })
+    pub fn translation_matrix(&self) -> Matrix4x4f {
+        translation_matrix4x4f(Vec4f::to_homogenous(self.translation))
+    }
+
+    pub fn as_matrix(&self) -> Matrix4x4f {
+        // Apply translation first to allow local transformation about the origin of this Transform.
+        self.translation_matrix() * self.scale_matrix() * self.rotation_matrix()
+    }
 }

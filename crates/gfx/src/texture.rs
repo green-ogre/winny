@@ -5,6 +5,8 @@ use render::{Dimensions, RenderConfig, RenderContext, RenderDevice, RenderQueue}
 use std::{fmt::Display, future::Future, io::Cursor};
 use util::tracing::trace;
 
+use crate::render_pipeline::bind_group::AsBindGroup;
+
 pub struct TexturePlugin;
 
 impl app::plugins::Plugin for TexturePlugin {
@@ -157,6 +159,76 @@ impl asset::Asset for Texture {}
 unsafe impl Send for Texture {}
 #[cfg(target_arch = "wasm32")]
 unsafe impl Sync for Texture {}
+
+// impl AsBindGroup<&Texture, &Texture> for Texture {
+//     const LABEL: &'static str = "texture";
+//     type State<'s> = ();
+//
+//     fn as_raw<'s>(contents: &[Texture], state: &Self::State<'s>) -> Vec<Texture> {
+//         contents.iter().collect()
+//     }
+//
+//     fn layout(
+//         device: &RenderDevice,
+//         label: Option<&'static str>,
+//         visibility: wgpu::ShaderStages,
+//     ) -> wgpu::BindGroupLayout {
+//         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+//             entries: &[
+//                 wgpu::BindGroupLayoutEntry {
+//                     binding: 0,
+//                     visibility,
+//                     ty: wgpu::BindingType::Texture {
+//                         multisampled: false,
+//                         view_dimension: wgpu::TextureViewDimension::D2,
+//                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
+//                     },
+//                     count: None,
+//                 },
+//                 wgpu::BindGroupLayoutEntry {
+//                     binding: 1,
+//                     visibility,
+//                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+//                     count: None,
+//                 },
+//             ],
+//             label,
+//         })
+//     }
+//
+//     fn binding(
+//         context: &RenderContext,
+//         binding_index: u32,
+//         layout: &wgpu::BindGroupLayout,
+//         buffer: &wgpu::Buffer,
+//     ) -> wgpu::BindGroup {
+//         wgpu::BindingResource
+//     }
+//
+//     // fn binding(
+//     //     device: &RenderDevice,
+//     //     label: Option<&'static str>,
+//     //     layout:
+//     //     visibility: wgpu::ShaderStages,
+//     // ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+//     //     let binding = device.create_bind_group(&wgpu::BindGroupDescriptor {
+//     //         layout: &layout,
+//     //         entries: &[
+//     //             wgpu::BindGroupEntry {
+//     //                 binding: 0,
+//     //                 resource: wgpu::BindingResource::TextureView(&self.view),
+//     //             },
+//     //             wgpu::BindGroupEntry {
+//     //                 binding: 1,
+//     //                 resource: wgpu::BindingResource::Sampler(&self.sampler),
+//     //             },
+//     //         ],
+//     //         label,
+//     //     });
+//     //
+//     //     (layout, binding)
+//     // }
+// }
 
 impl Texture {
     pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -340,6 +412,34 @@ impl Texture {
         }
     }
 
+    pub fn create_view(&self) -> wgpu::TextureView {
+        self.texture
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    pub fn create_sampler(
+        &self,
+        context: &RenderContext,
+        filter_type: &SamplerFilterType,
+    ) -> wgpu::Sampler {
+        let desc = match filter_type {
+            SamplerFilterType::Nearest => wgpu::SamplerDescriptor {
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            },
+            SamplerFilterType::Linear => wgpu::SamplerDescriptor {
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            },
+        };
+
+        context.device.create_sampler(&desc)
+    }
+
     pub fn texture(&self) -> &wgpu::Texture {
         &self.texture
     }
@@ -359,59 +459,11 @@ impl Texture {
     pub fn sampler(&self) -> &wgpu::Sampler {
         &self.sampler
     }
+}
 
-    pub fn new_layout(
-        device: &RenderDevice,
-        label: Option<&'static str>,
-        visibility: wgpu::ShaderStages,
-    ) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-            label,
-        })
-    }
-
-    pub fn new_binding(
-        &self,
-        device: &RenderDevice,
-        label: Option<&'static str>,
-        visibility: wgpu::ShaderStages,
-    ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
-        let layout = Self::new_layout(device, label, visibility);
-        let binding = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-            label,
-        });
-
-        (layout, binding)
-    }
+pub enum SamplerFilterType {
+    Nearest,
+    Linear,
 }
 
 /// Handle to a sprite sheet [`Texture`].

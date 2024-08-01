@@ -1,8 +1,14 @@
 use crate::{
-    create_buffer_bind_group, create_compute_pipeline, create_render_pipeline,
-    noise::NoisePlugin,
-    texture::{Texture, TextureDimensions},
-    transform::{new_transform_bind_group, new_transform_bind_group_layout, Transform},
+    create_render_pipeline,
+    render_pipeline::{
+        bind_group::{self, AsBindGroup, AsWgpuResources, FragTexture, WgpuResource},
+        buffer::AsGpuBuffer,
+        material::{self, Material, Material2d},
+        vertex::{VertexUv, FULLSCREEN_QUAD_VERTEX_UV},
+        vertex_buffer::{InstanceIndex, VertexBuffer},
+    },
+    texture::{SamplerFilterType, Texture, TextureDimensions},
+    transform::Transform,
 };
 use app::{
     app::{AppSchedule, Schedule},
@@ -10,18 +16,14 @@ use app::{
     time::DeltaTime,
 };
 use asset::{Assets, Handle};
-use cgmath::Matrix4;
+use cgmath::{Quaternion, Rad, Rotation3};
 use ecs::{prelude::*, WinnyBundle, WinnyComponent};
 use rand::Rng;
 use render::prelude::*;
 use std::ops::Range;
-use wgpu::util::DeviceExt;
 use winny_math::{
     angle::Radf,
-    matrix::{
-        rotation_2d_matrix4x4f, scale_matrix4x4f, translation_matrix4x4f,
-        world_to_screen_space_matrix4x4f, Matrix4x4f,
-    },
+    matrix::{world_to_screen_space_matrix4x4f, Matrix4x4f},
     vector::{Vec2f, Vec3f, Vec4f},
 };
 
@@ -31,270 +33,28 @@ pub struct ParticlePlugin;
 
 impl Plugin for ParticlePlugin {
     fn build(&mut self, app: &mut app::app::App) {
-        app.add_plugins(NoisePlugin::new("noise/particles.png"))
-            .add_systems(Schedule::PostUpdate, bind_new_particle_bundles)
-            .add_systems(AppSchedule::PreRender, update_emitter_transforms)
-            .add_systems(AppSchedule::Render, (compute_emitters, render_emitters));
-    }
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct VertexEmitterUniform {
-    particle_transform: Matrix4x4f,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct ComputeEmitterUniform {
-    initial_velocity: Vec4f,
-    acceleration: Vec4f,
-    time_delta: f32,
-    time_elapsed: f32,
-    width: f32,
-    height: f32,
-    max_lifetime: f32,
-    min_lifetime: f32,
-    screen_width: f32,
-    screen_height: f32,
-}
-
-impl ComputeEmitterUniform {
-    pub fn new(config: &RenderConfig, emitter: &ParticleEmitter) -> Self {
-        Self {
-            initial_velocity: Vec4f::to_homogenous(emitter.initial_velocity),
-            acceleration: Vec4f::to_homogenous(emitter.acceleration),
-            time_delta: 0.,
-            time_elapsed: 0.,
-            width: emitter.width / config.widthf(),
-            height: emitter.height / config.heightf(),
-            min_lifetime: emitter.lifetime.start,
-            max_lifetime: emitter.lifetime.end,
-            screen_width: config.widthf(),
-            screen_height: config.heightf(),
-        }
-    }
-}
-
-#[derive(WinnyComponent)]
-#[allow(dead_code)]
-pub struct ParticlePipeline {
-    render_pipeline: wgpu::RenderPipeline,
-    compute_pipeline: wgpu::ComputePipeline,
-
-    vertex_emitter_uniform: VertexEmitterUniform,
-    vertex_emitter_buffer: wgpu::Buffer,
-    vertex_emitter_bind_group: wgpu::BindGroup,
-    vertex_particle_binding: wgpu::BindGroup,
-    vertex_particle_buffer: wgpu::Buffer,
-
-    compute_emitter_uniform: ComputeEmitterUniform,
-    compute_emitter_buffer: wgpu::Buffer,
-    compute_emitter_bind_group: wgpu::BindGroup,
-    compute_particle_binding: wgpu::BindGroup,
-    compute_particle_buffer: wgpu::Buffer,
-
-    alive_index_buffer: wgpu::Buffer,
-    alive_indexes: Vec<u32>,
-    // dead_index_buffer: wgpu::Buffer,
-    dead_indexes: Vec<u32>,
-
-    texture_binding: wgpu::BindGroup,
-}
-
-// TODO: does not share texture bindings
-impl ParticlePipeline {
-    pub fn new(
-        emitter: &ParticleEmitter,
-        device: &RenderDevice,
-        config: &RenderConfig,
-        transform: &Transform,
-        texture: &Texture,
-        buffer_len: usize,
-    ) -> Self {
-        let (texture_layout, texture_binding) = texture.new_binding(
-            &device,
-            Some("particle texture"),
-            wgpu::ShaderStages::FRAGMENT,
-        );
-
-        let vertex_particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("particles"),
-            size: (buffer_len * std::mem::size_of::<RawParticle>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let compute_particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("particles"),
-            size: (buffer_len * std::mem::size_of::<RawParticle>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let alive_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("alive particles"),
-            size: (buffer_len * 4) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let alive_indexes = Vec::with_capacity(buffer_len);
-
-        // let dead_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        //     label: Some("dead particles"),
-        //     size: (buffer_len * 4) as u64,
-        //     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        //     mapped_at_creation: false,
-        // });
-        let dead_indexes = Vec::with_capacity(buffer_len);
-
-        let binding = 0;
-        let (vertex_particle_layout, vertex_particle_binding) = create_buffer_bind_group(
-            None,
-            &device,
-            &vertex_particle_buffer,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::ShaderStages::VERTEX,
-            binding,
-        );
-
-        let binding = 0;
-        let (compute_particle_layout, compute_particle_binding) = create_buffer_bind_group(
-            None,
-            &device,
-            &compute_particle_buffer,
-            wgpu::BufferBindingType::Storage { read_only: false },
-            wgpu::ShaderStages::COMPUTE,
-            binding,
-        );
-
-        let vertex_emitter_uniform = VertexEmitterUniform {
-            particle_transform: emitter.particle_transformation_matrix(
-                &config,
-                transform,
-                &TextureDimensions::from_texture(&texture),
+        app.add_systems(
+            Schedule::PostUpdate,
+            bind_new_particle_bundles::<Material2d>,
+        )
+        .add_systems(
+            AppSchedule::PreRender,
+            update_emitter_uniforms::<Material2d>,
+        )
+        .add_systems(
+            AppSchedule::Render,
+            (
+                compute_emitters::<Material2d>,
+                render_emitters::<Material2d>,
             ),
-        };
-        let vertex_emitter_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("particles"),
-            contents: bytemuck::cast_slice(&[vertex_emitter_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let binding = 0;
-        let vertex_emitter_layout =
-            new_transform_bind_group_layout(&device, binding, wgpu::ShaderStages::VERTEX);
-        let vertex_emitter_bind_group = new_transform_bind_group(
-            &device,
-            &vertex_emitter_layout,
-            &vertex_emitter_buffer,
-            binding,
         );
-        let render_pipeline = create_particle_render_pipeline(
-            &device,
-            &config,
-            &[
-                &texture_layout,
-                &vertex_particle_layout,
-                &vertex_emitter_layout,
-            ],
-        );
-
-        let compute_emitter_uniform = ComputeEmitterUniform::new(&config, &emitter);
-        let compute_emitter_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("particles"),
-            contents: bytemuck::cast_slice(&[compute_emitter_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let binding = 0;
-        let compute_emitter_layout =
-            new_transform_bind_group_layout(&device, binding, wgpu::ShaderStages::COMPUTE);
-        let compute_emitter_bind_group = new_transform_bind_group(
-            &device,
-            &compute_emitter_layout,
-            &compute_emitter_buffer,
-            binding,
-        );
-        let shader = wgpu::ShaderModuleDescriptor {
-            label: Some("particle compute"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/particles_compute.wgsl").into()),
-        };
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("particle compute"),
-            bind_group_layouts: &[&compute_particle_layout, &compute_emitter_layout],
-            push_constant_ranges: &[],
-        });
-        let compute_pipeline =
-            create_compute_pipeline("particle compute", &device, &layout, shader, "main");
-
-        Self {
-            render_pipeline,
-            compute_pipeline,
-
-            vertex_emitter_uniform,
-            vertex_emitter_buffer,
-            vertex_emitter_bind_group,
-            vertex_particle_binding,
-            vertex_particle_buffer,
-
-            compute_emitter_uniform,
-            compute_emitter_buffer,
-            compute_emitter_bind_group,
-            compute_particle_buffer,
-            compute_particle_binding,
-
-            alive_index_buffer,
-            alive_indexes,
-            // dead_index_buffer,
-            dead_indexes,
-
-            texture_binding,
-        }
-    }
-}
-
-fn bind_new_particle_bundles(
-    mut commands: Commands,
-    device: Res<RenderDevice>,
-    config: Res<RenderConfig>,
-    queue: Res<RenderQueue>,
-    bundles: Query<
-        (Entity, Handle<Texture>, Transform, ParticleEmitter),
-        Without<ParticlePipeline>,
-    >,
-    textures: Res<Assets<Texture>>,
-    delta: Res<DeltaTime>,
-) {
-    for (entity, handle, transform, emitter) in bundles.iter() {
-        if let Some(texture) = textures.get(handle) {
-            let mut particle_render_pipeline = ParticlePipeline::new(
-                emitter,
-                &device,
-                &config,
-                &transform,
-                &texture,
-                emitter.num_particles,
-            );
-            init_emitter(
-                emitter,
-                &mut particle_render_pipeline,
-                &queue,
-                &delta,
-                &config,
-            );
-
-            let dimensions = TextureDimensions::from_texture(&texture);
-            commands
-                .get_entity(entity)
-                .insert((particle_render_pipeline, dimensions));
-        }
     }
 }
 
 #[derive(WinnyBundle)]
-pub struct ParticleBundle {
+pub struct ParticleBundle<M: Material = Material2d> {
     pub emitter: ParticleEmitter,
+    pub material: M,
     pub handle: Handle<Texture>,
 }
 
@@ -334,34 +94,99 @@ impl ParticleEmitter {
         emitter_transform: &Transform,
         texture: &TextureDimensions,
     ) -> Matrix4x4f {
-        let scale = scale_matrix4x4f(self.particle_scale);
-        let t_scale = scale_matrix4x4f(emitter_transform.scale);
-        let rotation = rotation_2d_matrix4x4f(self.particle_rotation);
-        let t_rotation = Matrix4::from(emitter_transform.rotation);
-        let t_rotation = Matrix4x4f {
-            m: t_rotation.into(),
-        };
-
-        let world_to_screen_space =
-            world_to_screen_space_matrix4x4f(config.widthf(), config.heightf());
-        let t_translation = translation_matrix4x4f(
-            world_to_screen_space * Vec4f::to_homogenous(emitter_transform.translation),
-        );
-
-        let normalized_scale = Vec2f::new(
+        let angle: Radf = self.particle_rotation.into();
+        let texture_scale = Vec2f::new(
             texture.width() / config.width() as f32,
             texture.height() / config.height() as f32,
         );
-        let image_scale = scale_matrix4x4f(normalized_scale);
+        let local_transformation = Transform {
+            translation: Vec3f::zero(),
+            rotation: Quaternion::from_angle_z(Rad(angle.0)),
+            scale: self.particle_scale * texture_scale,
+        };
 
-        // Apply entity's Transform first, then apply local transformations. Allows for rotation
-        // about the translation of the Transform.
-        t_translation * t_scale * t_rotation * scale * rotation * image_scale
+        emitter_transform.as_matrix() * local_transformation.as_matrix()
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct VertexEmitterUniform {
+    emitter_transform: Matrix4x4f,
+}
+
+unsafe impl AsGpuBuffer for VertexEmitterUniform {}
+
+impl AsBindGroup for &[VertexEmitterUniform] {
+    const LABEL: &'static str = "vertex emitter uniform";
+    const BINDING_TYPES: &'static [wgpu::BindingType] = &[bind_group::UNIFORM];
+    const VISIBILITY: &'static [wgpu::ShaderStages] = &[wgpu::ShaderStages::VERTEX];
+}
+
+impl VertexEmitterUniform {
+    pub fn new(
+        emitter: &ParticleEmitter,
+        context: &RenderContext,
+        emitter_transform: &Transform,
+        texture_dimensions: &TextureDimensions,
+    ) -> Self {
+        Self {
+            emitter_transform: emitter.particle_transformation_matrix(
+                &context.config,
+                emitter_transform,
+                texture_dimensions,
+            ),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct ComputeEmitterUniform {
+    initial_velocity: Vec4f,
+    acceleration: Vec4f,
+    time_delta: f32,
+    time_elapsed: f32,
+    width: f32,
+    height: f32,
+    max_lifetime: f32,
+    min_lifetime: f32,
+    screen_width: f32,
+    screen_height: f32,
+}
+
+unsafe impl AsGpuBuffer for ComputeEmitterUniform {}
+
+impl AsBindGroup for &[ComputeEmitterUniform] {
+    const LABEL: &'static str = "compute emitter uniform";
+    const BINDING_TYPES: &'static [wgpu::BindingType] = &[bind_group::UNIFORM];
+    const VISIBILITY: &'static [wgpu::ShaderStages] = &[wgpu::ShaderStages::COMPUTE];
+}
+
+impl ComputeEmitterUniform {
+    pub fn new(
+        emitter: &ParticleEmitter,
+        context: &RenderContext,
+        emitter_transform: &Transform,
+        dt: &DeltaTime,
+    ) -> Self {
+        Self {
+            initial_velocity: Vec4f::to_homogenous(emitter.initial_velocity),
+            acceleration: Vec4f::to_homogenous(emitter.acceleration),
+            time_delta: dt.delta,
+            time_elapsed: dt.wrapping_elapsed_as_seconds(),
+            width: emitter.width / context.config.width() as f32 * emitter_transform.scale.v[0],
+            height: emitter.height / context.config.height() as f32 * emitter_transform.scale.v[1],
+            min_lifetime: emitter.lifetime.start,
+            max_lifetime: emitter.lifetime.end,
+            screen_width: context.config.width() as f32,
+            screen_height: context.config.height() as f32,
+        }
     }
 }
 
 /// Defines the ParticleInstance stored within the GPU particle buffer. The acceleration and
-/// velocity are in world space.
+/// velocity are in world space, whereas the translation is in clip space.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct RawParticle {
@@ -373,6 +198,14 @@ pub struct RawParticle {
     creation_time: f32,
     // Seconds
     lifetime: f32,
+}
+
+unsafe impl AsGpuBuffer for RawParticle {}
+
+impl AsBindGroup for &[RawParticle] {
+    const LABEL: &'static str = "raw particle";
+    const BINDING_TYPES: &'static [wgpu::BindingType] = &[bind_group::READ_WRITE_STORAGE];
+    const VISIBILITY: &'static [wgpu::ShaderStages] = &[wgpu::ShaderStages::COMPUTE];
 }
 
 impl RawParticle {
@@ -395,26 +228,190 @@ impl RawParticle {
     }
 }
 
-fn init_emitter(
-    emitter: &ParticleEmitter,
-    pipeline: &mut ParticlePipeline,
-    queue: &RenderQueue,
-    delta: &DeltaTime,
-    config: &RenderConfig,
-) {
-    let particles = generate_particles_with_conditions(emitter, delta, config);
-    queue.write_buffer(
-        &pipeline.compute_particle_buffer,
-        0,
-        bytemuck::cast_slice(&particles),
-    );
+/// [`RawParticle`] type for `read_only` GPU storage.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ReadOnlyRawParticle {
+    translation: Vec4f,
+    velocity: Vec4f,
+    acceleration: Vec4f,
+    scale: Vec2f,
+    /// From [`DeltaTime`] elapsed
+    creation_time: f32,
+    // Seconds
+    lifetime: f32,
+}
 
-    pipeline.alive_indexes = (0..emitter.num_particles as u32).collect();
-    queue.write_buffer(
-        &pipeline.alive_index_buffer,
-        0,
-        bytemuck::cast_slice(&pipeline.alive_indexes),
-    );
+unsafe impl AsGpuBuffer for ReadOnlyRawParticle {}
+
+impl AsBindGroup for &[ReadOnlyRawParticle] {
+    const LABEL: &'static str = "read only raw particle";
+    const BINDING_TYPES: &'static [wgpu::BindingType] = &[bind_group::READ_ONLY_STORAGE];
+    const VISIBILITY: &'static [wgpu::ShaderStages] = &[wgpu::ShaderStages::VERTEX];
+}
+
+impl From<&RawParticle> for ReadOnlyRawParticle {
+    fn from(value: &RawParticle) -> Self {
+        // Safety:
+        //     RawParticle and ReadOnlyRawParticle are both repr(C) with the same fields in the
+        //     same order
+        unsafe { std::mem::transmute(*value) }
+    }
+}
+
+#[derive(WinnyComponent)]
+pub struct ParticlePipeline<T: Material> {
+    material: T,
+    material_resources: Vec<WgpuResource>,
+    material_binding: wgpu::BindGroup,
+    render_pipeline: wgpu::RenderPipeline,
+    compute_pipeline: wgpu::ComputePipeline,
+    particle_vertex_buffer: wgpu::Buffer,
+    vertex_emitter_buffer: wgpu::Buffer,
+    vertex_emitter_binding: wgpu::BindGroup,
+    vertex_particle_binding: wgpu::BindGroup,
+    vertex_particle_buffer: wgpu::Buffer,
+    compute_emitter_buffer: wgpu::Buffer,
+    compute_emitter_binding: wgpu::BindGroup,
+    compute_particle_binding: wgpu::BindGroup,
+    compute_particle_buffer: wgpu::Buffer,
+    alive_index_buffer: wgpu::Buffer,
+    buffer_len: u32,
+}
+
+// TODO: does not share texture bindings
+impl<M: Material> ParticlePipeline<M> {
+    pub fn new<'s>(
+        material: M,
+        emitter: &ParticleEmitter,
+        buffer_len: u32,
+        context: &RenderContext,
+        texture: &Texture,
+        emitter_transform: &Transform,
+        delta: &DeltaTime,
+    ) -> Self {
+        let (material_resources, material_layout, material_binding) =
+            <M as AsBindGroup>::as_entire_binding(
+                context,
+                material.clone(),
+                &material.resource_state(texture),
+            );
+
+        let vertices = FULLSCREEN_QUAD_VERTEX_UV;
+        let (_, particle_vertex_buffer, particle_vertex_layout) =
+            <VertexUv as VertexBuffer<0, VertexUv, VertexUv>>::as_entire_buffer(
+                &context,
+                &vertices,
+                &(),
+                wgpu::BufferUsages::VERTEX,
+            );
+
+        let particles = generate_particles_with_conditions(emitter, delta, &context.config);
+
+        // ) -> (Vec<WgpuResource>, wgpu::BindGroupLayout, wgpu::BindGroup) {
+        let (vertex_particle_buffer, vertex_particle_layout, vertex_particle_binding) =
+            <&[ReadOnlyRawParticle] as AsBindGroup>::as_entire_binding_single_buffer(
+                context,
+                &particles.iter().map(|p| p.into()).collect::<Vec<_>>(),
+                &(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
+            );
+
+        let (compute_particle_buffer, compute_particle_layout, compute_particle_binding) =
+            <&[RawParticle] as AsBindGroup>::as_entire_binding_single_buffer(
+                context,
+                &particles,
+                &(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC),
+            );
+
+        let alive_indexes = (0..buffer_len)
+            .map(|i| InstanceIndex(i))
+            .collect::<Vec<_>>();
+        let (_, alive_index_buffer, alive_index_layout) =
+            <InstanceIndex as VertexBuffer<2, InstanceIndex, u32>>::as_entire_buffer(
+                &context,
+                &alive_indexes,
+                &(),
+                wgpu::BufferUsages::VERTEX,
+            );
+
+        let vertex_emitter_uniform = VertexEmitterUniform::new(
+            emitter,
+            context,
+            emitter_transform,
+            &TextureDimensions::from_texture(texture),
+        );
+        let (vertex_emitter_buffer, vertex_emitter_layout, vertex_emitter_binding) =
+            <&[VertexEmitterUniform] as AsBindGroup>::as_entire_binding_single_buffer(
+                context,
+                &[vertex_emitter_uniform],
+                &(wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST),
+            );
+
+        let render_pipeline = create_particle_render_pipeline(
+            &context.device,
+            &context.config,
+            &[
+                &vertex_emitter_layout,
+                &vertex_particle_layout,
+                &material_layout,
+            ],
+            &[particle_vertex_layout, alive_index_layout],
+            material.fragment_shader(),
+        );
+
+        let compute_emitter_uniform =
+            ComputeEmitterUniform::new(emitter, context, emitter_transform, delta);
+        let (compute_emitter_buffer, compute_emitter_layout, compute_emitter_binding) =
+            <&[ComputeEmitterUniform] as AsBindGroup>::as_entire_binding_single_buffer(
+                context,
+                &[compute_emitter_uniform],
+                &(wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST),
+            );
+
+        let compute_shader = wgpu::ShaderModuleDescriptor {
+            label: Some("particle compute"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/particles_compute.wgsl").into()),
+        };
+        let compute_layout =
+            context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("particle compute"),
+                    bind_group_layouts: &[&compute_particle_layout, &compute_emitter_layout],
+                    push_constant_ranges: &[],
+                });
+        let compute_shader = context.device.create_shader_module(compute_shader);
+
+        let compute_pipeline =
+            context
+                .device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("particle compute"),
+                    layout: Some(&compute_layout),
+                    module: &compute_shader,
+                    entry_point: "main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                });
+
+        Self {
+            material,
+            material_resources,
+            material_binding,
+            render_pipeline,
+            compute_pipeline,
+            particle_vertex_buffer,
+            vertex_emitter_buffer,
+            vertex_emitter_binding,
+            vertex_particle_binding,
+            vertex_particle_buffer,
+            compute_emitter_buffer,
+            compute_emitter_binding,
+            compute_particle_buffer,
+            compute_particle_binding,
+            alive_index_buffer,
+            buffer_len,
+        }
+    }
 }
 
 fn generate_particles_with_conditions(
@@ -442,10 +439,42 @@ fn generate_particles_with_conditions(
     particles
 }
 
+fn bind_new_particle_bundles<M: Material>(
+    mut commands: Commands,
+    context: Res<RenderContext>,
+    bundles: Query<
+        (Entity, Handle<Texture>, Transform, ParticleEmitter, M),
+        Without<ParticlePipeline<M>>,
+    >,
+    textures: Res<Assets<Texture>>,
+    delta: Res<DeltaTime>,
+) {
+    for (entity, handle, transform, emitter, material) in bundles.iter() {
+        if let Some(texture) = textures.get(handle) {
+            let particle_render_pipeline = ParticlePipeline::new(
+                material.clone(),
+                emitter,
+                emitter.num_particles as u32,
+                &context,
+                &texture,
+                &transform,
+                &delta,
+            );
+
+            let dimensions = TextureDimensions::from_texture(&texture);
+            commands
+                .get_entity(entity)
+                .insert((particle_render_pipeline, dimensions));
+        }
+    }
+}
+
 fn create_particle_render_pipeline(
     device: &RenderDevice,
     config: &RenderConfig,
     bind_group_layouts: &[&wgpu::BindGroupLayout],
+    vertex_layouts: &[wgpu::VertexBufferLayout<'static>],
+    frag_shader: &'static str,
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("particles"),
@@ -453,80 +482,91 @@ fn create_particle_render_pipeline(
         push_constant_ranges: &[],
     });
 
-    let shader = wgpu::ShaderModuleDescriptor {
-        label: Some("particles"),
+    let vert_shader = wgpu::ShaderModuleDescriptor {
+        label: Some("particles vert"),
         source: wgpu::ShaderSource::Wgsl(include_str!("shaders/particles.wgsl").into()),
     };
 
-    create_render_pipeline(
-        "particles",
-        &device,
-        &layout,
-        config.format,
-        None,
-        &[alive_index_layout()],
-        shader,
-        true,
-    )
+    let frag_shader = wgpu::ShaderModuleDescriptor {
+        label: Some("particles frag"),
+        source: wgpu::ShaderSource::Wgsl(frag_shader.into()),
+    };
+
+    let vert_shader = device.create_shader_module(vert_shader);
+    let frag_shader = device.create_shader_module(frag_shader);
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("particles"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &vert_shader,
+            entry_point: "vs_main",
+            buffers: vertex_layouts,
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &frag_shader,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format(),
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+            polygon_mode: wgpu::PolygonMode::Fill,
+            // Requires Features::DEPTH_CLIP_CONTROL
+            unclipped_depth: false,
+            // Requires Features::CONSERVATIVE_RASTERIZATION
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+        // cache: None,
+    })
 }
 
-fn alive_index_layout() -> wgpu::VertexBufferLayout<'static> {
-    wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<u32>() as wgpu::BufferAddress,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &[wgpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: wgpu::VertexFormat::Uint32,
-        }],
-    }
-}
-
-fn update_emitter_transforms(
+fn update_emitter_uniforms<M: Material>(
     mut emitters: Query<(
-        Mut<ParticlePipeline>,
+        Mut<ParticlePipeline<M>>,
         Transform,
         ParticleEmitter,
         TextureDimensions,
     )>,
-    queue: Res<RenderQueue>,
     dt: Res<DeltaTime>,
-    config: Res<RenderConfig>,
+    context: Res<RenderContext>,
 ) {
     for (pipeline, transform, emitter, dimensions) in emitters.iter_mut() {
-        pipeline.vertex_emitter_uniform.particle_transform =
-            emitter.particle_transformation_matrix(&config, transform, dimensions);
-
-        queue.write_buffer(
+        let vertex_emitter = VertexEmitterUniform::new(emitter, &context, transform, dimensions);
+        VertexEmitterUniform::write_buffer(
+            &context,
             &pipeline.vertex_emitter_buffer,
-            0,
-            bytemuck::cast_slice(&[pipeline.vertex_emitter_uniform]),
+            &[vertex_emitter],
         );
 
-        pipeline.compute_emitter_uniform = ComputeEmitterUniform {
-            initial_velocity: Vec4f::to_homogenous(emitter.initial_velocity),
-            acceleration: Vec4f::to_homogenous(emitter.acceleration),
-            time_delta: dt.delta,
-            time_elapsed: dt.wrapping_elapsed_as_seconds(),
-            width: emitter.width / config.width() as f32 * transform.scale.v[0],
-            height: emitter.height / config.height() as f32 * transform.scale.v[1],
-            min_lifetime: emitter.lifetime.start,
-            max_lifetime: emitter.lifetime.end,
-            screen_width: config.width() as f32,
-            screen_height: config.height() as f32,
-        };
-
-        queue.write_buffer(
+        let compute_emitter = ComputeEmitterUniform::new(emitter, &context, transform, &dt);
+        ComputeEmitterUniform::write_buffer(
+            &context,
             &pipeline.compute_emitter_buffer,
-            0,
-            bytemuck::cast_slice(&[pipeline.compute_emitter_uniform]),
+            &[compute_emitter],
         );
     }
 }
 
-fn compute_emitters(
+fn compute_emitters<M: Material>(
     mut encoder: ResMut<RenderEncoder>,
-    emitters: Query<(ParticlePipeline, ParticleEmitter), With<Transform>>,
+    emitters: Query<(ParticlePipeline<M>, ParticleEmitter), With<Transform>>,
 ) {
     for (pipeline, emitter) in emitters.iter() {
         {
@@ -537,7 +577,7 @@ fn compute_emitters(
 
             compute_pass.set_pipeline(&pipeline.compute_pipeline);
             compute_pass.set_bind_group(0, &pipeline.compute_particle_binding, &[]);
-            compute_pass.set_bind_group(1, &pipeline.compute_emitter_bind_group, &[]);
+            compute_pass.set_bind_group(1, &pipeline.compute_emitter_binding, &[]);
             compute_pass.dispatch_workgroups(emitter.num_particles as u32, 1, 1);
         }
 
@@ -551,10 +591,10 @@ fn compute_emitters(
     }
 }
 
-fn render_emitters(
+fn render_emitters<M: Material>(
     mut encoder: ResMut<RenderEncoder>,
     view: Res<RenderView>,
-    emitters: Query<(ParticlePipeline, ParticleEmitter), With<Transform>>,
+    emitters: Query<(ParticlePipeline<M>, ParticleEmitter), With<Transform>>,
 ) {
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("particles"),
@@ -573,10 +613,11 @@ fn render_emitters(
 
     for (pipeline, _) in emitters.iter().filter(|(_, e)| e.is_emitting) {
         render_pass.set_pipeline(&pipeline.render_pipeline);
-        render_pass.set_vertex_buffer(0, pipeline.alive_index_buffer.slice(..));
-        render_pass.set_bind_group(0, &pipeline.texture_binding, &[]);
+        render_pass.set_vertex_buffer(0, pipeline.particle_vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, pipeline.alive_index_buffer.slice(..));
+        render_pass.set_bind_group(0, &pipeline.vertex_emitter_binding, &[]);
         render_pass.set_bind_group(1, &pipeline.vertex_particle_binding, &[]);
-        render_pass.set_bind_group(2, &pipeline.vertex_emitter_bind_group, &[]);
-        render_pass.draw(0..3, 0..pipeline.alive_indexes.len() as u32);
+        render_pass.set_bind_group(2, &pipeline.material_binding, &[]);
+        render_pass.draw(0..6, 0..pipeline.buffer_len);
     }
 }

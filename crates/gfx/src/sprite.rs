@@ -1,32 +1,30 @@
 use crate::create_read_only_storage_bind_group;
-use crate::texture::TextureAtlas;
+use crate::render_pipeline::bind_group::{AsBindGroup, FragTexture};
+use crate::render_pipeline::vertex::{VertexLayout, VertexUv, FULLSCREEN_QUAD_VERTEX_UV};
+use crate::texture::{SamplerFilterType, TextureAtlas};
 use crate::texture::{Texture, TextureDimensions};
 use crate::transform::Transform;
-use crate::vertex::{VertexLayout, VertexUv, FULLSCREEN_QUAD_VERTEX_UV};
 use app::app::{AppSchedule, Schedule};
 use app::plugins::Plugin;
 use app::time::DeltaTime;
 use app::window::{ViewPort, Window};
 use asset::AssetId;
 use asset::{Assets, Handle};
-use cgmath::Matrix4;
+use cgmath::{Quaternion, Rad, Rotation3};
 use ecs::prelude::*;
 use ecs::SparseArrayIndex;
 use ecs::SparseSet;
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
 use fxhash::FxHashMap;
 use render::{
-    BindGroupHandle, BindGroups, RenderBindGroup, RenderConfig, RenderDevice, RenderEncoder,
-    RenderQueue, RenderView,
+    BindGroupHandle, BindGroups, RenderBindGroup, RenderConfig, RenderContext, RenderDevice,
+    RenderEncoder, RenderView,
 };
 use std::ops::Range;
 use wgpu::util::DeviceExt;
-use winny_math::angle::Degrees;
-use winny_math::matrix::{
-    rotation_2d_matrix4x4f, scale_matrix4x4f, translation_matrix4x4f,
-    world_to_screen_space_matrix4x4f, Matrix4x4f,
-};
-use winny_math::vector::{Vec2f, Vec3f, Vec4f};
+use winny_math::angle::{Degrees, Radf};
+use winny_math::matrix::{scale_matrix4x4f, Matrix4x4f};
+use winny_math::vector::{Vec2f, Vec3f};
 
 #[derive(Default)]
 pub struct SpritePlugin {
@@ -72,23 +70,25 @@ impl Plugin for SpritePlugin {
     }
 }
 
-fn startup(mut commands: Commands, device: Res<RenderDevice>, config: Res<RenderConfig>) {
-    let sprite_renderer = SpriteRenderer::new(&device, &config);
+fn startup(mut commands: Commands, context: Res<RenderContext>) {
+    let sprite_renderer = SpriteRenderer::new(&context);
     commands.insert_resource(sprite_renderer);
 }
 
 fn create_sprite_render_pipeline(
-    device: &RenderDevice,
-    config: &RenderConfig,
+    context: &RenderContext,
     layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
-    let sprite_bind_group_layout = Texture::new_layout(device, None, wgpu::ShaderStages::FRAGMENT);
+    let sprite_bind_group_layout = FragTexture::layout(&context);
 
-    let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[&sprite_bind_group_layout, layout],
-        push_constant_ranges: &[],
-    });
+    let render_pipeline_layout =
+        context
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[layout, &sprite_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
     let shader = wgpu::ShaderModuleDescriptor {
         label: Some("Shader"),
@@ -97,15 +97,14 @@ fn create_sprite_render_pipeline(
 
     crate::create_render_pipeline(
         "sprites",
-        &device,
+        &context.device,
         &render_pipeline_layout,
-        config.format(),
+        context.config.format(),
         None,
         &[
-            VertexUv::layout(),
-            SpriteInstance::layout(),
-            // Transform
-            Matrix4x4f::layout(),
+            <VertexUv as VertexLayout<0>>::layout(),
+            <SpriteInstance as VertexLayout<2>>::layout(),
+            <Matrix4x4f as VertexLayout<4>>::layout(),
         ],
         shader,
         true,
@@ -125,8 +124,8 @@ pub struct SpriteRenderer {
 }
 
 impl SpriteRenderer {
-    pub fn new(device: &RenderDevice, config: &RenderConfig) -> Self {
-        let atlas_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
+    pub fn new(context: &RenderContext) -> Self {
+        let atlas_uniforms = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("atlas uniforms"),
             size: 12,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
@@ -135,29 +134,29 @@ impl SpriteRenderer {
 
         let (layout, atlas_uniform_bind_group) = create_read_only_storage_bind_group(
             Some("atlas uniforms"),
-            &device,
+            &context.device,
             &atlas_uniforms,
             wgpu::ShaderStages::VERTEX,
             0,
         );
 
-        let pipeline = create_sprite_render_pipeline(device, config, &layout);
+        let pipeline = create_sprite_render_pipeline(context, &layout);
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprite vertexes"),
             size: 0,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let sprite_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let sprite_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprite instances"),
             size: 0,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let transform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let transform_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprite transform"),
             size: 0,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
@@ -185,9 +184,7 @@ struct AtlasUniform {
 
 pub fn prepare_for_render_pass(
     mut sprite_renderer: ResMut<SpriteRenderer>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
-    config: Res<RenderConfig>,
+    context: Res<RenderContext>,
     sprites: Query<(
         Sprite,
         Transform,
@@ -224,7 +221,9 @@ pub fn prepare_for_render_pass(
         .collect();
     let atlas_data = bytemuck::cast_slice(&atlas_data);
     if atlas_data.len() <= sprite_renderer.atlas_uniforms.size() as usize {
-        queue.write_buffer(&sprite_renderer.atlas_uniforms, 0, atlas_data);
+        context
+            .queue
+            .write_buffer(&sprite_renderer.atlas_uniforms, 0, atlas_data);
     } else {
         util::tracing::trace!(
             "allocating larger sprite atlas uniform buffer. current size: {}, new size: {}",
@@ -233,15 +232,17 @@ pub fn prepare_for_render_pass(
         );
 
         sprite_renderer.atlas_uniforms =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sprite atlas uiform"),
-                contents: atlas_data,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
+            context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite atlas uiform"),
+                    contents: atlas_data,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
 
         let (_, atlas_uniform_bind_group) = create_read_only_storage_bind_group(
             Some("atlas uniforms"),
-            &device,
+            &context.device,
             &sprite_renderer.atlas_uniforms,
             wgpu::ShaderStages::VERTEX,
             0,
@@ -257,7 +258,9 @@ pub fn prepare_for_render_pass(
     let vertex_data = bytemuck::cast_slice(&vertex_data);
 
     if vertex_data.len() <= sprite_renderer.vertex_buffer.size() as usize {
-        queue.write_buffer(&sprite_renderer.vertex_buffer, 0, vertex_data);
+        context
+            .queue
+            .write_buffer(&sprite_renderer.vertex_buffer, 0, vertex_data);
     } else {
         util::tracing::trace!(
             "allocating larger sprite vertex buffer. current size: {}, new size: {}",
@@ -266,11 +269,13 @@ pub fn prepare_for_render_pass(
         );
 
         sprite_renderer.vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sprite vertex"),
-                contents: vertex_data,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite vertex"),
+                    contents: vertex_data,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
     }
 
     let sprite_data = sprites
@@ -280,7 +285,9 @@ pub fn prepare_for_render_pass(
     let sprite_data = bytemuck::cast_slice(&sprite_data);
 
     if sprite_data.len() <= sprite_renderer.sprite_buffer.size() as usize {
-        queue.write_buffer(&sprite_renderer.sprite_buffer, 0, sprite_data);
+        context
+            .queue
+            .write_buffer(&sprite_renderer.sprite_buffer, 0, sprite_data);
     } else {
         util::tracing::trace!(
             "allocating larger sprite instance buffer. current size: {}, new size: {}",
@@ -289,21 +296,25 @@ pub fn prepare_for_render_pass(
         );
 
         sprite_renderer.sprite_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sprite instance"),
-                contents: sprite_data,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite instance"),
+                    contents: sprite_data,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
     }
 
     let transform_data = sprites
         .iter()
-        .map(|(s, t, _, _, _)| s.transformation_matrix(t, &config))
+        .map(|(s, t, _, _, _)| s.transformation_matrix(t))
         .collect::<Vec<_>>();
     let transform_data = bytemuck::cast_slice(&transform_data);
 
     if transform_data.len() <= sprite_renderer.transform_buffer.size() as usize {
-        queue.write_buffer(&sprite_renderer.transform_buffer, 0, transform_data);
+        context
+            .queue
+            .write_buffer(&sprite_renderer.transform_buffer, 0, transform_data);
     } else {
         util::tracing::trace!(
             "allocating larger sprite transform buffer. current size: {}, new size: {}",
@@ -312,11 +323,13 @@ pub fn prepare_for_render_pass(
         );
 
         sprite_renderer.transform_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sprite transform"),
-                contents: transform_data,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite transform"),
+                    contents: transform_data,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
     }
 }
 
@@ -350,7 +363,7 @@ impl TextureAtlasBindGroups {
 
 // TODO: Event driven updates
 pub fn update_sprite_atlas_bind_groups(
-    device: Res<RenderDevice>,
+    context: Res<RenderContext>,
     mut sprites: Query<
         (
             Handle<TextureAtlas>,
@@ -366,10 +379,10 @@ pub fn update_sprite_atlas_bind_groups(
         if let Some(asset) = texture_atlases.get(&atlas) {
             let new_dimensions = TextureDimensions::from_texture_atlas(&asset.asset);
             let new_handle = bind_groups.get_handle_or_insert_with(atlas.id(), || {
-                let (_, binding) = asset.asset.texture.new_binding(
-                    &device,
-                    Some("animated sprite"),
-                    wgpu::ShaderStages::FRAGMENT,
+                let (_, _, binding) = FragTexture::as_entire_binding(
+                    &context,
+                    FragTexture(&asset.asset.texture),
+                    &SamplerFilterType::Nearest,
                 );
                 RenderBindGroup(binding)
             });
@@ -420,7 +433,7 @@ fn render_sprites(
     // sorted by bind group handle
     render_pass.set_vertex_buffer(2, sprite_renderer.transform_buffer.slice(..));
     // sorted by bind group handle
-    render_pass.set_bind_group(1, &sprite_renderer.atlas_uniform_bind_group, &[]);
+    render_pass.set_bind_group(0, &sprite_renderer.atlas_uniform_bind_group, &[]);
 
     let mut offset = 0;
     let previous_bind_index = usize::MAX;
@@ -432,7 +445,7 @@ fn render_sprites(
                 bind_groups.get(**handle).unwrap()
             };
 
-            render_pass.set_bind_group(0, binding, &[]);
+            render_pass.set_bind_group(1, binding, &[]);
         }
 
         render_pass.draw(
@@ -458,7 +471,7 @@ pub struct AnimatedSpriteBundle {
 
 pub fn bind_new_animated_sprite_bundles(
     mut commands: Commands,
-    device: Res<RenderDevice>,
+    context: Res<RenderContext>,
     sprites: Query<
         (Entity, Handle<TextureAtlas>),
         (
@@ -473,10 +486,10 @@ pub fn bind_new_animated_sprite_bundles(
         if let Some(asset) = texture_atlases.get(&handle) {
             let new_dimensions = TextureDimensions::from_texture_atlas(&asset.asset);
             let handle = bind_groups.get_handle_or_insert_with(handle.id(), || {
-                let (_, binding) = asset.asset.texture.new_binding(
-                    &device,
-                    Some("animated sprite"),
-                    wgpu::ShaderStages::FRAGMENT,
+                let (_, _, binding) = FragTexture::as_entire_binding(
+                    &context,
+                    FragTexture(&asset.asset.texture),
+                    &SamplerFilterType::Nearest,
                 );
                 RenderBindGroup(binding)
             });
@@ -487,7 +500,7 @@ pub fn bind_new_animated_sprite_bundles(
 
 pub fn bind_new_sprite_bundles(
     mut commands: Commands,
-    device: Res<RenderDevice>,
+    context: Res<RenderContext>,
     sprites: Query<
         (Entity, Handle<Texture>),
         (With<Sprite>, Without<(BindGroupHandle, TextureDimensions)>),
@@ -499,10 +512,11 @@ pub fn bind_new_sprite_bundles(
         if let Some(asset) = textures.get(&handle) {
             let dimensions = TextureDimensions::from_texture(asset);
             let handle = bind_groups.get_handle_or_insert_with(&asset.path, || {
-                let (_, binding) =
-                    asset
-                        .asset
-                        .new_binding(&device, Some("sprite"), wgpu::ShaderStages::FRAGMENT);
+                let (_, _, binding) = FragTexture::as_entire_binding(
+                    &context,
+                    FragTexture(&asset.asset),
+                    &SamplerFilterType::Nearest,
+                );
                 RenderBindGroup(binding)
             });
             commands.get_entity(entity).insert((handle, dimensions));
@@ -543,30 +557,15 @@ impl Sprite {
     }
 
     /// Combines the entity transformation with the local transformation.
-    pub(crate) fn transformation_matrix(
-        &self,
-        transform: &Transform,
-        config: &RenderConfig,
-    ) -> Matrix4x4f {
-        let scale = scale_matrix4x4f(self.scale);
-        let t_scale = scale_matrix4x4f(transform.scale);
-        let rotation = rotation_2d_matrix4x4f(self.rotation);
-        let t_rotation = Matrix4::from(transform.rotation);
-        let t_rotation = Matrix4x4f {
-            m: t_rotation.into(),
+    pub(crate) fn transformation_matrix(&self, transform: &Transform) -> Matrix4x4f {
+        let angle: Radf = self.rotation.into();
+        let local_transformation = Transform {
+            translation: self.position,
+            rotation: Quaternion::from_angle_z(Rad(angle.0)),
+            scale: self.scale,
         };
 
-        let world_to_screen_space =
-            world_to_screen_space_matrix4x4f(config.widthf(), config.heightf());
-        let translation =
-            translation_matrix4x4f(world_to_screen_space * Vec4f::to_homogenous(self.position));
-        let t_translation = translation_matrix4x4f(
-            world_to_screen_space * Vec4f::to_homogenous(transform.translation),
-        );
-
-        // Apply entity's Transform first, then apply local transformations. Allows for rotation
-        // about the translation of the Transform.
-        t_translation * t_scale * t_rotation * translation * scale * rotation
+        transform.as_matrix() * local_transformation.as_matrix()
     }
 
     /// Creates a fullscreen quad, then scales about the origin for a one-to-one pixel size related
@@ -698,7 +697,7 @@ pub struct SpriteInstance {
     flip_h: f32,
 }
 
-impl VertexLayout for SpriteInstance {
+impl<const Offset: u32> VertexLayout<Offset> for SpriteInstance {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
         wgpu::VertexBufferLayout {
@@ -707,12 +706,12 @@ impl VertexLayout for SpriteInstance {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: 2,
+                    shader_location: Offset,
                     format: wgpu::VertexFormat::Float32,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<f32>() as wgpu::BufferAddress,
-                    shader_location: 3,
+                    shader_location: Offset + 1,
                     format: wgpu::VertexFormat::Float32,
                 },
             ],
