@@ -28,11 +28,10 @@ impl Plugin for RendererPlugin {
 
         app.register_resource::<Renderer>()
             .register_resource::<RenderView>()
+            .register_resource::<RenderContext>()
             .register_resource::<RenderOutput>()
             .register_resource::<RenderEncoder>()
-            .register_resource::<RenderQueue>()
-            .register_resource::<RenderDevice>()
-            .register_resource::<RenderConfig>()
+            .register_resource::<RenderContext>()
             .insert_resource(BindGroups::default())
             // .insert_resource(Buffers::default())
             .add_systems(AppSchedule::Resized, resize)
@@ -70,14 +69,14 @@ fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>) {
 
 fn startup(mut commands: Commands, window: Res<Window>) {
     let (device, queue, renderer) = Renderer::new(Arc::clone(&window.winit_window));
-    let config = renderer.config();
-    trace!("Render startup: {:?}", config);
 
-    commands
-        .insert_resource(RenderQueue(Arc::new(queue)))
-        .insert_resource(RenderDevice(Arc::new(device)))
-        .insert_resource(config)
-        .insert_resource(renderer);
+    let context = RenderContext {
+        device: RenderDevice(Arc::new(device)),
+        queue: RenderQueue(Arc::new(queue)),
+        config: RenderConfig::from_config(&renderer.config),
+    };
+
+    commands.insert_resource(context).insert_resource(renderer);
 }
 
 /// Handle to the [`wgpu::Surface`]. Used to present the active [`RenderOutput`].
@@ -162,31 +161,18 @@ impl Renderer {
             self.surface.configure(&device, &self.config);
         }
     }
-
-    pub fn config(&self) -> RenderConfig {
-        RenderConfig::from_config(&self.config)
-    }
-
-    pub fn surface_config(&self) -> &wgpu::SurfaceConfiguration {
-        &self.config
-    }
-
-    pub fn size(&self) -> (u32, u32) {
-        (self.config.width, self.config.height)
-    }
 }
 
 fn resize(
     mut renderer: ResMut<Renderer>,
-    mut config: ResMut<RenderConfig>,
-    device: Res<RenderDevice>,
+    mut context: ResMut<RenderContext>,
     resized: Res<WindowResized>,
 ) {
-    renderer.resize(&device, resized.0, resized.1);
-    *config = RenderConfig::from_config(&renderer.config);
+    renderer.resize(&context.device, resized.0, resized.1);
+    context.config = RenderConfig::from_config(&renderer.config);
 }
 
-pub fn start_render(mut commands: Commands, renderer: Res<Renderer>, device: Res<RenderDevice>) {
+pub fn start_render(mut commands: Commands, renderer: Res<Renderer>, context: Res<RenderContext>) {
     let output = RenderOutput::new(renderer.surface.get_current_texture().unwrap());
     commands.insert_resource(RenderView::new(
         output
@@ -195,12 +181,14 @@ pub fn start_render(mut commands: Commands, renderer: Res<Renderer>, device: Res
     ));
     commands.insert_resource(output);
     commands.insert_resource(RenderEncoder::new(
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default()),
+        context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default()),
     ));
 }
 
 pub fn present(
-    queue: Res<RenderQueue>,
+    context: Res<RenderContext>,
     encoder: Option<Take<RenderEncoder>>,
     output: Option<Take<RenderOutput>>,
 ) {
@@ -212,7 +200,9 @@ pub fn present(
         panic!("[`RenderEncoder`] unavailable for present, removed before the end of the [`Schedule::Render`] schedule");
     };
 
-    queue.submit(std::iter::once(encoder.into_inner().finish()));
+    context
+        .queue
+        .submit(std::iter::once(encoder.into_inner().finish()));
 
     // NOTE: present() does not submit the window, it buffers the submit to be executed
     // let window = world.resource::<WinitWindow>();
@@ -286,7 +276,7 @@ impl RenderOutput {
 }
 
 /// Wraps the [`wgpu::Queue`].
-#[derive(WinnyResource, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct RenderQueue(Arc<wgpu::Queue>);
 
 impl Deref for RenderQueue {
@@ -297,7 +287,7 @@ impl Deref for RenderQueue {
 }
 
 /// Wraps the [`wgpu::Device`].
-#[derive(WinnyResource, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct RenderDevice(Arc<wgpu::Device>);
 
 impl Deref for RenderDevice {
@@ -308,7 +298,7 @@ impl Deref for RenderDevice {
 }
 
 /// Wraps the [`wgpu::SurfaceConfiguration`].
-#[derive(WinnyResource, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct RenderConfig {
     pub dimensions: Dimensions<u32>,
     pub format: wgpu::TextureFormat,
@@ -465,8 +455,8 @@ impl BindGroups {
 //     }
 // }
 
-/// Handle to the resources required by the [`AssetServer`].
-#[derive(Debug, Clone)]
+/// Handle to the resources required for wgpu resource aquisition.
+#[derive(WinnyResource, Debug, Clone)]
 pub struct RenderContext {
     pub queue: RenderQueue,
     pub device: RenderDevice,

@@ -120,6 +120,18 @@ impl Matrix4x4f {
     pub fn zero() -> Self {
         Self { m: [[0.; 4]; 4] }
     }
+
+    pub fn identity() -> Self {
+        #[cfg_attr(rustfmt, rustfmt_skip)]
+    Matrix4x4f {
+        m: [
+            [1.,  0.,  0.,  0.],
+            [0.,  1.,  0.,  0.],
+            [0.,  0.,  1.,  0.],
+            [0.,  0.,  0.,  1.],
+        ]
+    }
+    }
 }
 
 pub fn world_to_screen_space_matrix4x4f(screen_width: f32, screen_height: f32) -> Matrix4x4f {

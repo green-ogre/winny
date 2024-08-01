@@ -486,18 +486,9 @@ impl AssetServer {
     }
 }
 
-fn update_asset_server_context(
-    mut server: ResMut<AssetServer>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
-    config: Res<RenderConfig>,
-) {
+fn update_asset_server_context(mut server: ResMut<AssetServer>, context: Res<RenderContext>) {
     // cheap to make
-    server.insert_context(RenderContext {
-        queue: queue.clone(),
-        device: device.clone(),
-        config: config.clone(),
-    })
+    server.insert_context(context.clone())
 }
 
 pub trait AssetApp {
