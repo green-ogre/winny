@@ -2,56 +2,103 @@ use super::{
     buffer::AsGpuBuffer,
     vertex::{Vertex, VertexLayout, VertexUv},
 };
-use render::RenderContext;
+use app::render::RenderContext;
+use winny_math::matrix::Matrix4x4f;
 
-pub trait VertexBuffer<const Offset: u32, T, V: AsGpuBuffer + VertexLayout<Offset>> {
+/// Handle to a GPU buffer with layout information. Obtained from [`AsVertexBuffer::as_entire_buffer`].
+pub struct VertexBuffer {
+    buffer: wgpu::Buffer,
+    usage: wgpu::BufferUsages,
+    layout: wgpu::VertexBufferLayout<'static>,
+}
+
+impl VertexBuffer {
+    pub fn new(
+        buffer: wgpu::Buffer,
+        usage: wgpu::BufferUsages,
+        layout: wgpu::VertexBufferLayout<'static>,
+    ) -> Self {
+        Self {
+            buffer,
+            usage,
+            layout,
+        }
+    }
+
+    pub fn layout(&self) -> wgpu::VertexBufferLayout<'static> {
+        self.layout.clone()
+    }
+
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.buffer
+    }
+}
+
+/// Creates a [`VertexBuffer`] from a slice of `vertices`, which implement [`AsGpuBuffer`] and
+/// [`VertexLayout`].
+pub trait AsVertexBuffer<const Offset: u32>: AsGpuBuffer + VertexLayout<Offset> {
     const LABEL: &'static str;
-    type State<'s>;
-
-    fn as_verts<'s>(contents: &[T], state: &Self::State<'s>) -> Vec<V>;
 
     fn as_entire_buffer<'s>(
         context: &RenderContext,
-        contents: &[T],
-        state: &Self::State<'s>,
+        vertices: &[Self],
         usage: wgpu::BufferUsages,
-    ) -> (Vec<V>, wgpu::Buffer, wgpu::VertexBufferLayout<'static>) {
-        if contents.len() == 0 {
-            panic!("`contents` must contain atleast one instance to call `as_entire_buffer`: [AsBindGroup<{:?}, {:?}: NoUninit]", std::any::type_name::<T>(), std::any::type_name::<V>());
+    ) -> VertexBuffer {
+        if vertices.len() == 0 {
+            panic!("`contents` must contain atleast one instance to call `as_entire_buffer`: [AsVertexBuffer: {:?}]", std::any::type_name::<Self>());
         }
 
-        let raw_contents = Self::as_verts(contents, state);
-        let buffer = V::create_buffer_init(Some(Self::LABEL), context, &raw_contents, &usage);
+        let buffer = Self::create_buffer_init(Some(Self::LABEL), context, &vertices, usage);
         let layout = Self::vertex_layout();
 
-        (raw_contents, buffer, layout)
+        VertexBuffer::new(buffer, usage, layout)
+    }
+
+    fn as_entire_buffer_empty<'s>(
+        context: &RenderContext,
+        size: u64,
+        usage: wgpu::BufferUsages,
+    ) -> VertexBuffer {
+        let buffer = Self::create_buffer(Some(Self::LABEL), context, size, usage);
+        let layout = Self::vertex_layout();
+
+        VertexBuffer::new(buffer, usage, layout)
     }
 
     fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
-        V::layout()
+        Self::layout()
+    }
+
+    fn write_buffer_resize<T: AsGpuBuffer>(
+        context: &RenderContext,
+        vertex_buffer: &mut VertexBuffer,
+        contents: &[T],
+    ) {
+        if contents.len() * std::mem::size_of::<T>() <= vertex_buffer.buffer.size() as usize {
+            context
+                .queue
+                .write_buffer(&vertex_buffer.buffer, 0, bytemuck::cast_slice(contents));
+        } else {
+            vertex_buffer.buffer = <T as AsGpuBuffer>::create_buffer_init(
+                Some(Self::LABEL),
+                context,
+                contents,
+                vertex_buffer.usage,
+            );
+        }
     }
 }
 
 unsafe impl AsGpuBuffer for Vertex {}
 
-impl<const Offset: u32> VertexBuffer<Offset, Vertex, Vertex> for Vertex {
+impl<const Offset: u32> AsVertexBuffer<Offset> for Vertex {
     const LABEL: &'static str = "vertex uv";
-    type State<'s> = ();
-
-    fn as_verts<'s>(contents: &[Vertex], _state: &Self::State<'s>) -> Vec<Vertex> {
-        contents.to_vec()
-    }
 }
 
 unsafe impl AsGpuBuffer for VertexUv {}
 
-impl<const Offset: u32> VertexBuffer<Offset, VertexUv, VertexUv> for VertexUv {
+impl<const Offset: u32> AsVertexBuffer<Offset> for VertexUv {
     const LABEL: &'static str = "vertex uv";
-    type State<'s> = ();
-
-    fn as_verts<'s>(contents: &[VertexUv], _state: &Self::State<'s>) -> Vec<VertexUv> {
-        contents.to_vec()
-    }
 }
 
 #[repr(C)]
@@ -60,13 +107,22 @@ pub struct InstanceIndex(pub u32);
 
 unsafe impl AsGpuBuffer for InstanceIndex {}
 
-impl<const Offset: u32> VertexBuffer<Offset, InstanceIndex, u32> for InstanceIndex {
-    const LABEL: &'static str = "instance index";
-    type State<'s> = ();
-
-    fn as_verts<'s>(contents: &[InstanceIndex], _state: &Self::State<'s>) -> Vec<u32> {
-        contents.iter().map(|i| i.0).collect()
+impl<const Offset: u32> VertexLayout<Offset> for InstanceIndex {
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<u32>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: Offset,
+                format: wgpu::VertexFormat::Uint32,
+            }],
+        }
     }
+}
+
+impl<const Offset: u32> AsVertexBuffer<Offset> for InstanceIndex {
+    const LABEL: &'static str = "instance index";
 }
 
 #[repr(C)]
@@ -75,11 +131,24 @@ pub struct VertexIndex(pub u32);
 
 unsafe impl AsGpuBuffer for VertexIndex {}
 
-impl<const Offset: u32> VertexBuffer<Offset, VertexIndex, u32> for VertexIndex {
-    const LABEL: &'static str = "instance index";
-    type State<'s> = ();
-
-    fn as_verts<'s>(contents: &[VertexIndex], _state: &Self::State<'s>) -> Vec<u32> {
-        contents.iter().map(|i| i.0).collect()
+impl<const Offset: u32> VertexLayout<Offset> for VertexIndex {
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<u32>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: Offset,
+                format: wgpu::VertexFormat::Uint32,
+            }],
+        }
     }
+}
+
+impl<const Offset: u32> AsVertexBuffer<Offset> for VertexIndex {
+    const LABEL: &'static str = "instance index";
+}
+
+impl<const Offset: u32> AsVertexBuffer<Offset> for Matrix4x4f {
+    const LABEL: &'static str = "matrix";
 }

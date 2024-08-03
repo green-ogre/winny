@@ -1,8 +1,17 @@
 use std::io::{BufReader, Read};
 
+use crate::AssetLoaderError;
+
+#[derive(Debug)]
 pub enum Error {
     EndOfBuf,
     Interrupted,
+}
+
+impl From<Error> for AssetLoaderError {
+    fn from(_value: Error) -> Self {
+        AssetLoaderError::FailedToParse
+    }
 }
 
 pub struct ByteReader<R: Read> {

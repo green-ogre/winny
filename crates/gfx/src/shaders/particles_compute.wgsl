@@ -31,10 +31,11 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
     let index = globalId.x;
     let offset = globalId.x;
     if particles[index].lifetime <= 0.0 {
-        let rand = random(emitter_uniform.time_elapsed + f32(offset));
+        var rng = XorRng(u32(emitter_uniform.time_elapsed * f32(offset)));
+        let rand = gen_vec3(rng);
         particles[index].translation.x = 2.0 * emitter_uniform.width * rand.x - emitter_uniform.width;
         particles[index].translation.y = 2.0 * emitter_uniform.height * rand.y - emitter_uniform.height;
-        particles[index].lifetime = (emitter_uniform.max_lifetime - emitter_uniform.min_lifetime) * rand.y + emitter_uniform.min_lifetime;
+        particles[index].lifetime = (emitter_uniform.max_lifetime - emitter_uniform.min_lifetime) * rand.z + emitter_uniform.min_lifetime;
         particles[index].creation_time = emitter_uniform.time_elapsed;
         particles[index].velocity = emitter_uniform.initial_velocity;
         particles[index].acceleration = emitter_uniform.acceleration;
@@ -52,32 +53,22 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
     particles[index].lifetime -= emitter_uniform.time_delta;
 }
 
-fn random(seed: f32) -> vec3<f32> {
-    let a = 12.9898;
-    let b = 78.233;
-    let c = 43758.5453;
-
-    let x = fract(sin(dot(vec2<f32>(seed, seed), vec2<f32>(a, b))) * c);
-    let y = fract(sin(dot(vec2<f32>(seed + x, x), vec2<f32>(b, a))) * c);
-    let z = fract(sin(dot(vec2<f32>(y, x + y), vec2<f32>(a, b))) * c);
-
-    return vec3<f32>(x, y, z);
+struct XorRng {
+    state: u32,
 }
 
-// TODO: integer hashing
+fn gen(rng: XorRng) -> XorRng {
+    var r = rng;
+    r.state ^= r.state << 13;
+    r.state ^= r.state >> 17;
+    r.state ^= r.state << 5;
 
-// /// A simple XOR-based RNG.
-// pub struct XorRng {
-//     state: u32,
-// }
-// 
-// impl XorRng {
-//     /// Generate a new random number, updating the RNG's internal state.
-//     pub fn generate(&mut self) -> u32 {
-//         self.state ^= self.state << 13;
-//         self.state ^= self.state >> 17;
-//         self.state ^= self.state << 5;
-// 
-//         self.state
-//     }
-// }
+    return r;
+}
+
+fn gen_vec3(rng: XorRng) -> vec3<f32> {
+    let x_tmp = gen(rng);
+    let y_tmp = gen(rng);
+    let z_tmp = gen(rng);
+    return vec3<f32>(f32(x_tmp.state) / f32(0xFFFFFFFF), f32(y_tmp.state) / f32(0xFFFFFFFF), f32(z_tmp.state) / f32(0xFFFFFFFF));
+}

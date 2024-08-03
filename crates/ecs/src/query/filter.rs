@@ -9,7 +9,7 @@ pub trait Filter: Send + Sync {
 
 pub struct With<T>(PhantomData<T>);
 pub struct Without<T>(PhantomData<T>);
-pub struct Or<T>(PhantomData<T>);
+pub struct Or<T, O>(PhantomData<T>, PhantomData<O>);
 
 impl<T: Component> Filter for With<T> {
     fn condition(arch: &Archetype) -> bool {
@@ -22,7 +22,6 @@ impl<T: Component> Filter for With<T> {
     }
 }
 
-// TODO: doesn't work?
 impl<T: Component> Filter for Without<T> {
     fn condition(arch: &Archetype) -> bool {
         !arch.contains_type_id::<T>()
@@ -35,14 +34,20 @@ impl<T: Component> Filter for Without<T> {
     }
 }
 
-impl<T: Component> Filter for Or<T> {
+impl<T: Component, O: Component> Filter for Or<T, O> {
     fn condition(arch: &Archetype) -> bool {
-        arch.contains_type_id::<T>()
+        arch.contains_type_id::<T>() || arch.contains_type_id::<O>()
     }
 
     fn system_access(components: &mut Components) -> SystemAccess {
         let meta = components.register::<T>();
-        SystemAccess::default().with_filter(ComponentAccessFilter::new(AccessFilter::Or, *meta))
+        let access = SystemAccess::default()
+            .with_filter(ComponentAccessFilter::new(AccessFilter::Or, *meta));
+        let other_meta = components.register::<T>();
+        access.with(
+            SystemAccess::default()
+                .with_filter(ComponentAccessFilter::new(AccessFilter::Or, *other_meta)),
+        )
     }
 }
 

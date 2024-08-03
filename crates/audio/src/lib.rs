@@ -1,16 +1,6 @@
-use std::{
-    fmt::Debug,
-    future::Future,
-    io::Cursor,
-    ops::Range,
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc,
-    },
-};
-
 #[cfg(target_arch = "wasm32")]
 use app::input::mouse_and_key::KeyInput;
+use app::render::RenderContext;
 use app::{
     app::{App, Schedule},
     plugins::Plugin,
@@ -28,7 +18,16 @@ use ecs::{
 };
 use hound::{WavReader, WavSpec};
 use rand::Rng;
-use render::RenderContext;
+use std::{
+    fmt::Debug,
+    future::Future,
+    io::Cursor,
+    ops::Range,
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
+};
 use util::tracing::{error, info, trace};
 // use wav::WavFormat;
 
@@ -498,8 +497,8 @@ impl AssetLoader for AudioAssetLoader {
         }
     }
 
-    fn extensions(&self) -> Vec<&'static str> {
-        vec!["wav"]
+    fn extensions(&self) -> &'static [&'static str] {
+        &["wav"]
     }
 }
 

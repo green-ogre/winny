@@ -1,6 +1,7 @@
 use winny::{
     gfx::{
         particle::{ParticleBundle, ParticleEmitter, ParticlePlugin},
+        render_pipeline::material::Material2d,
         transform::Transform,
     },
     prelude::*,
@@ -8,7 +9,7 @@ use winny::{
 
 fn main() {
     App::default()
-        .add_plugins((
+        .add_plugins(
             DefaultPlugins {
                 window: WindowPlugin {
                     close_on_escape: true,
@@ -19,22 +20,32 @@ fn main() {
                 },
                 ..Default::default()
             },
-            EguiPlugin::<UiState>::new(),
-            ParticlePlugin,
-        ))
-        .insert_resource(UiState::new())
+            // EguiPlugin::<UiState>::new(),
+        )
+        // .insert_resource(UiState::new())
         .add_systems(Schedule::StartUp, startup)
-        .add_systems(Schedule::Update, update_emitter)
+        // .add_systems(Schedule::Update, update_emitter)
         .run();
 }
 
 fn startup(mut commands: Commands, mut server: ResMut<AssetServer>) {
     commands.spawn((
         ParticleBundle {
-            emitter: ParticleEmitter::default(),
+            emitter: ParticleEmitter {
+                num_particles: 10_000,
+                width: 1200.,
+                height: 100.,
+                lifetime: 6.0..6.5,
+                particle_scale: Vec2f::new(0.05, 0.05),
+                ..Default::default()
+            },
+            material: Material2d::default(),
             handle: server.load("particle.png"),
         },
-        Transform::default(),
+        Transform {
+            translation: Vec3f::new(0., -600., 0.),
+            ..Default::default()
+        },
     ));
 }
 
@@ -119,6 +130,7 @@ impl UiRenderState for UiState {
                         // ui.add(
                         //     egui::Slider::new(&mut self.emitter.radius, 0.0..=1000.).text("radius"),
                         // );
+
                         egui::CollapsingHeader::new("particle_scale")
                             .open(Some(true))
                             .show(ui, |ui| {

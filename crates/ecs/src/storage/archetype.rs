@@ -22,7 +22,9 @@ impl Default for Archetypes {
 
 impl Archetypes {
     pub fn push(&mut self, archetype: Archetype) -> ArchId {
-        let arch_id = ArchId(self.archetypes.insert_in_first_empty(archetype));
+        let arch_id = self
+            .archetypes
+            .insert_in_first_empty(archetype, |index| ArchId(index));
 
         let archetype = unsafe { self.get_mut_unchecked(arch_id) };
         archetype.arch_id = arch_id;

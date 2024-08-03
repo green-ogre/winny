@@ -1,527 +1,75 @@
-use crate::create_read_only_storage_bind_group;
-use crate::render_pipeline::bind_group::{AsBindGroup, FragTexture};
+use crate::camera::{Camera, CameraUniform};
+use crate::render::{RenderEncoder, RenderView};
+use crate::render_pipeline::bind_group::{
+    AsBindGroup, AssetBindGroups, BindGroup, BindGroupHandle, RenderBindGroup,
+};
+use crate::render_pipeline::buffer::AsGpuBuffer;
+use crate::render_pipeline::material::{Material, Material2d};
+use crate::render_pipeline::pipeline::{FragmentType, RenderPipeline2d};
+use crate::render_pipeline::shader::{FragmentShader, VertexShader};
 use crate::render_pipeline::vertex::{VertexLayout, VertexUv, FULLSCREEN_QUAD_VERTEX_UV};
-use crate::texture::{SamplerFilterType, TextureAtlas};
+use crate::render_pipeline::vertex_buffer::{self, AsVertexBuffer, VertexBuffer};
+use crate::texture::TextureAtlas;
 use crate::texture::{Texture, TextureDimensions};
 use crate::transform::Transform;
 use app::app::{AppSchedule, Schedule};
 use app::plugins::Plugin;
+use app::render::{Dimensions, RenderContext};
 use app::time::DeltaTime;
 use app::window::{ViewPort, Window};
-use asset::AssetId;
-use asset::{Assets, Handle};
+use asset::{AssetServer, Assets, Handle};
 use cgmath::{Quaternion, Rad, Rotation3};
 use ecs::prelude::*;
-use ecs::SparseArrayIndex;
-use ecs::SparseSet;
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
-use fxhash::FxHashMap;
-use render::{
-    BindGroupHandle, BindGroups, RenderBindGroup, RenderConfig, RenderContext, RenderDevice,
-    RenderEncoder, RenderView,
-};
+use std::marker::PhantomData;
 use std::ops::Range;
-use wgpu::util::DeviceExt;
 use winny_math::angle::{Degrees, Radf};
 use winny_math::matrix::{scale_matrix4x4f, Matrix4x4f};
 use winny_math::vector::{Vec2f, Vec3f};
 
-#[derive(Default)]
-pub struct SpritePlugin {
-    pixel_perfect: bool,
-}
-
-#[derive(WinnyResource)]
-#[allow(dead_code)]
-pub struct GlobalSpriteSettings {
-    pixel_perfect: bool,
-}
-
-impl From<&SpritePlugin> for GlobalSpriteSettings {
-    fn from(value: &SpritePlugin) -> Self {
-        if value.pixel_perfect {
-            unimplemented!()
-        }
-
-        Self {
-            pixel_perfect: value.pixel_perfect,
-        }
-    }
-}
+pub struct SpritePlugin;
 
 impl Plugin for SpritePlugin {
     fn build(&mut self, app: &mut app::app::App) {
-        app.register_resource::<SpriteRenderer>()
-            .insert_resource(GlobalSpriteSettings::from(&*self))
-            .insert_resource(TextureAtlasBindGroups::default())
+        app.register_resource::<SpriteVertShaderHandle>()
+            .register_resource::<SpriteBuffers>()
             .add_systems(Schedule::StartUp, startup)
-            .add_systems(
-                Schedule::PostUpdate,
-                (
-                    bind_new_sprite_bundles,
-                    bind_new_animated_sprite_bundles,
-                    update_sprite_atlas_bind_groups,
-                ),
-            )
-            .add_systems(
-                AppSchedule::Render,
-                (prepare_for_render_pass, render_sprites),
-            );
+            .add_systems(AppSchedule::Render, render_sprites);
     }
 }
 
 fn startup(mut commands: Commands, context: Res<RenderContext>) {
-    let sprite_renderer = SpriteRenderer::new(&context);
-    commands.insert_resource(sprite_renderer);
+    commands.insert_resource(SpriteBuffers::new(&context));
 }
 
-fn create_sprite_render_pipeline(
-    context: &RenderContext,
-    layout: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
-    let sprite_bind_group_layout = FragTexture::layout(&context);
+#[derive(Default)]
+pub struct SpriteMaterialPlugin<M: Material>(PhantomData<M>);
 
-    let render_pipeline_layout =
-        context
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[layout, &sprite_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-    let shader = wgpu::ShaderModuleDescriptor {
-        label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sprite_shader.wgsl").into()),
-    };
-
-    crate::create_render_pipeline(
-        "sprites",
-        &context.device,
-        &render_pipeline_layout,
-        context.config.format(),
-        None,
-        &[
-            <VertexUv as VertexLayout<0>>::layout(),
-            <SpriteInstance as VertexLayout<2>>::layout(),
-            <Matrix4x4f as VertexLayout<4>>::layout(),
-        ],
-        shader,
-        true,
-    )
-}
-
-const VERTICES: u32 = 6;
-
-#[derive(WinnyResource)]
-pub struct SpriteRenderer {
-    vertex_buffer: wgpu::Buffer,
-    sprite_buffer: wgpu::Buffer,
-    transform_buffer: wgpu::Buffer,
-    atlas_uniforms: wgpu::Buffer,
-    atlas_uniform_bind_group: wgpu::BindGroup,
-    pipeline: wgpu::RenderPipeline,
-}
-
-impl SpriteRenderer {
-    pub fn new(context: &RenderContext) -> Self {
-        let atlas_uniforms = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("atlas uniforms"),
-            size: 12,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let (layout, atlas_uniform_bind_group) = create_read_only_storage_bind_group(
-            Some("atlas uniforms"),
-            &context.device,
-            &atlas_uniforms,
-            wgpu::ShaderStages::VERTEX,
-            0,
+impl<M: Material> Plugin for SpriteMaterialPlugin<M> {
+    fn build(&mut self, app: &mut app::app::App) {
+        app.add_systems(
+            AppSchedule::PreRender,
+            (
+                bind_new_sprite_bundles::<M>,
+                bind_updated_texture_handles::<M>,
+                bind_updated_atlas_handles::<M>,
+                prepare_for_render_pass::<M>,
+            ),
         );
-
-        let pipeline = create_sprite_render_pipeline(context, &layout);
-
-        let vertex_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sprite vertexes"),
-            size: 0,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let sprite_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sprite instances"),
-            size: 0,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let transform_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sprite transform"),
-            size: 0,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        Self {
-            atlas_uniforms,
-            atlas_uniform_bind_group,
-            vertex_buffer,
-            sprite_buffer,
-            transform_buffer,
-            pipeline,
-        }
     }
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct AtlasUniform {
-    width: u32,
-    height: u32,
-    index: u32,
-}
-
-pub fn prepare_for_render_pass(
-    mut sprite_renderer: ResMut<SpriteRenderer>,
-    context: Res<RenderContext>,
-    sprites: Query<(
-        Sprite,
-        Transform,
-        BindGroupHandle,
-        TextureDimensions,
-        Option<AnimatedSprite>,
-    )>,
-    // TODO: change to camera
-    window: Res<Window>,
-) {
-    let viewport = &window.viewport;
-
-    // TODO: decide on whether to sort by bind group handle or z
-    let mut sprites = sprites.iter().collect::<Vec<_>>();
-    sprites.sort_by(|(s1, _, _, _, _), (s2, _, _, _, _)| s1.z.cmp(&s2.z));
-
-    let atlas_data: Vec<_> = sprites
-        .iter()
-        .map(|(_, _, _, _, a_s)| {
-            if let Some(a_s) = a_s {
-                AtlasUniform {
-                    width: a_s.width as u32,
-                    height: a_s.height as u32,
-                    index: a_s.index,
-                }
-            } else {
-                AtlasUniform {
-                    width: 1,
-                    height: 1,
-                    index: 0,
-                }
-            }
-        })
-        .collect();
-    let atlas_data = bytemuck::cast_slice(&atlas_data);
-    if atlas_data.len() <= sprite_renderer.atlas_uniforms.size() as usize {
-        context
-            .queue
-            .write_buffer(&sprite_renderer.atlas_uniforms, 0, atlas_data);
-    } else {
-        util::tracing::trace!(
-            "allocating larger sprite atlas uniform buffer. current size: {}, new size: {}",
-            sprite_renderer.atlas_uniforms.size(),
-            atlas_data.len(),
-        );
-
-        sprite_renderer.atlas_uniforms =
-            context
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("sprite atlas uiform"),
-                    contents: atlas_data,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                });
-
-        let (_, atlas_uniform_bind_group) = create_read_only_storage_bind_group(
-            Some("atlas uniforms"),
-            &context.device,
-            &sprite_renderer.atlas_uniforms,
-            wgpu::ShaderStages::VERTEX,
-            0,
-        );
-        sprite_renderer.atlas_uniform_bind_group = atlas_uniform_bind_group;
-    }
-
-    let vertex_data: Vec<_> = sprites
-        .iter()
-        .map(|(s, _, _, d, a)| s.to_vertices(&viewport, d, *a))
-        .flatten()
-        .collect();
-    let vertex_data = bytemuck::cast_slice(&vertex_data);
-
-    if vertex_data.len() <= sprite_renderer.vertex_buffer.size() as usize {
-        context
-            .queue
-            .write_buffer(&sprite_renderer.vertex_buffer, 0, vertex_data);
-    } else {
-        util::tracing::trace!(
-            "allocating larger sprite vertex buffer. current size: {}, new size: {}",
-            sprite_renderer.vertex_buffer.size(),
-            vertex_data.len(),
-        );
-
-        sprite_renderer.vertex_buffer =
-            context
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("sprite vertex"),
-                    contents: vertex_data,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
-    }
-
-    let sprite_data = sprites
-        .iter()
-        .map(|(s, _, _, _, _)| s.to_raw())
-        .collect::<Vec<_>>();
-    let sprite_data = bytemuck::cast_slice(&sprite_data);
-
-    if sprite_data.len() <= sprite_renderer.sprite_buffer.size() as usize {
-        context
-            .queue
-            .write_buffer(&sprite_renderer.sprite_buffer, 0, sprite_data);
-    } else {
-        util::tracing::trace!(
-            "allocating larger sprite instance buffer. current size: {}, new size: {}",
-            sprite_renderer.sprite_buffer.size(),
-            sprite_data.len()
-        );
-
-        sprite_renderer.sprite_buffer =
-            context
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("sprite instance"),
-                    contents: sprite_data,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
-    }
-
-    let transform_data = sprites
-        .iter()
-        .map(|(s, t, _, _, _)| s.transformation_matrix(t))
-        .collect::<Vec<_>>();
-    let transform_data = bytemuck::cast_slice(&transform_data);
-
-    if transform_data.len() <= sprite_renderer.transform_buffer.size() as usize {
-        context
-            .queue
-            .write_buffer(&sprite_renderer.transform_buffer, 0, transform_data);
-    } else {
-        util::tracing::trace!(
-            "allocating larger sprite transform buffer. current size: {}, new size: {}",
-            sprite_renderer.transform_buffer.size(),
-            transform_data.len()
-        );
-
-        sprite_renderer.transform_buffer =
-            context
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("sprite transform"),
-                    contents: transform_data,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
-    }
-}
-
-#[derive(WinnyResource, Default)]
-pub struct TextureAtlasBindGroups {
-    bindings: SparseSet<BindGroupHandle, RenderBindGroup>,
-    stored_bindings: FxHashMap<AssetId, BindGroupHandle>,
-}
-
-impl TextureAtlasBindGroups {
-    pub fn get(&self, handle: BindGroupHandle) -> Option<&RenderBindGroup> {
-        self.bindings.get(&handle)
-    }
-
-    pub fn get_handle_or_insert_with(
-        &mut self,
-        asset_id: AssetId,
-        bind_group: impl FnOnce() -> RenderBindGroup,
-    ) -> BindGroupHandle {
-        if let Some(handle) = self.stored_bindings.get(&asset_id) {
-            *handle
-        } else {
-            let index = self.bindings.insert_in_first_empty(bind_group());
-            let handle = BindGroupHandle(index);
-            self.stored_bindings.insert(asset_id, handle);
-
-            handle
-        }
-    }
-}
-
-// TODO: Event driven updates
-pub fn update_sprite_atlas_bind_groups(
-    context: Res<RenderContext>,
-    mut sprites: Query<
-        (
-            Handle<TextureAtlas>,
-            Mut<BindGroupHandle>,
-            Mut<TextureDimensions>,
-        ),
-        With<(AnimatedSprite, Sprite)>,
-    >,
-    texture_atlases: ResMut<Assets<TextureAtlas>>,
-    mut bind_groups: ResMut<TextureAtlasBindGroups>,
-) {
-    for (atlas, bind_handle, dimensions) in sprites.iter_mut() {
-        if let Some(asset) = texture_atlases.get(&atlas) {
-            let new_dimensions = TextureDimensions::from_texture_atlas(&asset.asset);
-            let new_handle = bind_groups.get_handle_or_insert_with(atlas.id(), || {
-                let (_, _, binding) = FragTexture::as_entire_binding(
-                    &context,
-                    FragTexture(&asset.asset.texture),
-                    &SamplerFilterType::Nearest,
-                );
-                RenderBindGroup(binding)
-            });
-            *bind_handle = new_handle;
-            *dimensions = new_dimensions;
-        }
-    }
-}
-
-fn render_sprites(
-    mut encoder: ResMut<RenderEncoder>,
-    sprite_renderer: Res<SpriteRenderer>,
-    view: Res<RenderView>,
-    sprites: Query<(
-        Sprite,
-        Transform,
-        BindGroupHandle,
-        TextureDimensions,
-        Option<AnimatedSprite>,
-    )>,
-    bind_groups: Res<BindGroups>,
-    atlas_bind_groups: Res<TextureAtlasBindGroups>,
-) {
-    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("sprites"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: &view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        occlusion_query_set: None,
-        timestamp_writes: None,
-    });
-
-    // TODO: decide on whether to sort by bind group handle or z
-    let mut sprites = sprites.iter().collect::<Vec<_>>();
-    sprites.sort_by(|(s1, _, _, _, _), (s2, _, _, _, _)| s1.z.cmp(&s2.z));
-
-    render_pass.set_pipeline(&sprite_renderer.pipeline);
-    // sorted by bind group handle
-    render_pass.set_vertex_buffer(0, sprite_renderer.vertex_buffer.slice(..));
-    // sorted by bind group handle
-    render_pass.set_vertex_buffer(1, sprite_renderer.sprite_buffer.slice(..));
-    // sorted by bind group handle
-    render_pass.set_vertex_buffer(2, sprite_renderer.transform_buffer.slice(..));
-    // sorted by bind group handle
-    render_pass.set_bind_group(0, &sprite_renderer.atlas_uniform_bind_group, &[]);
-
-    let mut offset = 0;
-    let previous_bind_index = usize::MAX;
-    for (_, _, handle, _, anim) in sprites.iter() {
-        if (**handle).index() != previous_bind_index {
-            let binding = if anim.is_some() {
-                atlas_bind_groups.get(**handle).unwrap()
-            } else {
-                bind_groups.get(**handle).unwrap()
-            };
-
-            render_pass.set_bind_group(1, binding, &[]);
-        }
-
-        render_pass.draw(
-            offset * VERTICES..offset * VERTICES + VERTICES,
-            offset..offset + 1,
-        );
-        offset += 1;
+impl<M: Material> SpriteMaterialPlugin<M> {
+    pub fn new() -> Self {
+        Self(PhantomData)
     }
 }
 
 #[derive(Debug, WinnyBundle)]
-pub struct SpriteBundle {
+pub struct SpriteBundle<M: Material = Material2d> {
     pub sprite: Sprite,
+    pub material: M,
     pub handle: Handle<Texture>,
-}
-
-#[derive(Debug, WinnyBundle)]
-pub struct AnimatedSpriteBundle {
-    pub sprite: Sprite,
-    pub animated_sprite: AnimatedSprite,
-    pub handle: Handle<TextureAtlas>,
-}
-
-pub fn bind_new_animated_sprite_bundles(
-    mut commands: Commands,
-    context: Res<RenderContext>,
-    sprites: Query<
-        (Entity, Handle<TextureAtlas>),
-        (
-            With<AnimatedSprite>,
-            Without<(BindGroupHandle, TextureDimensions)>,
-        ),
-    >,
-    texture_atlases: ResMut<Assets<TextureAtlas>>,
-    mut bind_groups: ResMut<TextureAtlasBindGroups>,
-) {
-    for (entity, handle) in sprites.iter() {
-        if let Some(asset) = texture_atlases.get(&handle) {
-            let new_dimensions = TextureDimensions::from_texture_atlas(&asset.asset);
-            let handle = bind_groups.get_handle_or_insert_with(handle.id(), || {
-                let (_, _, binding) = FragTexture::as_entire_binding(
-                    &context,
-                    FragTexture(&asset.asset.texture),
-                    &SamplerFilterType::Nearest,
-                );
-                RenderBindGroup(binding)
-            });
-            commands.get_entity(entity).insert((handle, new_dimensions));
-        }
-    }
-}
-
-pub fn bind_new_sprite_bundles(
-    mut commands: Commands,
-    context: Res<RenderContext>,
-    sprites: Query<
-        (Entity, Handle<Texture>),
-        (With<Sprite>, Without<(BindGroupHandle, TextureDimensions)>),
-    >,
-    textures: ResMut<Assets<Texture>>,
-    mut bind_groups: ResMut<BindGroups>,
-) {
-    for (entity, handle) in sprites.iter() {
-        if let Some(asset) = textures.get(&handle) {
-            let dimensions = TextureDimensions::from_texture(asset);
-            let handle = bind_groups.get_handle_or_insert_with(&asset.path, || {
-                let (_, _, binding) = FragTexture::as_entire_binding(
-                    &context,
-                    FragTexture(&asset.asset),
-                    &SamplerFilterType::Nearest,
-                );
-                RenderBindGroup(binding)
-            });
-            commands.get_entity(entity).insert((handle, dimensions));
-        }
-    }
 }
 
 /// Describes local transformations in relation to the entity [`Transform`].
@@ -549,11 +97,28 @@ impl Default for Sprite {
 }
 
 impl Sprite {
-    pub(crate) fn to_raw(&self) -> SpriteInstance {
+    pub(crate) fn to_raw(&self, anim_sprite: Option<&AnimatedSprite>) -> SpriteInstance {
         let flip_h = if self.h_flip { 0. } else { 1. };
         let flip_v = if self.v_flip { 0. } else { 1. };
-
-        SpriteInstance { flip_v, flip_h }
+        if let Some(anim_sprite) = anim_sprite {
+            SpriteInstance {
+                flip_v,
+                flip_h,
+                width: anim_sprite.width as u32,
+                height: anim_sprite.height as u32,
+                index: anim_sprite.index,
+                _padding: 0.,
+            }
+        } else {
+            SpriteInstance {
+                flip_v,
+                flip_h,
+                width: 1,
+                height: 1,
+                index: 0,
+                _padding: 0.,
+            }
+        }
     }
 
     /// Combines the entity transformation with the local transformation.
@@ -570,7 +135,7 @@ impl Sprite {
 
     /// Creates a fullscreen quad, then scales about the origin for a one-to-one pixel size related
     /// to the [`ViewPort`].
-    pub fn to_vertices(
+    pub(crate) fn to_vertices(
         &self,
         viewport: &ViewPort,
         texture_dimension: &TextureDimensions,
@@ -605,6 +170,14 @@ impl From<&AnimatedSprite> for AnimationDuration {
     }
 }
 
+#[derive(Debug, WinnyBundle)]
+pub struct AnimatedSpriteBundle<M: Material = Material2d> {
+    pub sprite: Sprite,
+    pub animated_sprite: AnimatedSprite,
+    pub material: M,
+    pub handle: Handle<TextureAtlas>,
+}
+
 /// Manages state of an Entity's animation.
 #[derive(WinnyComponent, Debug, Clone)]
 pub struct AnimatedSprite {
@@ -632,12 +205,26 @@ impl Default for AnimatedSprite {
 impl AnimatedSprite {
     pub fn from_texture_atlas(atlas: &TextureAtlas) -> Self {
         Self {
-            width: atlas.width,
-            height: atlas.height,
+            width: atlas.dimensions.width(),
+            height: atlas.dimensions.height(),
             index: 0,
-            frame_range: 0..(atlas.width * atlas.height),
+            frame_range: 0..(atlas.dimensions.width() * atlas.dimensions.height()),
             frame_delta: 0.1,
         }
+    }
+
+    pub fn set_dimensions(&mut self, dimensions: &Dimensions<u32>) {
+        self.width = dimensions.width();
+        self.height = dimensions.height();
+        if self.index >= self.width * self.height {
+            self.index = 0;
+        }
+    }
+
+    pub fn with_dimensions(mut self, dimensions: Dimensions<u32>) -> Self {
+        self.width = dimensions.width();
+        self.height = dimensions.height();
+        self
     }
 
     pub fn total_frames(&self) -> u32 {
@@ -662,14 +249,6 @@ impl AnimatedSprite {
         self.frame_range.clone()
     }
 
-    pub fn with_index(mut self, index: u32) -> Self {
-        self.index = index;
-        if self.index >= self.frame_range.end {
-            self.index = self.frame_range.start;
-        }
-        self
-    }
-
     pub fn index(&self) -> u32 {
         self.index
     }
@@ -679,7 +258,7 @@ impl AnimatedSprite {
         if duration.0 <= 0.0 {
             duration.0 = self.frame_delta;
             self.index += 1;
-            if self.index >= self.frame_range.end {
+            if self.index >= self.frame_range.end || self.index >= self.width * self.height {
                 self.index = self.frame_range.start;
             }
         }
@@ -690,11 +269,211 @@ impl AnimatedSprite {
     }
 }
 
+#[derive(WinnyComponent, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct SpritePipelineEntity(Entity);
+
+#[derive(WinnyResource)]
+pub struct SpriteVertShaderHandle(Handle<VertexShader>);
+
+fn bind_new_sprite_bundles<M: Material>(
+    mut commands: Commands,
+    mut server: ResMut<AssetServer>,
+    mut bind_groups: ResMut<AssetBindGroups>,
+    buffers: Res<SpriteBuffers>,
+    context: Res<RenderContext>,
+    pipelines: Query<(Entity, SpritePipeline, MaterialMarker<M>)>,
+    bundles: Query<
+        (
+            Entity,
+            Option<Handle<Texture>>,
+            Option<Handle<TextureAtlas>>,
+            M,
+        ),
+        (
+            Without<(SpritePipelineEntity, TextureDimensions)>,
+            With<(Sprite, Transform)>,
+            Or<Handle<Texture>, Handle<TextureAtlas>>,
+        ),
+    >,
+    textures: Res<Assets<Texture>>,
+    atlases: Res<Assets<TextureAtlas>>,
+    sprite_vert_shader_handle: Option<Res<SpriteVertShaderHandle>>,
+    vert_shaders: Res<Assets<VertexShader>>,
+    frag_shaders: Res<Assets<FragmentShader>>,
+) {
+    let mut pipeline_entity = None;
+    for (entity, texture_handle, atlas_handle, material) in bundles.iter() {
+        if let Some(vert_shader_handle) = &sprite_vert_shader_handle {
+            if let Some(vert_shader) = vert_shaders.get(&vert_shader_handle.0) {
+                if let Some(texture_handle) = texture_handle {
+                    if let Some(texture) = textures.get(texture_handle) {
+                        let dimensions = TextureDimensions::from_texture(&texture);
+                        commands.get_entity(entity).insert((
+                            bind_groups.get_handle_or_insert_with(texture_handle.clone(), || {
+                                let binding =
+                                    RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
+                                        &context,
+                                        material.clone(),
+                                        material.resource_state(&texture),
+                                    ));
+                                binding
+                            }),
+                            dimensions,
+                        ));
+                    } else {
+                        return;
+                    }
+                } else if let Some(atlas_handle) = atlas_handle {
+                    if let Some(atlas) = atlases.get(atlas_handle) {
+                        let dimensions = TextureDimensions::from_texture(&atlas.texture);
+                        commands.get_entity(entity).insert((
+                            bind_groups.get_handle_or_insert_with(atlas_handle.clone(), || {
+                                let binding =
+                                    RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
+                                        &context,
+                                        material.clone(),
+                                        material.resource_state(&atlas.texture),
+                                    ));
+                                binding
+                            }),
+                            dimensions,
+                        ));
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
+                };
+
+                if let Ok((pipeline, _, _)) = pipelines.get_single() {
+                    commands
+                        .get_entity(entity)
+                        .insert(SpritePipelineEntity(pipeline));
+                } else {
+                    if let Some(pipeline_entity) = pipeline_entity {
+                        commands.get_entity(entity).insert(pipeline_entity);
+                    } else {
+                        let sprite_render_pipeline = SpritePipeline::new(
+                            material.clone(),
+                            &context,
+                            &mut server,
+                            &frag_shaders,
+                            vert_shader,
+                            &buffers,
+                        );
+
+                        let pipeline = SpritePipelineEntity(
+                            commands
+                                .spawn((sprite_render_pipeline, MaterialMarker::<M>(PhantomData)))
+                                .entity(),
+                        );
+
+                        commands.get_entity(entity).insert(pipeline);
+                        pipeline_entity = Some(pipeline);
+                    }
+                }
+            } else {
+                // util::tracing::error!("Could not retrieve asset sprite pipeline vertex shader");
+            }
+        } else {
+            // This will only run when the first sprite pipeline is built, so we compile the
+            // shader
+            let vert_shader = wgpu::ShaderModuleDescriptor {
+                label: Some("particles vert"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sprite_vert.wgsl").into()),
+            };
+            let vert_shader = VertexShader(context.device.create_shader_module(vert_shader));
+            let handle = server.store_asset("shaders/sprite_vert.wgsl".into(), vert_shader);
+            commands.insert_resource(SpriteVertShaderHandle(handle));
+        }
+    }
+}
+
+fn bind_updated_texture_handles<M: Material>(
+    mut bind_groups: ResMut<AssetBindGroups>,
+    mut sprites: Query<(
+        Mut<Handle<Texture>>,
+        Mut<BindGroupHandle>,
+        Mut<TextureDimensions>,
+        M,
+    )>,
+    context: Res<RenderContext>,
+    textures: Res<Assets<Texture>>,
+) {
+    for (texture_handle, bind_group_handle, texture_dimensions, material) in sprites.iter_mut() {
+        if texture_handle.is_changed() {
+            if let Some(texture) = textures.get(texture_handle) {
+                let dimensions = TextureDimensions::from_texture(texture);
+                let binding = bind_groups.get_handle_or_insert_with(texture_handle.clone(), || {
+                    let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
+                        &context,
+                        material.clone(),
+                        material.resource_state(texture),
+                    ));
+                    binding
+                });
+
+                *bind_group_handle = binding;
+                *texture_dimensions = dimensions;
+            } else {
+                // Could not find the new texture, so we mark as changed so we perform the same
+                // check next tick.
+                texture_handle.mark_changed();
+            }
+        }
+    }
+}
+
+fn bind_updated_atlas_handles<M: Material>(
+    mut bind_groups: ResMut<AssetBindGroups>,
+    mut sprites: Query<(
+        Mut<Handle<TextureAtlas>>,
+        Mut<BindGroupHandle>,
+        Mut<TextureDimensions>,
+        M,
+    )>,
+    context: Res<RenderContext>,
+    atlases: Res<Assets<TextureAtlas>>,
+) {
+    for (atlas_handle, bind_group_handle, texture_dimensions, material) in sprites.iter_mut() {
+        if atlas_handle.is_changed() {
+            if let Some(atlas) = atlases.get(atlas_handle) {
+                let dimensions = TextureDimensions::from_texture(&atlas.texture);
+                let binding = bind_groups.get_handle_or_insert_with(atlas_handle.clone(), || {
+                    let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
+                        &context,
+                        material.clone(),
+                        material.resource_state(&atlas.texture),
+                    ));
+                    binding
+                });
+
+                *bind_group_handle = binding;
+                *texture_dimensions = dimensions;
+            } else {
+                // Could not find the new texture, so we mark as changed so we perform the same
+                // check next tick.
+                atlas_handle.mark_changed();
+            }
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SpriteInstance {
     flip_v: f32,
     flip_h: f32,
+    width: u32,
+    height: u32,
+    index: u32,
+    _padding: f32,
+}
+
+unsafe impl AsGpuBuffer for SpriteInstance {}
+
+impl<const Offset: u32> AsVertexBuffer<Offset> for SpriteInstance {
+    const LABEL: &'static str = "sprite instance";
 }
 
 impl<const Offset: u32> VertexLayout<Offset> for SpriteInstance {
@@ -714,7 +493,265 @@ impl<const Offset: u32> VertexLayout<Offset> for SpriteInstance {
                     shader_location: Offset + 1,
                     format: wgpu::VertexFormat::Float32,
                 },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                    shader_location: Offset + 2,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: Offset + 3,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                    shader_location: Offset + 4,
+                    format: wgpu::VertexFormat::Uint32,
+                },
             ],
         }
+    }
+}
+
+// Marks the kind of Material that a SpritePipeline is binded to
+#[derive(WinnyComponent)]
+struct MaterialMarker<M: Material>(PhantomData<M>);
+
+#[derive(WinnyResource)]
+struct SpriteBuffers {
+    vertex_buffer: VertexBuffer,
+    sprite_buffer: VertexBuffer,
+    transform_buffer: VertexBuffer,
+    sprites: Vec<(Sprite, Transform, TextureDimensions, Option<AnimatedSprite>)>,
+}
+
+impl SpriteBuffers {
+    pub fn new(context: &RenderContext) -> Self {
+        let init_buffer_size = 12;
+
+        let vertex_buffer = <VertexUv as AsVertexBuffer<0>>::as_entire_buffer_empty(
+            context,
+            init_buffer_size,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        let sprite_buffer = <SpriteInstance as AsVertexBuffer<2>>::as_entire_buffer_empty(
+            context,
+            init_buffer_size,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        let transform_buffer = <Matrix4x4f as AsVertexBuffer<7>>::as_entire_buffer_empty(
+            context,
+            init_buffer_size,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+
+        Self {
+            vertex_buffer,
+            sprite_buffer,
+            transform_buffer,
+            sprites: Vec::new(),
+        }
+    }
+
+    pub fn append_sprites(
+        &mut self,
+        mut sprites: Vec<(Sprite, Transform, TextureDimensions, Option<AnimatedSprite>)>,
+    ) {
+        self.sprites.append(&mut sprites);
+    }
+
+    pub fn write_buffers(&mut self, context: &RenderContext, viewport: &ViewPort) {
+        self.sprites
+            .sort_by(|(s1, _, _, _), (s2, _, _, _)| s1.z.cmp(&s2.z));
+
+        let vertex_data: Vec<_> = self
+            .sprites
+            .iter()
+            .map(|(s, _, d, a)| s.to_vertices(&viewport, d, a.as_ref()))
+            .flatten()
+            .collect();
+        let sprite_data = self
+            .sprites
+            .iter()
+            .map(|(s, _, _, a)| s.to_raw(a.as_ref()))
+            .collect::<Vec<_>>();
+        let transform_data = self
+            .sprites
+            .iter()
+            .map(|(s, t, _, _)| s.transformation_matrix(t))
+            .collect::<Vec<_>>();
+
+        <VertexUv as AsVertexBuffer<0>>::write_buffer_resize::<VertexUv>(
+            &context,
+            &mut self.vertex_buffer,
+            &vertex_data,
+        );
+
+        <SpriteInstance as AsVertexBuffer<2>>::write_buffer_resize::<SpriteInstance>(
+            &context,
+            &mut self.sprite_buffer,
+            &sprite_data,
+        );
+
+        <Matrix4x4f as AsVertexBuffer<7>>::write_buffer_resize::<Matrix4x4f>(
+            &context,
+            &mut self.transform_buffer,
+            &transform_data,
+        );
+
+        self.sprites.clear();
+    }
+}
+
+#[derive(WinnyComponent)]
+struct SpritePipeline {
+    pipeline: RenderPipeline2d,
+    camera_binding: BindGroup,
+}
+
+impl SpritePipeline {
+    pub fn new<M: Material>(
+        material: M,
+        context: &RenderContext,
+        server: &mut AssetServer,
+        frag_shaders: &Assets<FragmentShader>,
+        vert_shader: &VertexShader,
+        sprite_buffers: &SpriteBuffers,
+    ) -> Self {
+        let material_binding_layout = M::layout(context);
+
+        let camera_binding = <&[CameraUniform] as AsBindGroup>::as_entire_binding_empty(
+            context,
+            &[],
+            std::mem::size_of::<CameraUniform>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+
+        let pipeline = RenderPipeline2d::from_material_layout(
+            format!("sprites: {}", M::LABEL).as_str(),
+            FragmentType::Sprite,
+            context,
+            server,
+            &[&camera_binding],
+            &material_binding_layout,
+            &[
+                &sprite_buffers.vertex_buffer,
+                &sprite_buffers.sprite_buffer,
+                &sprite_buffers.transform_buffer,
+            ],
+            vert_shader,
+            frag_shaders,
+            material,
+        );
+
+        Self {
+            pipeline,
+            camera_binding,
+        }
+    }
+}
+
+fn prepare_for_render_pass<M: Material>(
+    mut buffers: ResMut<SpriteBuffers>,
+    sprite_pipeline: Query<SpritePipeline, With<MaterialMarker<M>>>,
+    sprites: Query<
+        (Sprite, Transform, TextureDimensions, Option<AnimatedSprite>),
+        With<(M, SpritePipelineEntity, BindGroupHandle)>,
+    >,
+    context: Res<RenderContext>,
+    camera: Query<(Camera, Transform)>,
+    window: Res<Window>,
+) {
+    let Ok(pipeline) = sprite_pipeline.get_single() else {
+        return;
+    };
+
+    let Ok((camera, transform)) = camera.get_single() else {
+        return;
+    };
+
+    CameraUniform::write_buffer(
+        &context,
+        pipeline.camera_binding.single_buffer(),
+        &[CameraUniform::from_camera(camera, transform, &window)],
+    );
+
+    buffers.append_sprites(
+        sprites
+            .iter()
+            .map(|(s, t, d, a)| (s.clone(), t.clone(), d.clone(), a.cloned()))
+            .collect::<Vec<_>>(),
+    );
+}
+
+fn render_sprites(
+    mut buffers: ResMut<SpriteBuffers>,
+    mut encoder: ResMut<RenderEncoder>,
+    context: Res<RenderContext>,
+    sprite_pipelines: Query<(Entity, SpritePipeline)>,
+    sprites: Query<
+        (SpritePipelineEntity, Sprite, BindGroupHandle),
+        With<(Transform, TextureDimensions)>,
+    >,
+    bind_groups: Res<AssetBindGroups>,
+    view: Res<RenderView>,
+    window: Res<Window>,
+    camera: Query<Camera>,
+) {
+    let Ok(camera) = camera.get_single() else {
+        return;
+    };
+
+    let viewport = camera.viewport.unwrap_or_else(|| window.viewport);
+    let num_sprites_in_buffer = buffers.sprites.len();
+    buffers.write_buffers(&context, &viewport);
+
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("sprites"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
+    });
+
+    let mut sprites = sprites.iter().collect::<Vec<_>>();
+    sprites.sort_by(|(_, s1, _), (_, s2, _)| s1.z.cmp(&s2.z));
+
+    render_pass.set_vertex_buffer(0, buffers.vertex_buffer.buffer().slice(..));
+    render_pass.set_vertex_buffer(1, buffers.sprite_buffer.buffer().slice(..));
+    render_pass.set_vertex_buffer(2, buffers.transform_buffer.buffer().slice(..));
+
+    if sprites.len() != num_sprites_in_buffer {
+        println!("{}, {}", sprites.len(), num_sprites_in_buffer);
+        return;
+    }
+
+    // let mut last_pipeline_entity = None;
+    // let mut last_material_id = None;
+    let mut offset = 0;
+    for (pipeline_entity, _, material_binding) in sprites.iter() {
+        let (_, pipeline) = sprite_pipelines.get(pipeline_entity.0).unwrap();
+
+        // if last_pipeline_entity != Some(pipeline_entity) {
+        render_pass.set_pipeline(&pipeline.pipeline.0);
+        //     last_pipeline_entity = Some(pipeline_entity);
+        // }
+
+        // if last_material_id != Some(material_binding.id()) {
+        let material = bind_groups.get_from_id(material_binding.id()).unwrap();
+        render_pass.set_bind_group(0, pipeline.camera_binding.binding(), &[]);
+        render_pass.set_bind_group(1, &material.0.binding(), &[]);
+        //     last_material_id = Some(material_binding.id());
+        // }
+
+        render_pass.draw(offset * 6..offset * 6 + 6, offset..offset + 1);
+        offset += 1;
     }
 }

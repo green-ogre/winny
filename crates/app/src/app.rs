@@ -1,21 +1,3 @@
-use std::{collections::VecDeque, sync::Arc};
-
-use ecs::{
-    events::Events,
-    prelude::*,
-    schedule::{ScheduleLabel, Scheduler},
-    WinnyEvent, WinnyScheduleLabel,
-};
-use mouse_and_key::MouseMotion;
-use winit::{
-    application::ApplicationHandler,
-    dpi::PhysicalSize,
-    event::{self, DeviceEvent, DeviceId, ElementState},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::PhysicalKey,
-};
-use winny_math::vector::Vec2f;
-
 use crate::{
     input::mouse_and_key,
     plugins::{Plugin, PluginSet},
@@ -26,6 +8,22 @@ use crate::{
     prelude::{KeyCode, KeyInput, MouseInput, WindowPlugin},
     window::Window,
 };
+use ecs::{
+    events::Events,
+    prelude::*,
+    schedule::{ScheduleLabel, Scheduler},
+    WinnyEvent, WinnyScheduleLabel,
+};
+use mouse_and_key::MouseMotion;
+use std::{collections::VecDeque, sync::Arc};
+use winit::{
+    application::ApplicationHandler,
+    dpi::PhysicalSize,
+    event::{self, DeviceEvent, DeviceId, ElementState},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::PhysicalKey,
+};
+use winny_math::vector::Vec2f;
 
 #[derive(Debug, WinnyEvent)]
 pub struct AppExit;

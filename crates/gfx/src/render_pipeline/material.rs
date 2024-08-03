@@ -1,37 +1,58 @@
 use super::{
     bind_group::{
-        AsBindGroup, AsWgpuResources, DEFAULT_SAMPLER_BINDING, DEFAULT_TEXTURE_BINDING, UNIFORM,
+        AsBindGroup, AsWgpuResources, BufferType, DEFAULT_SAMPLER_BINDING, DEFAULT_TEXTURE_BINDING,
+        UNIFORM,
     },
     buffer::AsGpuBuffer,
+    shader::{FragmentShader, DEFAULT_MATERIAL_2D_PATH_PARTICLE, DEFAULT_MATERIAL_2D_PATH_SPRITE},
 };
-use crate::texture::{SamplerFilterType, Texture};
+use crate::{
+    particle::ParticlePlugin,
+    sprite::SpriteMaterialPlugin,
+    texture::{SamplerFilterType, Texture},
+};
 use app::plugins::Plugin;
+use app::render::RenderContext;
+use asset::{AssetServer, Handle};
 use ecs::{Component, WinnyComponent};
-use render::RenderContext;
+use std::marker::PhantomData;
 use winny_math::vector::Vec4f;
 
-pub struct MaterialPlugin;
+pub struct MaterialPlugin<M: Material>(PhantomData<M>);
 
-impl Plugin for MaterialPlugin {
+impl<M: Material> Plugin for MaterialPlugin<M> {
     fn build(&mut self, app: &mut app::app::App) {
-        // app.register_resource::<ShaderMaterial2dPipeline>()
-        //     .add_systems(Schedule::StartUp, startup)
-        //     .add_systems(AppSchedule::PreRender, apply_shader_materials);
+        app.add_plugins((ParticlePlugin::<M>::new(), SpriteMaterialPlugin::<M>::new()));
+    }
+}
+
+impl<M: Material> MaterialPlugin<M> {
+    pub fn new() -> Self {
+        Self(PhantomData)
     }
 }
 
 pub trait Material: AsBindGroup + Clone + Component {
+    const BLEND_STATE: wgpu::BlendState;
+
     fn resource_state<'s>(&self, texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s>;
-    fn fragment_shader(&self) -> &'static str;
+    fn particle_fragment_shader(&self, server: &mut AssetServer) -> Handle<FragmentShader>;
+    fn sprite_fragment_shader(&self, server: &mut AssetServer) -> Handle<FragmentShader>;
 }
 
 impl Material for Material2d {
+    const BLEND_STATE: wgpu::BlendState = wgpu::BlendState::ALPHA_BLENDING;
+
     fn resource_state<'s>(&self, texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s> {
         texture
     }
 
-    fn fragment_shader(&self) -> &'static str {
-        include_str!("../shaders/material2d.wgsl")
+    fn sprite_fragment_shader(&self, server: &mut AssetServer) -> Handle<FragmentShader> {
+        server.load(DEFAULT_MATERIAL_2D_PATH_SPRITE)
+    }
+
+    fn particle_fragment_shader(&self, server: &mut AssetServer) -> Handle<FragmentShader> {
+        server.load(DEFAULT_MATERIAL_2D_PATH_PARTICLE)
     }
 }
 
@@ -42,15 +63,17 @@ impl AsWgpuResources for Material2d {
         self,
         context: &RenderContext,
         label: &'static str,
-        state: &Self::State<'s>,
+        state: Self::State<'s>,
+        _buffer_type: Option<BufferType>,
     ) -> Vec<super::bind_group::WgpuResource> {
         let texture_resources =
-            state.as_wgpu_resources(context, label, &SamplerFilterType::Nearest);
+            state.as_wgpu_resources(context, label, SamplerFilterType::Nearest, None);
         let uniform_resources = <&[RawMaterial2d] as AsWgpuResources>::as_wgpu_resources(
             &[self.as_raw()],
             context,
             label,
-            &wgpu::BufferUsages::UNIFORM,
+            wgpu::BufferUsages::UNIFORM,
+            Some(BufferType::Init),
         );
 
         vec![texture_resources, uniform_resources]

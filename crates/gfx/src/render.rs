@@ -1,21 +1,16 @@
 use app::{
     app::AppSchedule,
     plugins::Plugin,
+    render::{RenderConfig, RenderContext, RenderDevice, RenderQueue},
     window::{Window, WindowResized},
 };
-use ecs::{
-    Commands, Res, ResMut, SparseArrayIndex, SparseSet, Take, WinnyComponent, WinnyResource,
-};
-use fxhash::FxHashMap;
+use ecs::{Commands, Res, ResMut, Take, WinnyResource};
 use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
 use util::tracing::trace;
-use wgpu::TextureFormat;
-
-pub mod prelude;
 
 pub struct RendererPlugin;
 
@@ -32,7 +27,7 @@ impl Plugin for RendererPlugin {
             .register_resource::<RenderOutput>()
             .register_resource::<RenderEncoder>()
             .register_resource::<RenderContext>()
-            .insert_resource(BindGroups::default())
+            // .insert_resource(BindGroups::default())
             // .insert_resource(Buffers::default())
             .add_systems(AppSchedule::Resized, resize)
             // .add_systems(AppSchedule::SubmitEncoder, submit_encoder)
@@ -71,8 +66,8 @@ fn startup(mut commands: Commands, window: Res<Window>) {
     let (device, queue, renderer) = Renderer::new(Arc::clone(&window.winit_window));
 
     let context = RenderContext {
-        device: RenderDevice(Arc::new(device)),
-        queue: RenderQueue(Arc::new(queue)),
+        device: RenderDevice::new(device),
+        queue: RenderQueue::new(queue),
         config: RenderConfig::from_config(&renderer.config),
     };
 
@@ -275,245 +270,5 @@ impl RenderOutput {
     }
 }
 
-/// Wraps the [`wgpu::Queue`].
-#[derive(Debug, Clone)]
-pub struct RenderQueue(Arc<wgpu::Queue>);
-
-impl Deref for RenderQueue {
-    type Target = wgpu::Queue;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// Wraps the [`wgpu::Device`].
-#[derive(Debug, Clone)]
-pub struct RenderDevice(Arc<wgpu::Device>);
-
-impl Deref for RenderDevice {
-    type Target = wgpu::Device;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// Wraps the [`wgpu::SurfaceConfiguration`].
-#[derive(Debug, Clone)]
-pub struct RenderConfig {
-    pub dimensions: Dimensions<u32>,
-    pub format: wgpu::TextureFormat,
-}
-
-impl RenderConfig {
-    fn from_config(value: &wgpu::SurfaceConfiguration) -> Self {
-        Self {
-            dimensions: Dimensions::new(value.width, value.height),
-            format: value.format,
-        }
-    }
-
-    pub fn width(&self) -> u32 {
-        self.dimensions.width()
-    }
-
-    pub fn height(&self) -> u32 {
-        self.dimensions.height()
-    }
-
-    pub fn widthf(&self) -> f32 {
-        self.dimensions.width() as f32
-    }
-
-    pub fn heightf(&self) -> f32 {
-        self.dimensions.height() as f32
-    }
-
-    pub fn format(&self) -> TextureFormat {
-        self.format
-    }
-}
-
-/// Described a width and height of unit T
-#[derive(WinnyComponent, Debug, Copy, Clone)]
-pub struct Dimensions<T: 'static + Copy + Send + Sync>((T, T));
-
-impl<T: 'static + Copy + Send + Sync> Dimensions<T> {
-    pub fn new(width: T, height: T) -> Self {
-        Self((width, height))
-    }
-
-    pub fn width(&self) -> T {
-        self.0 .0
-    }
-
-    pub fn height(&self) -> T {
-        self.0 .1
-    }
-}
-
-// #[derive(WinnyComponent)]
-// pub struct RenderBuffer(pub wgpu::Buffer);
-//
-// impl Deref for RenderBuffer {
-//     type Target = wgpu::Buffer;
-//     fn deref(&self) -> &Self::Target {
-//         &self.0
-//     }
-// }
-
-/// Handle to a [`wgpu::BindGroup`].
-#[derive(WinnyComponent)]
-pub struct RenderBindGroup(pub wgpu::BindGroup);
-
-impl Deref for RenderBindGroup {
-    type Target = wgpu::BindGroup;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// Handle to a [`RenderBindGroup`] stored within the [`BindGroups`] resource.
-#[derive(WinnyComponent, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BindGroupHandle(pub usize);
-
-impl SparseArrayIndex for BindGroupHandle {
-    fn index(&self) -> usize {
-        self.0
-    }
-}
-
-/// Stores [`RenderBindGroup`]s. Register and retrieve a RenderBindGroup with a
-/// [`BindGroupHandle`].
-#[derive(WinnyResource, Default)]
-pub struct BindGroups {
-    bindings: SparseSet<BindGroupHandle, RenderBindGroup>,
-    stored_bindings: FxHashMap<String, BindGroupHandle>,
-}
-
-impl BindGroups {
-    pub fn get(&self, handle: BindGroupHandle) -> Option<&RenderBindGroup> {
-        self.bindings.get(&handle)
-    }
-
-    pub fn get_handle_or_insert_with(
-        &mut self,
-        path: &String,
-        bind_group: impl FnOnce() -> RenderBindGroup,
-    ) -> BindGroupHandle {
-        if let Some(handle) = self.stored_bindings.get(path) {
-            *handle
-        } else {
-            util::tracing::info!("inserting new bind group");
-            let index = self.bindings.insert_in_first_empty(bind_group());
-            let handle = BindGroupHandle(index);
-            self.stored_bindings.insert(path.clone(), handle);
-
-            handle
-        }
-    }
-
-    pub fn get_with_path(&self, path: &String) -> Option<BindGroupHandle> {
-        self.stored_bindings.get(path).cloned()
-    }
-}
-
-// #[derive(WinnyComponent, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-// pub struct BufferHandle(usize);
-//
-// impl SparseArrayIndex for BufferHandle {
-//     fn index(&self) -> usize {
-//         self.0
-//     }
-// }
-//
-// #[derive(WinnyResource, Default)]
-// pub struct Buffers {
-//     buffers: SparseSet<BufferHandle, RenderBuffer>,
-//     stored_buffers: FxHashMap<String, BufferHandle>,
-// }
-//
-// impl Buffers {
-//     pub fn get(&self, handle: BufferHandle) -> Option<&RenderBuffer> {
-//         self.buffers.get(&handle)
-//     }
-//
-//     pub fn get_handle_or_insert_with(
-//         &mut self,
-//         path: &String,
-//         bind_group: impl FnOnce() -> RenderBuffer,
-//     ) -> BufferHandle {
-//         if let Some(handle) = self.stored_buffers.get(path) {
-//             *handle
-//         } else {
-//             util::tracing::info!("inserting new buffer");
-//             let index = self.buffers.insert_in_first_empty(bind_group());
-//             let handle = BufferHandle(index);
-//             self.stored_buffers.insert(path.clone(), handle);
-//
-//             handle
-//         }
-//     }
-// }
-
-/// Handle to the resources required for wgpu resource aquisition.
-#[derive(WinnyResource, Debug, Clone)]
-pub struct RenderContext {
-    pub queue: RenderQueue,
-    pub device: RenderDevice,
-    pub config: RenderConfig,
-}
-
 // #[derive(WinnyComponent, PartialEq, Eq)]
 // pub struct RenderLayer(pub u8);
-
-// pub trait RenderPassCommand: Send + Sync + 'static {
-//     // TODO: errors?
-//     fn render(
-//         &self,
-//         // pipelines: &Pipelines,
-//         // bind_groups: &BindGroups,
-//         // vertex_buffers: &VertexBuffers,
-//         // uniform_buffers: &UniformBuffers,
-//     );
-// }
-//
-// #[derive(WinnyComponent)]
-// pub struct RenderPass {
-//     commands: Vec<Box<dyn RenderPassCommand>>,
-// }
-
-// impl RenderPass {
-//     pub fn new(commands: Vec<Box<dyn RenderPassCommand>>) -> Self {
-//         Self { commands }
-//     }
-//
-//     pub fn run(&self
-//         pipelines: &Pipelines,
-//         bind_groups: &BindGroups,
-//         vertex_buffers: &VertexBuffers,
-//         uniform_buffers: &UniformBuffers,
-//     ) {
-//         self.commands.iter().for_each(|c| c.render(pipelines, bind_groups, vertex_buffers, uniform_buffers));
-//     }
-// }
-//
-// pub struct Pipelines(FxHashMap<RenderHandle<Pipeline>, >)
-//
-// #[derive(WinnyBundle)]
-// pub struct RenderPassBundle {
-//     pub pass: RenderPass,
-//     pub layer: RenderLayer,
-// }
-
-// pub struct SetPipeline(Handle<RenderPipeline>);
-// impl RenderPassCommand for SetPipeline {}
-// pub struct SetBindGroup(Handle<BindGroup>);
-// impl RenderPassCommand for SetBindGroup {}
-// pub struct SetVertexBuffer(Handle<VertexBuffer>);
-// impl RenderPassCommand for SetVertexBuffer {}
-// pub struct SetUniformBuffer(Handle<UniformBuffer>);
-// impl RenderPassCommand for SetUniformBuffer {}
-// pub struct DrawInstanced();
-// impl RenderPassCommand for DrawInstanced {}
-// pub struct Draw();
-// impl RenderPassCommand for Draw {}

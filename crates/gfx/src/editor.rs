@@ -1,8 +1,48 @@
-use app::{app::Schedule, plugins::Plugin, window::Window};
+use app::{
+    app::Schedule,
+    plugins::Plugin,
+    window::{ViewPort, Window},
+};
 use ecs::{prelude::*, WinnyResource};
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
 
-use crate::gui::{EguiPlugin, UiRenderState};
+use crate::{
+    camera::Camera,
+    gui::{EguiPlugin, UiRenderState},
+};
+
+pub struct EditorPlugin;
+
+impl Plugin for EditorPlugin {
+    fn build(&mut self, app: &mut app::app::App) {
+        app.register_resource::<UiState>()
+            .add_plugins(EguiPlugin::<UiState>::new())
+            .add_systems(Schedule::StartUp, startup)
+            .add_systems(Schedule::PostUpdate, update_camera_viewport);
+    }
+}
+
+fn startup(mut commands: Commands, window: Res<Window>) {
+    let ui_state = UiState::new(&window);
+    commands.insert_resource(ui_state);
+}
+
+fn update_camera_viewport(mut camera: Query<Mut<Camera>>, ui: Res<UiState>) {
+    let Ok(camera) = camera.get_single_mut() else {
+        return;
+    };
+
+    if ui.viewport_rect == egui::Rect::ZERO {
+        return;
+    }
+
+    let viewport = ViewPort {
+        min: [ui.viewport_rect.min.x, ui.viewport_rect.min.y].into(),
+        max: [ui.viewport_rect.max.x, ui.viewport_rect.max.y].into(),
+    };
+
+    camera.viewport = Some(viewport);
+}
 
 #[derive(WinnyResource, Clone)]
 pub struct UiState {
@@ -138,37 +178,5 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 
     fn clear_background(&self, window: &Self::Tab) -> bool {
         !matches!(window, EguiWindow::GameView)
-    }
-}
-
-// fn update_camera_viewport(mut cameras: Query<Mut<Camera>>, ui: Res<UiState>) {
-//     if ui.viewport_rect == egui::Rect::ZERO {
-//         return;
-//     }
-//
-//     let viewport = ViewPort {
-//         min: [ui.viewport_rect.min.x, ui.viewport_rect.min.y].into(),
-//         max: [ui.viewport_rect.max.x, ui.viewport_rect.max.y].into(),
-//     };
-//
-//     for camera in cameras.iter_mut() {
-//         info!("{viewport:?}");
-//         camera.view_port = Some(viewport);
-//     }
-// }
-
-fn startup(mut commands: Commands, window: Res<Window>) {
-    let ui_state = UiState::new(&window);
-    commands.insert_resource(ui_state);
-}
-
-pub struct EditorPlugin;
-
-impl Plugin for EditorPlugin {
-    fn build(&mut self, app: &mut app::app::App) {
-        app.register_resource::<UiState>()
-            .add_plugins(EguiPlugin::<UiState>::new())
-            .add_systems(Schedule::StartUp, startup);
-        // .add_systems(Schedule::PostUpdate, update_camera_viewport);
     }
 }

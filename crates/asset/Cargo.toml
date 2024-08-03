@@ -7,7 +7,6 @@ edition = "2021"
 util = { path = "../util" }
 app = { path = "../app" }
 ecs = { path = "../ecs" }
-render = { path = "../render" }
 
 pollster = "0.3.0"
 

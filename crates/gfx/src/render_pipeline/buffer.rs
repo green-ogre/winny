@@ -1,13 +1,16 @@
-use bytemuck::NoUninit;
-use render::RenderContext;
+use app::render::RenderContext;
+use bytemuck::{NoUninit, Pod};
 use wgpu::util::DeviceExt;
 use winny_math::{
     matrix::Matrix4x4f,
     vector::{Vec2f, Vec4f},
 };
 
-/// Must derive [`bytemuck::Pod`], [`bytemuck::Zeroable`], and be [`repr(C)`]
-pub unsafe trait AsGpuBuffer: Sized + NoUninit {
+/// Must derive [`bytemuck::Pod`], [`bytemuck::Zeroable`], and be [`repr(C)`] while maintining
+/// aligment as defined by WebGPU:
+///
+/// https://www.w3.org/TR/WGSL/#memory-layouts
+pub unsafe trait AsGpuBuffer: Sized + NoUninit + Pod {
     fn create_buffer(
         label: Option<&'static str>,
         context: &RenderContext,
@@ -26,14 +29,14 @@ pub unsafe trait AsGpuBuffer: Sized + NoUninit {
         label: Option<&'static str>,
         context: &RenderContext,
         contents: &[Self],
-        usage: &wgpu::BufferUsages,
+        usage: wgpu::BufferUsages,
     ) -> wgpu::Buffer {
         context
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label,
                 contents: bytemuck::cast_slice(contents),
-                usage: *usage,
+                usage,
             })
     }
 

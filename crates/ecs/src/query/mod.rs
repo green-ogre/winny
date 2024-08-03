@@ -140,6 +140,9 @@ impl_query_data!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6));
 impl_query_data!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7));
 impl_query_data!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8));
 impl_query_data!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8)(K, 9));
+impl_query_data!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8)(K, 9)(L, 10));
+impl_query_data!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8)(K, 9)(L, 10)(M, 11));
+impl_query_data!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(J, 8)(K, 9)(L, 10)(M, 11)(N, 12));
 
 pub struct Mut<T>(PhantomData<T>);
 

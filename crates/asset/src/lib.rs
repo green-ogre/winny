@@ -1,3 +1,13 @@
+use app::render::RenderContext;
+use app::{
+    app::{App, AppSchedule},
+    plugins::Plugin,
+};
+use ecs::{
+    DumbVec, EventWriter, Res, ResMut, SparseArrayIndex, SparseSet, WinnyComponent, WinnyEvent,
+    WinnyResource,
+};
+use reader::ByteReader;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -13,18 +23,6 @@ use std::{
         Arc,
     },
 };
-
-use app::{
-    app::{App, AppSchedule},
-    plugins::Plugin,
-};
-use ecs::{
-    DumbVec, EventWriter, Res, ResMut, SparseArrayIndex, SparseSet, WinnyComponent, WinnyEvent,
-    WinnyResource,
-};
-use reader::ByteReader;
-
-use render::{RenderConfig, RenderContext, RenderDevice, RenderQueue};
 use util::tracing::{error, info, trace, trace_span};
 
 pub mod prelude;
@@ -102,6 +100,10 @@ impl<A: Asset> Handle<A> {
 
     pub fn point_to(&mut self, other: &Handle<A>) {
         self.0 = other.id();
+        self.mark_changed();
+    }
+
+    pub fn mark_changed(&mut self) {
         self.1.increment();
     }
 
@@ -133,8 +135,17 @@ impl<A: Asset> Into<Handle<A>> for ErasedHandle {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AssetId(u64);
+
+impl Debug for AssetId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssetId")
+            .field("hash", &self.hash())
+            .field("index", &self.index())
+            .finish()
+    }
+}
 
 impl AssetId {
     pub fn new(hash: u32, storage_index: u32) -> Self {
@@ -277,7 +288,7 @@ impl Debug for InternalAssetLoader {
 }
 
 impl InternalAssetLoader {
-    pub fn new(loader: impl ErasedAssetLoader, async_dispatch: AssetFuture) -> Self {
+    pub fn new(loader: impl AssetLoader, async_dispatch: AssetFuture) -> Self {
         Self {
             handler: AssetHandleCreator::new(),
             async_dispatch,
@@ -338,8 +349,8 @@ impl AssetHandleCreator {
 #[derive(Debug)]
 struct AssetLoaders {
     loaders: Vec<InternalAssetLoader>,
-    ext_to_loader: Vec<(Vec<&'static str>, usize)>,
-    loaded_assets: HashMap<String, ErasedHandle>,
+    ext_to_loader: Vec<(&'static [&'static str], usize)>,
+    loaded_assets: HashMap<String, (TypeId, ErasedHandle)>,
 }
 
 impl AssetLoaders {
@@ -351,7 +362,7 @@ impl AssetLoaders {
         }
     }
 
-    pub fn register_loader(&mut self, loader: impl ErasedAssetLoader, future: AssetFuture) {
+    pub fn register_loader(&mut self, loader: impl AssetLoader, future: AssetFuture) {
         self.ext_to_loader
             .push((loader.extensions(), self.loaders.len()));
         self.loaders.push(InternalAssetLoader::new(loader, future));
@@ -383,7 +394,7 @@ impl AssetLoaders {
             match result {
                 Ok(h) => {
                     let handle = h.into();
-                    self.loaded_assets.insert(key, handle);
+                    self.loaded_assets.insert(key, (TypeId::of::<A>(), handle));
                     return handle.into();
                 }
                 Err(a) => erased_asset = Some(a),
@@ -399,9 +410,11 @@ impl AssetLoaders {
         path: P,
         context: RenderContext,
     ) -> Handle<A> {
-        if let Some(handle) = self.loaded_assets.get(path.as_ref().to_str().unwrap()) {
-            trace!("found loaded asset, returning");
-            return handle.into_typed_handle();
+        if let Some((type_id, handle)) = self.loaded_assets.get(path.as_ref().to_str().unwrap()) {
+            if *type_id == TypeId::of::<A>() {
+                trace!("found loaded asset, returning");
+                return handle.into_typed_handle();
+            }
         }
 
         trace!("loaded asset not found");
@@ -432,7 +445,8 @@ impl AssetLoaders {
             match result {
                 Ok(h) => {
                     let handle = h.into();
-                    self.loaded_assets.insert(path.clone(), handle);
+                    self.loaded_assets
+                        .insert(path.clone(), (TypeId::of::<A>(), handle));
                     return handle.into();
                 }
                 _ => {}
@@ -459,7 +473,7 @@ impl AssetServer {
         }
     }
 
-    pub fn register_loader(&mut self, loader: impl ErasedAssetLoader, future: AssetFuture) {
+    pub fn register_loader(&mut self, loader: impl AssetLoader, future: AssetFuture) {
         self.loaders.register_loader(loader, future);
     }
 
@@ -623,8 +637,11 @@ impl Display for AssetLoaderError {
 
 impl std::error::Error for AssetLoaderError {}
 
+pub trait AssetLoadState: Clone + Send + Sync + 'static {}
+
 pub trait AssetLoader: Send + Sync + 'static {
     type Asset: Asset;
+    // type LoadState: AssetLoadState;
 
     fn load(
         context: RenderContext,
@@ -632,7 +649,8 @@ pub trait AssetLoader: Send + Sync + 'static {
         path: String,
         ext: &str,
     ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>>;
-    fn extensions(&self) -> Vec<&'static str>;
+    // fn load_state(&self) -> Self::LoadState;
+    fn extensions(&self) -> &'static [&'static str];
 }
 
 pub trait ErasedAssetLoader: Send + Sync + 'static {
@@ -652,7 +670,7 @@ pub trait ErasedAssetLoader: Send + Sync + 'static {
         asset: ErasedLoadedAsset,
         asset_type_id: TypeId,
     ) -> Result<ErasedHandle, ErasedLoadedAsset>;
-    fn extensions(&self) -> Vec<&'static str>;
+    fn extensions(&self) -> &'static [&'static str];
 }
 
 pub struct AsyncAssetSender {
@@ -734,7 +752,7 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
         Ok(handle)
     }
 
-    fn extensions(&self) -> Vec<&'static str> {
+    fn extensions(&self) -> &'static [&'static str] {
         self.extensions()
     }
 }
