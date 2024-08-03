@@ -1,4 +1,7 @@
-use winny_math::vector::{Vec2f, Vec3f, Vec4f};
+use winny_math::{
+    matrix::Matrix4x4f,
+    vector::{Vec2f, Vec3f, Vec4f},
+};
 
 // pub const FULLSCREEN_QUAD_VERTEX: [Vertex; 6] = [
 //     Vertex {
@@ -141,20 +144,6 @@ impl VertexUv {
             position,
             uv,
             _padding: [0.0, 0.0],
-        }
-    }
-}
-
-impl<const Offset: u32> VertexLayout<Offset> for u32 {
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<u32>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: Offset,
-                format: wgpu::VertexFormat::Uint32,
-            }],
         }
     }
 }

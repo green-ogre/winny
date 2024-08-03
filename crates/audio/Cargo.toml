@@ -8,8 +8,6 @@ util = { path = "../util" }
 asset = { path = "../asset" }
 app = { path = "../app" }
 ecs = { path = "../ecs" }
-# for asset loading, not actually used
-render = { path = "../render" }
 
 cpal = { version = "0.15.3", features = ["wasm-bindgen"] }
 hound = "3.5.1"

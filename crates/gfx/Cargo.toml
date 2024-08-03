@@ -12,7 +12,6 @@ ecs = { path = "../ecs" }
 winny_math = { path = "../winny_math" }
 app = { path = "../app" }
 asset = { path = "../asset" }
-render = { path = "../render" }
 
 cgmath = "0.18"
 tobj = { version = "4.0.2", features = ["async"] }

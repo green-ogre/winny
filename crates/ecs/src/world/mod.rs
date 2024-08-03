@@ -13,12 +13,12 @@ pub use self::unsafe_world::UnsafeWorldCell;
 
 #[derive(Debug, Default)]
 pub struct World {
-    pub(crate) archetypes: Archetypes,
-    pub(crate) tables: Tables,
-    pub(crate) resources: Resources,
-    pub(crate) components: Components,
-    pub(crate) entities: Entities,
-    pub(crate) bundles: Bundles,
+    pub archetypes: Archetypes,
+    pub tables: Tables,
+    pub resources: Resources,
+    pub components: Components,
+    pub entities: Entities,
+    pub bundles: Bundles,
 }
 
 impl World {

@@ -9,8 +9,10 @@ ecs = { path = "../ecs" }
 util = { path = "../util" }
 winny_math = { path = "../winny_math" }
 
+wgpu = "0.20.1"
 chrono = { version = "0.4.19", features = ["wasmbind"] }
 winit = { version = "0.30.3", features = ["rwh_05"] }
+bytemuck = { version = "1.12", features = ["derive"] }
 
 gilrs = { version = "0.10.3", optional = true }
 

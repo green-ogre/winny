@@ -163,7 +163,7 @@ macro_rules! impl_system {
     }
 }
 
-all_tuples!(impl_system, 1, 10, P);
+all_tuples!(impl_system, 1, 15, P);
 
 pub trait IntoCondition<Input> {
     type Sys: System<Out = bool>;

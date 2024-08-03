@@ -1,21 +1,18 @@
-#![allow(unused)]
-
-use std::{marker::PhantomData, ops::Deref};
-
+use app::render::{RenderContext, RenderDevice, RenderQueue};
 use app::{
     app::{App, AppSchedule, Schedule},
     input::mouse_and_key::{KeyCode, KeyInput, KeyState, MouseButton, MouseInput, MouseMotion},
     plugins::Plugin,
     window::Window,
-    winit::event::{ElementState, WindowEvent},
 };
 use ecs::{Commands, EventReader, Res, ResMut, Resource, WinnyResource};
-use egui::{Context, RawInput, Rect, Vec2};
-use egui_dock::{DockArea, DockState, NodeIndex, Style};
+use egui::{Context, Rect, Vec2};
 use egui_wgpu::ScreenDescriptor;
-use render::{RenderConfig, RenderDevice, RenderEncoder, RenderQueue, RenderView};
+use std::{marker::PhantomData, ops::Deref};
 
 use util::prelude::*;
+
+use crate::render::{RenderEncoder, RenderView};
 
 #[derive(WinnyResource)]
 pub struct EguiRenderer {
@@ -37,12 +34,8 @@ impl std::fmt::Debug for EguiRenderer {
 }
 
 impl EguiRenderer {
-    pub fn new(
-        device: &RenderDevice,
-        output_color_format: wgpu::TextureFormat,
-        msaa_samples: u32,
-        window: &Window,
-    ) -> Self {
+    pub fn new(device: &RenderDevice, output_color_format: wgpu::TextureFormat) -> Self {
+        let msaa_samples = 1;
         let context = egui::Context::default();
         let viewport_id = context.viewport_id();
         let renderer = egui_wgpu::Renderer::new(device, output_color_format, None, msaa_samples);
@@ -80,25 +73,6 @@ impl EguiRenderer {
                 modifiers: self.egui_input.modifiers,
             });
         }
-
-        // if let Some(text) = &text {
-        //     // Make sure there is text, and that it is not control characters
-        //     // (e.g. delete is sent as "\u{f728}" on macOS).
-        //     if !text.is_empty() && text.chars().all(is_printable_char) {
-        //         // On some platforms we get here when the user presses Cmd-C (copy), ctrl-W, etc.
-        //         // We need to ignore these characters that are side-effects of commands.
-        //         // Also make sure the key is pressed (not released). On Linux, text might
-        //         // contain some data even when the key is released.
-        //         let is_cmd = self.egui_input.modifiers.ctrl
-        //             || self.egui_input.modifiers.command
-        //             || self.egui_input.modifiers.mac_cmd;
-        //         if pressed && !is_cmd {
-        //             self.egui_input
-        //                 .events
-        //                 .push(egui::Event::Text(text.to_string()));
-        //         }
-        //     }
-        // }
     }
 
     fn on_mouse_motion(&mut self, window: &Window, event: &MouseMotion) {
@@ -126,7 +100,6 @@ impl EguiRenderer {
             let button = match event.button {
                 MouseButton::Left => egui::PointerButton::Primary,
                 MouseButton::Right => egui::PointerButton::Secondary,
-                _ => unimplemented!(),
             };
 
             self.egui_input.events.push(egui::Event::PointerButton {
@@ -236,19 +209,25 @@ fn render_gui<S: UiRenderState>(
     mut egui: ResMut<EguiRenderer>,
     mut encoder: ResMut<RenderEncoder>,
     mut state: ResMut<S>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
+    context: Res<RenderContext>,
     window: Res<Window>,
     view: Res<RenderView>,
-    config: Res<RenderConfig>,
 ) {
     let size = window.winit_window.inner_size();
-    if size.width != config.width() as u32 || size.height != config.height() as u32 {
+    if size.width != context.config.width() as u32 || size.height != context.config.height() as u32
+    {
         util::tracing::warn!("skipping frame: render/window size mismatch");
         return;
     }
 
-    egui.render(&device, &queue, &mut encoder, &window, &view, state.ui());
+    egui.render(
+        &context.device,
+        &context.queue,
+        &mut encoder,
+        &window,
+        &view,
+        state.ui(),
+    );
 }
 
 pub trait UiRenderState: Resource {
@@ -275,13 +254,8 @@ fn handle_input(
     }
 }
 
-fn startup(
-    mut commands: Commands,
-    device: Res<RenderDevice>,
-    config: Res<RenderConfig>,
-    window: Res<Window>,
-) {
-    let egui_renderer = EguiRenderer::new(&device, config.format(), 1, &window);
+fn startup(mut commands: Commands, context: Res<RenderContext>) {
+    let egui_renderer = EguiRenderer::new(&context.device, context.config.format());
     commands.insert_resource(egui_renderer);
 }
 
@@ -305,6 +279,47 @@ impl<S: UiRenderState> Plugin for EguiPlugin<S> {
 fn into_key(key: KeyCode) -> egui::Key {
     match key {
         KeyCode::A => egui::Key::A,
-        _ => unimplemented!(),
+        KeyCode::B => egui::Key::B,
+        KeyCode::C => egui::Key::C,
+        KeyCode::D => egui::Key::D,
+        KeyCode::E => egui::Key::E,
+        KeyCode::F => egui::Key::F,
+        KeyCode::G => egui::Key::G,
+        KeyCode::H => egui::Key::H,
+        KeyCode::I => egui::Key::I,
+        KeyCode::J => egui::Key::J,
+        KeyCode::K => egui::Key::K,
+        KeyCode::L => egui::Key::L,
+        KeyCode::M => egui::Key::M,
+        KeyCode::N => egui::Key::N,
+        KeyCode::O => egui::Key::O,
+        KeyCode::P => egui::Key::P,
+        KeyCode::Q => egui::Key::Q,
+        KeyCode::R => egui::Key::R,
+        KeyCode::S => egui::Key::S,
+        KeyCode::T => egui::Key::T,
+        KeyCode::U => egui::Key::U,
+        KeyCode::V => egui::Key::V,
+        KeyCode::W => egui::Key::W,
+        KeyCode::X => egui::Key::X,
+        KeyCode::Y => egui::Key::Y,
+        KeyCode::Z => egui::Key::Z,
+        KeyCode::Key1 => egui::Key::Num1,
+        KeyCode::Key2 => egui::Key::Num2,
+        KeyCode::Key3 => egui::Key::Num3,
+        KeyCode::Key4 => egui::Key::Num4,
+        KeyCode::Key5 => egui::Key::Num5,
+        KeyCode::Key6 => egui::Key::Num6,
+        KeyCode::Key7 => egui::Key::Num7,
+        KeyCode::Key8 => egui::Key::Num8,
+        KeyCode::Key9 => egui::Key::Num9,
+        KeyCode::Key0 => egui::Key::Num0,
+        KeyCode::Space => egui::Key::Space,
+        KeyCode::Escape => egui::Key::Escape,
+        _ => {
+            // TODO: all keys
+            warn!("{:?} not converted to egui::Key", key);
+            egui::Key::F35
+        }
     }
 }

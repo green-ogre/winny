@@ -195,6 +195,11 @@ impl SystemSet {
     }
 }
 
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a `System`/`SystemSet`",
+    label = "invalid `System`",
+    note = "only include `Resource` and `Component` types in the system signature"
+)]
 pub trait IntoSystemStorage<Marker>
 where
     Self: Sized,
@@ -248,4 +253,4 @@ macro_rules! impl_into_system_tuple {
     }
 }
 
-all_tuples!(impl_into_system_tuple, 1, 10, F, P);
+all_tuples!(impl_into_system_tuple, 1, 15, F, P);

@@ -191,10 +191,17 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
         self.indexes.push(index);
     }
 
-    pub fn insert_in_first_empty(&mut self, value: V) -> usize {
+    pub fn insert_in_first_empty<F>(&mut self, value: V, create_index: F) -> I
+    where
+        F: FnOnce(usize) -> I,
+    {
         let dense_index = self.dense.len();
         self.dense.push(value);
-        self.sparse.insert_in_first_empty(dense_index)
+        let index = self.sparse.insert_in_first_empty(dense_index);
+        let index = create_index(index);
+        self.indexes.push(index);
+
+        index
     }
 
     pub fn get(&self, index: &I) -> Option<&V> {
@@ -297,5 +304,23 @@ impl<I: SparseArrayIndex, V> SparseSet<I, V> {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut V)> {
         self.indexes.iter().zip(self.dense.iter_mut())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remove() {
+        let mut sparse_set = SparseSet::default();
+        sparse_set.insert(0, 0);
+        sparse_set.insert(1, 1);
+        sparse_set.insert(2, 2);
+        println!("{sparse_set:#?}");
+        let val = sparse_set.remove(&1);
+        println!("{val:?} - {sparse_set:#?}");
+        sparse_set.insert_in_first_empty(1, |i| i);
+        println!("{val:?} - {sparse_set:#?}");
     }
 }

@@ -1,18 +1,17 @@
-#![allow(unused)]
-
-use app::{
-    app::AppExit,
-    plugins::{Plugin, PluginSet},
-    prelude::{KeyCode, KeyInput},
-    time::TimePlugin,
-    window::WindowPlugin,
-};
+use app::{plugins::Plugin, time::TimePlugin, window::WindowPlugin};
 use asset::AssetLoaderPlugin;
 use audio::AudioPlugin;
-use ecs::{EventReader, EventWriter};
-use gfx::texture::TexturePlugin;
+use gfx::render::RendererPlugin;
+use gfx::{
+    render_pipeline::{
+        bind_group::BindGroupPlugin,
+        material::{Material2d, MaterialPlugin},
+        shader::ShaderPlugin,
+    },
+    sprite::SpritePlugin,
+    texture::TexturePlugin,
+};
 use log::LogPlugin;
-use render::RendererPlugin;
 
 pub extern crate app;
 pub extern crate asset;
@@ -21,7 +20,6 @@ pub extern crate ecs;
 pub extern crate gfx;
 #[cfg(feature = "hot_reload")]
 pub extern crate hot_reload;
-pub extern crate render;
 extern crate self as winny;
 pub extern crate util;
 pub extern crate winny_math as math;
@@ -68,11 +66,15 @@ impl Plugin for DefaultPlugins {
             TimePlugin,
             self.window.clone(),
             RendererPlugin,
+            BindGroupPlugin,
             self.asset_loader.clone(),
             // CameraPlugin,
             TexturePlugin,
             // ModelPlugin,
+            SpritePlugin,
             AudioPlugin,
-        ));
+            ShaderPlugin,
+        ))
+        .add_plugins(MaterialPlugin::<Material2d>::new());
     }
 }

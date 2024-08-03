@@ -1,14 +1,18 @@
 use app::app::AppSchedule;
+use app::window::{ViewPort, Window};
 use asset::{
     Asset, AssetApp, AssetLoader, AssetLoaderError, AssetLoaderEvent, AssetServer, Assets, Handle,
 };
-use ecs::{Commands, EventReader, Res, ResMut, WinnyResource};
+use ecs::{Commands, EventReader, Query, Res, ResMut, WinnyResource};
 use wgpu_text::glyph_brush::ab_glyph::FontRef;
 use wgpu_text::glyph_brush::{Extra, Section};
 use wgpu_text::{BrushBuilder, TextBrush};
 
 use app::plugins::Plugin;
-use render::{RenderConfig, RenderContext, RenderDevice, RenderEncoder, RenderQueue, RenderView};
+use app::render::{RenderContext, RenderDevice, RenderQueue};
+
+use crate::camera::Camera;
+use crate::render::{RenderEncoder, RenderView};
 
 pub struct TextPlugin {
     text_path: String,
@@ -45,12 +49,12 @@ struct TextAssetLoader;
 impl AssetLoader for TextAssetLoader {
     type Asset = Ttf;
 
-    fn extensions(&self) -> Vec<&'static str> {
-        vec!["ttf"]
+    fn extensions(&self) -> &'static [&'static str] {
+        &["ttf"]
     }
 
     fn load(
-        _context: render::RenderContext,
+        _context: app::render::RenderContext,
         mut reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
         _path: String,
         _ext: &str,
@@ -87,13 +91,16 @@ fn text_setup(
     context: Res<RenderContext>,
     fonts: Res<Assets<Ttf>>,
     handle: Res<TextHandle>,
+    camera: Query<Camera>,
+    window: Res<Window>,
 ) {
+    let Ok(camera) = camera.get_single() else {
+        return;
+    };
+
+    let viewport = camera.viewport.unwrap_or_else(|| window.viewport);
     let font_bytes = &fonts.get(&handle.0).unwrap().bytes;
-    commands.insert_resource(TextRenderer::new(
-        font_bytes,
-        &context.device,
-        &context.config,
-    ));
+    commands.insert_resource(TextRenderer::new(font_bytes, &context, &viewport));
 }
 
 #[derive(WinnyResource)]
@@ -102,12 +109,12 @@ pub struct TextRenderer {
 }
 
 impl TextRenderer {
-    pub fn new(font_bytes: &'static [u8], device: &RenderDevice, config: &RenderConfig) -> Self {
+    pub fn new(font_bytes: &'static [u8], context: &RenderContext, viewport: &ViewPort) -> Self {
         let brush = BrushBuilder::using_font_bytes(&font_bytes).unwrap().build(
-            device,
-            config.width() as u32,
-            config.height() as u32,
-            config.format(),
+            &context.device,
+            viewport.width() as u32,
+            viewport.height() as u32,
+            context.config.format(),
         );
 
         Self { brush }
