@@ -6,21 +6,15 @@ use app::window::Window;
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
 use winny_math::matrix::Matrix4x4f;
 
-// pub struct CameraPlugin;
-//
-// impl Plugin for CameraPlugin {
-//     fn build(&mut self, app: &mut app::app::App) {}
-// }
-
 #[derive(WinnyBundle, Default)]
 pub struct Camera2dBundle {
     camera: Camera,
     transform: Transform,
 }
 
-/// Defines the [`ViewPort`] into the world.
+/// Defines what [`ViewPort`] the world should be drawn to.
 ///
-/// At the moment, only ONE camera may exist at a time.
+/// At the moment, only _one_ camera may exist at a time.
 #[derive(WinnyComponent, Default)]
 pub struct Camera {
     // Window viewport if None.
@@ -44,9 +38,21 @@ pub(crate) struct CameraUniform {
 impl CameraUniform {
     pub fn from_camera(camera: &Camera, transform: &Transform, window: &Window) -> Self {
         let viewport = camera.viewport.unwrap_or_else(|| window.viewport);
+        let mut transform = transform.as_matrix();
+
+        // let viewport_center = viewport.center();
+        // let screen_center = window.viewport.center();
+        // let mut offset = screen_center - viewport_center;
+        // offset.x *= viewport.width() / window.viewport.width();
+        // offset.y *= viewport.height() / window.viewport.height();
+        // transform.m[0][3] -= offset.x;
+        // transform.m[1][3] -= offset.y;
+
+        // The why will already be flipped
+        transform.m[0][3] *= -1.0;
 
         Self {
-            transform: transform.as_matrix(),
+            transform,
             viewport_dimensions: Dimensions::new(viewport.width(), viewport.height()),
             window_dimensions: Dimensions::new(window.viewport.width(), window.viewport.height()),
         }

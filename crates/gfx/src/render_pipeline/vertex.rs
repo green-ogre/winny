@@ -26,45 +26,33 @@ use winny_math::{
 
 pub const FULLSCREEN_QUAD_VERTEX_UV: [VertexUv; 6] = [
     VertexUv {
-        position: Vec4f {
-            v: [-1.0, 1.0, 0.0, 1.0],
-        },
-        uv: Vec2f { v: [0.0, 0.0] },
+        position: Vec4f::new(-1.0, 1.0, 0.0, 1.0),
+        uv: Vec2f::new(0.0, 0.0),
         _padding: [0.0, 0.0],
     },
     VertexUv {
-        position: Vec4f {
-            v: [-1.0, -1.0, 0.0, 1.0],
-        },
-        uv: Vec2f { v: [0.0, 1.0] },
+        position: Vec4f::new(-1.0, -1.0, 0.0, 1.0),
+        uv: Vec2f::new(0.0, 1.0),
         _padding: [0.0, 0.0],
     },
     VertexUv {
-        position: Vec4f {
-            v: [1.0, -1.0, 0.0, 1.0],
-        },
-        uv: Vec2f { v: [1.0, 1.0] },
+        position: Vec4f::new(1.0, -1.0, 0.0, 1.0),
+        uv: Vec2f::new(1.0, 1.0),
         _padding: [0.0, 0.0],
     },
     VertexUv {
-        position: Vec4f {
-            v: [-1.0, 1.0, 0.0, 1.0],
-        },
-        uv: Vec2f { v: [0.0, 0.0] },
+        position: Vec4f::new(-1.0, 1.0, 0.0, 1.0),
+        uv: Vec2f::new(0.0, 0.0),
         _padding: [0.0, 0.0],
     },
     VertexUv {
-        position: Vec4f {
-            v: [1.0, -1.0, 0.0, 1.0],
-        },
-        uv: Vec2f { v: [1.0, 1.0] },
+        position: Vec4f::new(1.0, -1.0, 0.0, 1.0),
+        uv: Vec2f::new(1.0, 1.0),
         _padding: [0.0, 0.0],
     },
     VertexUv {
-        position: Vec4f {
-            v: [1.0, 1.0, 0.0, 1.0],
-        },
-        uv: Vec2f { v: [1.0, 0.0] },
+        position: Vec4f::new(1.0, 1.0, 0.0, 1.0),
+        uv: Vec2f::new(1.0, 0.0),
         _padding: [0.0, 0.0],
     },
 ];

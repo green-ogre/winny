@@ -1,3 +1,4 @@
+use crate::render::{RenderEncoder, RenderView};
 use app::render::{RenderContext, RenderDevice, RenderQueue};
 use app::{
     app::{App, AppSchedule, Schedule},
@@ -5,14 +6,29 @@ use app::{
     plugins::Plugin,
     window::Window,
 };
-use ecs::{Commands, EventReader, Res, ResMut, Resource, WinnyResource};
+use ecs::{Commands, EventReader, Res, ResMut, WinnyResource};
 use egui::{Context, Rect, Vec2};
 use egui_wgpu::ScreenDescriptor;
-use std::{marker::PhantomData, ops::Deref};
-
+use std::ops::Deref;
 use util::prelude::*;
 
-use crate::render::{RenderEncoder, RenderView};
+// TODO: split into two plugins
+pub struct EguiPlugin;
+
+impl Plugin for EguiPlugin {
+    fn build(&mut self, app: &mut App) {
+        app.register_resource::<EguiRenderer>()
+            .add_systems(Schedule::StartUp, startup)
+            .add_systems(Schedule::PreUpdate, handle_input)
+            .add_systems(AppSchedule::PreRender, begin_frame)
+            .add_systems(AppSchedule::PostRender, end_frame);
+    }
+}
+
+fn startup(mut commands: Commands, context: Res<RenderContext>) {
+    let egui_renderer = EguiRenderer::new(&context.device, context.config.format());
+    commands.insert_resource(egui_renderer);
+}
 
 #[derive(WinnyResource)]
 pub struct EguiRenderer {
@@ -22,7 +38,6 @@ pub struct EguiRenderer {
     egui_input: egui::RawInput,
     viewport_id: egui::ViewportId,
     pointer_pos_in_points: Option<egui::Pos2>,
-    ui_callback: Option<Box<dyn FnOnce(&Context) + Send + Sync + 'static>>,
 }
 
 unsafe impl Send for EguiRenderer {}
@@ -40,6 +55,12 @@ impl EguiRenderer {
         let viewport_id = context.viewport_id();
         let renderer = egui_wgpu::Renderer::new(device, output_color_format, None, msaa_samples);
 
+        context.style_mut(|style| {
+            for (_, id) in style.text_styles.iter_mut() {
+                id.size = 16.;
+            }
+        });
+
         Self {
             context,
             renderer,
@@ -47,16 +68,11 @@ impl EguiRenderer {
             start_time: app::chrono::Local::now(),
             egui_input: egui::RawInput::default(),
             pointer_pos_in_points: None,
-            ui_callback: None,
         }
     }
 
     pub fn egui_context(&self) -> &Context {
         &self.context
-    }
-
-    pub fn draw(&mut self, run_ui: impl FnOnce(&Context) + Send + Sync + 'static) {
-        self.ui_callback = Some(Box::new(run_ui));
     }
 
     // https://github.com/emilk/egui/blob/34db001db14940c948eb03d3fe87f2af2c45daba/crates/egui-winit/src/lib.rs#L698
@@ -144,14 +160,18 @@ impl EguiRenderer {
         self.egui_input.take()
     }
 
-    fn render(
+    fn begin_frame(&mut self, window: &Window) {
+        let raw_input = self.take_egui_input(window);
+        self.context.begin_frame(raw_input);
+    }
+
+    fn end_frame(
         &mut self,
         device: &RenderDevice,
         queue: &RenderQueue,
         encoder: &mut RenderEncoder,
         window: &Window,
         window_surface_view: &RenderView,
-        run_ui: impl FnOnce(&Context),
     ) {
         let size = window.winit_window.inner_size();
         let pixels_per_point = window.winit_window.scale_factor() as f32;
@@ -160,11 +180,7 @@ impl EguiRenderer {
             size_in_pixels: [size.width as u32, size.height as u32],
             pixels_per_point,
         };
-        let raw_input = self.take_egui_input(window);
-        let full_output = self.context.run(raw_input, |ui| {
-            // callback(ui);
-            run_ui(ui);
-        });
+        let full_output = self.context.end_frame();
 
         let tris = self
             .context
@@ -205,10 +221,13 @@ impl EguiRenderer {
     }
 }
 
-fn render_gui<S: UiRenderState>(
+fn begin_frame(mut egui: ResMut<EguiRenderer>, window: Res<Window>) {
+    egui.begin_frame(&window);
+}
+
+fn end_frame(
     mut egui: ResMut<EguiRenderer>,
     mut encoder: ResMut<RenderEncoder>,
-    mut state: ResMut<S>,
     context: Res<RenderContext>,
     window: Res<Window>,
     view: Res<RenderView>,
@@ -220,18 +239,13 @@ fn render_gui<S: UiRenderState>(
         return;
     }
 
-    egui.render(
+    egui.end_frame(
         &context.device,
         &context.queue,
         &mut encoder,
         &window,
         &view,
-        state.ui(),
     );
-}
-
-pub trait UiRenderState: Resource {
-    fn ui(&mut self) -> impl FnOnce(&Context);
 }
 
 fn handle_input(
@@ -251,28 +265,6 @@ fn handle_input(
 
     for motion in mouse_motion.peak_read() {
         egui.on_mouse_motion(&window, motion);
-    }
-}
-
-fn startup(mut commands: Commands, context: Res<RenderContext>) {
-    let egui_renderer = EguiRenderer::new(&context.device, context.config.format());
-    commands.insert_resource(egui_renderer);
-}
-
-pub struct EguiPlugin<S: UiRenderState>(PhantomData<S>);
-
-impl<S: UiRenderState> EguiPlugin<S> {
-    pub fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<S: UiRenderState> Plugin for EguiPlugin<S> {
-    fn build(&mut self, app: &mut App) {
-        app.add_systems(Schedule::StartUp, startup)
-            .add_systems(Schedule::PreUpdate, handle_input)
-            .add_systems(AppSchedule::PostRender, render_gui::<S>)
-            .register_resource::<EguiRenderer>();
     }
 }
 

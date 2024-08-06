@@ -31,10 +31,8 @@ impl std::ops::Mul<Matrix2x2f> for Vec2f {
 
     fn mul(self, rhs: Matrix2x2f) -> Self::Output {
         Vec2f {
-            v: [
-                self.v[0] * rhs.m[0][0] + self.v[1] * rhs.m[0][1],
-                self.v[0] * rhs.m[1][0] + self.v[1] * rhs.m[1][1],
-            ],
+            x: self.x * rhs.m[0][0] + self.y * rhs.m[0][1],
+            y: self.x * rhs.m[1][0] + self.y * rhs.m[1][1],
         }
     }
 }
@@ -103,16 +101,17 @@ impl Mul<Matrix4x4f> for Matrix4x4f {
 impl Mul<Vec4f> for Matrix4x4f {
     type Output = Vec4f;
     fn mul(self, rhs: Vec4f) -> Self::Output {
-        let mut output = Vec4f::zero();
+        let mut output = [0.0; 4];
+        let rhs: [f32; 4] = rhs.as_matrix();
         for y in 0..4 {
             let mut dot = 0.;
             for x in 0..4 {
-                dot += rhs.v[x] * self.m[y][x];
+                dot += rhs[x] * self.m[y][x];
             }
-            output.v[y] = dot;
+            output[y] = dot;
         }
 
-        output
+        output.into()
     }
 }
 
@@ -150,10 +149,10 @@ pub fn translation_matrix4x4f(point: Vec4f) -> Matrix4x4f {
     #[cfg_attr(rustfmt, rustfmt_skip)]
     Matrix4x4f {
         m: [
-            [1., 0., 0., point.v[0]],
-            [0., 1., 0., point.v[1]],
-            [0., 0., 1., point.v[2]],
-            [0., 0., 0., 1.        ],
+            [1., 0., 0., point.x],
+            [0., 1., 0., point.y],
+            [0., 0., 1., point.z],
+            [0., 0., 0., 1.     ],
         ]
     }
 }
@@ -177,10 +176,10 @@ pub fn scale_matrix4x4f(scale: Vec2f) -> Matrix4x4f {
     #[cfg_attr(rustfmt, rustfmt_skip)]
     Matrix4x4f {
         m: [
-            [scale.v[0], 0.,         0., 0.],
-            [0.,         scale.v[1], 0., 0.],
-            [0.,         0.,         1., 0.],
-            [0.,         0.,         0., 1.],
+            [scale.x, 0.,      0., 0.],
+            [0.,      scale.y, 0., 0.],
+            [0.,      0.,      1., 0.],
+            [0.,      0.,      0., 1.],
         ]
     }
 }

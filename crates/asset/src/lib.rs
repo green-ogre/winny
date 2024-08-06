@@ -1,522 +1,122 @@
-use app::render::RenderContext;
+use app::app::Schedule;
 use app::{
     app::{App, AppSchedule},
     plugins::Plugin,
 };
-use ecs::{
-    DumbVec, EventWriter, Res, ResMut, SparseArrayIndex, SparseSet, WinnyComponent, WinnyEvent,
-    WinnyResource,
-};
+use crossbeam_channel::{Sender, TryRecvError};
+use ecs::{DumbVec, EventReader, EventWriter, Res, ResMut, SparseArray, WinnyEvent, WinnyResource};
+use prelude::handle::{ErasedHandle, Handle};
+use prelude::server::{AssetHandleCreator, AssetServer};
+use prelude::AssetId;
 use reader::ByteReader;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::{
-    any::TypeId,
-    collections::HashMap,
     fmt::{Debug, Display},
-    future::Future,
-    hash::Hash,
     io::{BufReader, Cursor},
-    marker::PhantomData,
-    path::Path,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        mpsc::TryRecvError,
-        Arc,
-    },
 };
-use util::tracing::{error, info, trace, trace_span};
+use util::tracing::{error, info};
 
+pub mod handle;
 pub mod prelude;
 pub mod reader;
+pub mod server;
+pub mod toml;
+pub mod watcher;
 
-/// Tracks change between ticks.
-#[derive(Debug, Copy, Clone, Default)]
-pub struct HandleGeneration {
-    previous: u32,
-    current: u32,
-}
+pub struct AssetLoaderPlugin;
 
-impl HandleGeneration {
-    /// Checks if generation has changed, then increments current generation.
-    pub fn is_changed(&mut self) -> bool {
-        let changed = self.previous != self.current;
-        if changed {
-            self.previous = self.current;
-        }
-
-        changed
-    }
-
-    pub(crate) fn increment(&mut self) {
-        self.current += 1;
+impl Plugin for AssetLoaderPlugin {
+    fn build(&mut self, app: &mut App) {
+        app.insert_resource(AssetServer::default())
+            .register_event::<ReloadAsset>()
+            .add_systems(Schedule::PostUpdate, reload_assets);
     }
 }
 
-// TODO: could become enum with strong and weak variants which determine
-// dynamic loading behaviour
-#[derive(WinnyComponent)]
-pub struct Handle<A: Asset>(AssetId, HandleGeneration, PhantomData<Arc<A>>);
+/// Event to automatically reload an [`Asset`] loaded by the [`AssetServer`].
+///
+/// Emitted by a [`watcher::FileWatcherBundle`] or [`watcher::DirWatcherBundle`] spawned with the marker struct
+/// [`watcher::WatchForAsset`].
+#[derive(WinnyEvent, Debug)]
+pub struct ReloadAsset(PathBuf);
 
-impl<A: Asset> Debug for Handle<A> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Handle")
-            .field(&self.0)
-            .field(&self.1)
-            .finish()
-    }
-}
-
-impl<A: Asset> Clone for Handle<A> {
-    fn clone(&self) -> Self {
-        Handle::new(self.id())
-    }
-}
-
-impl<A: Asset> PartialEq for Handle<A> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id()
-    }
-}
-
-impl<A: Asset> Handle<A> {
-    pub fn new(id: AssetId) -> Self {
-        Self(id, HandleGeneration::default(), PhantomData)
-    }
-
-    pub fn id(&self) -> AssetId {
-        self.0
-    }
-
-    pub fn dangling() -> Self {
-        Self(
-            AssetId::new(0, u32::MAX),
-            HandleGeneration::default(),
-            PhantomData,
-        )
-    }
-
-    pub fn is_dangling(&self) -> bool {
-        self.0.index() == u32::MAX
-    }
-
-    pub fn point_to(&mut self, other: &Handle<A>) {
-        self.0 = other.id();
-        self.mark_changed();
-    }
-
-    pub fn mark_changed(&mut self) {
-        self.1.increment();
-    }
-
-    pub fn is_changed(&mut self) -> bool {
-        self.1.is_changed()
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct ErasedHandle(AssetId);
-
-impl ErasedHandle {
-    pub fn new(id: AssetId) -> Self {
-        Self(id)
-    }
-
-    pub fn id(&self) -> AssetId {
-        self.0
-    }
-
-    fn into_typed_handle<A: Asset>(self) -> Handle<A> {
-        Handle::new(self.0)
-    }
-}
-
-impl<A: Asset> Into<Handle<A>> for ErasedHandle {
-    fn into(self) -> Handle<A> {
-        self.into_typed_handle()
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AssetId(u64);
-
-impl Debug for AssetId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AssetId")
-            .field("hash", &self.hash())
-            .field("index", &self.index())
-            .finish()
-    }
-}
-
-impl AssetId {
-    pub fn new(hash: u32, storage_index: u32) -> Self {
-        Self(((hash as u64) << 32) | storage_index as u64)
-    }
-
-    // TODO: hash could be used to check if the asset has changed
-    pub fn hash(&self) -> u32 {
-        (self.0 >> 32) as u32
-    }
-
-    pub fn index(&self) -> u32 {
-        self.0 as u32
-    }
-}
-
-impl SparseArrayIndex for AssetId {
-    fn index(&self) -> usize {
-        self.index() as usize
+fn reload_assets(server: Res<AssetServer>, reader: EventReader<ReloadAsset>) {
+    for event in reader.read() {
+        server.reload(&event.0);
     }
 }
 
 pub trait Asset: Send + Sync + 'static {}
 
-#[derive(Debug)]
-pub struct LoadedAsset<A: Asset> {
-    pub asset: A,
-    pub path: String,
-    pub handle: ErasedHandle,
+/// Collection of [`Asset`]s.
+///
+/// Created by [`AssetApp::register_asset_loader`].
+#[derive(WinnyResource)]
+pub struct Assets<A: Asset> {
+    storage: SparseArray<AssetId, A>,
+    handler: Arc<AssetHandleCreator>,
 }
 
-impl<A: Asset> LoadedAsset<A> {
-    pub fn new(asset: A, path: String, handle: ErasedHandle) -> Self {
+impl<A: Asset> Default for Assets<A> {
+    fn default() -> Self {
         Self {
-            asset,
-            path,
-            handle,
+            storage: SparseArray::default(),
+            handler: Arc::new(AssetHandleCreator::default()),
         }
     }
-}
-
-use std::ops::{Deref, DerefMut};
-
-impl<A: Asset> Deref for LoadedAsset<A> {
-    type Target = A;
-
-    fn deref(&self) -> &Self::Target {
-        &self.asset
-    }
-}
-
-impl<A: Asset> DerefMut for LoadedAsset<A> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.asset
-    }
-}
-
-impl<A: Asset> Into<ErasedLoadedAsset> for LoadedAsset<A> {
-    fn into(self) -> ErasedLoadedAsset {
-        ErasedLoadedAsset::new(self)
-    }
-}
-
-#[derive(Debug)]
-pub struct ErasedLoadedAsset {
-    loaded_asset: DumbVec,
-}
-
-impl ErasedLoadedAsset {
-    pub fn new<A: Asset>(asset: LoadedAsset<A>) -> Self {
-        let mut loaded_asset = DumbVec::with_capacity::<LoadedAsset<A>>(1);
-        unsafe { loaded_asset.push::<LoadedAsset<A>>(asset) };
-
-        Self { loaded_asset }
-    }
-}
-
-// An asset will only ever be read from.
-unsafe impl Sync for ErasedLoadedAsset {}
-unsafe impl Send for ErasedLoadedAsset {}
-
-impl<A: Asset> Into<LoadedAsset<A>> for ErasedLoadedAsset {
-    fn into(mut self) -> LoadedAsset<A> {
-        unsafe { self.loaded_asset.pop::<LoadedAsset<A>>() }
-    }
-}
-
-#[derive(WinnyResource)]
-pub struct Assets<A>
-where
-    A: Asset,
-{
-    storage: SparseSet<AssetId, LoadedAsset<A>>,
 }
 
 impl<A: Asset> Debug for Assets<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Assets").finish()
+        f.debug_struct("Assets").finish_non_exhaustive()
     }
 }
 
-impl<A> Assets<A>
-where
-    A: Asset,
-{
-    pub fn new() -> Self {
-        Self {
-            storage: SparseSet::new(),
-        }
+impl<A: Asset> Assets<A> {
+    pub(crate) fn insert(&mut self, asset: A, id: AssetId) {
+        self.storage.insert(id.0 as usize, asset);
     }
 
-    // TODO: (crate)
-    pub fn insert(&mut self, asset: LoadedAsset<A>, id: AssetId) {
-        self.storage.insert(id, asset);
-    }
-
-    pub fn get(&self, handle: &Handle<A>) -> Option<&LoadedAsset<A>> {
+    pub fn get(&self, handle: &Handle<A>) -> Option<&A> {
         self.storage.get(&handle.id())
     }
 
-    pub fn get_mut(&mut self, handle: &Handle<A>) -> Option<&mut LoadedAsset<A>> {
+    pub fn get_mut(&mut self, handle: &Handle<A>) -> Option<&mut A> {
         self.storage.get_mut(&handle.id())
     }
 
-    pub fn remove(&mut self, handle: &Handle<A>) -> LoadedAsset<A> {
-        self.storage.remove(&handle.id())
-    }
-}
-
-struct InternalAssetLoader {
-    loader: Box<dyn ErasedAssetLoader>,
-    async_dispatch: AssetFuture,
-    handler: AssetHandleCreator,
-}
-
-impl Debug for InternalAssetLoader {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ItnernalAssetLoader").finish()
-    }
-}
-
-impl InternalAssetLoader {
-    pub fn new(loader: impl AssetLoader, async_dispatch: AssetFuture) -> Self {
-        Self {
-            handler: AssetHandleCreator::new(),
-            async_dispatch,
-            loader: Box::new(loader),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct AssetFuture {
-    future: Arc<AsyncAssetSender>,
-}
-
-impl AssetFuture {
-    pub fn new(
-        future: impl Fn(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>) + 'static,
-    ) -> Self {
-        Self {
-            future: Arc::new(AsyncAssetSender::new(future)),
-        }
+    pub fn remove(&mut self, handle: &Handle<A>) -> A {
+        self.handler.remove(handle.id());
+        self.storage.take(handle.id().0 as usize).unwrap()
     }
 
-    pub fn send_result<A: Asset>(
-        &self,
-        handle: ErasedHandle,
-        result: Result<LoadedAsset<A>, (String, AssetLoaderError)>,
-    ) {
-        self.future.send_result(handle, result);
+    pub fn add(&mut self, asset: A) -> Handle<A> {
+        let handle = self.handler.reserve();
+        self.insert(asset, handle.id());
+
+        handle.into()
     }
-}
-
-pub struct AssetHandleCreator {
-    next_id: AtomicU32,
-    freed_indexes: Vec<u32>,
-}
-
-impl AssetHandleCreator {
-    pub fn new() -> Self {
-        Self {
-            next_id: AtomicU32::new(0),
-            freed_indexes: Vec::new(),
-        }
-    }
-
-    pub fn new_id(&self) -> ErasedHandle {
-        let index = if let Some(index) = self.freed_indexes.iter().next() {
-            *index
-        } else {
-            let index = self.next_id.fetch_add(1, Ordering::AcqRel);
-            index
-        };
-
-        // TODO: hash this shit
-        ErasedHandle::new(AssetId::new(0, index))
-    }
-}
-
-#[derive(Debug)]
-struct AssetLoaders {
-    loaders: Vec<InternalAssetLoader>,
-    ext_to_loader: Vec<(&'static [&'static str], usize)>,
-    loaded_assets: HashMap<String, (TypeId, ErasedHandle)>,
-}
-
-impl AssetLoaders {
-    pub fn new() -> Self {
-        Self {
-            loaders: Vec::new(),
-            ext_to_loader: Vec::new(),
-            loaded_assets: HashMap::new(),
-        }
-    }
-
-    pub fn register_loader(&mut self, loader: impl AssetLoader, future: AssetFuture) {
-        self.ext_to_loader
-            .push((loader.extensions(), self.loaders.len()));
-        self.loaders.push(InternalAssetLoader::new(loader, future));
-    }
-
-    pub fn store_asset<A: Asset>(
-        &mut self,
-        _asset_folder: String,
-        asset: A,
-        key: String,
-    ) -> Handle<A> {
-        let asset_type_id = TypeId::of::<A>();
-
-        let mut erased_asset = Some(ErasedLoadedAsset::new(LoadedAsset::new(
-            asset,
-            key.clone(),
-            // Set by the ErasedAssetLoader
-            ErasedHandle::new(AssetId(u64::MAX)),
-        )));
-
-        for internal_loader in self.loaders.iter_mut() {
-            let result = internal_loader.loader.store_asset(
-                internal_loader.async_dispatch.clone(),
-                &internal_loader.handler,
-                erased_asset.take().unwrap(),
-                asset_type_id,
-            );
-
-            match result {
-                Ok(h) => {
-                    let handle = h.into();
-                    self.loaded_assets.insert(key, (TypeId::of::<A>(), handle));
-                    return handle.into();
-                }
-                Err(a) => erased_asset = Some(a),
-            }
-        }
-
-        panic!("Could not find storage for asset: {}", key);
-    }
-
-    pub fn load<A: Asset, P: AsRef<Path>>(
-        &mut self,
-        _asset_folder: String,
-        path: P,
-        context: RenderContext,
-    ) -> Handle<A> {
-        if let Some((type_id, handle)) = self.loaded_assets.get(path.as_ref().to_str().unwrap()) {
-            if *type_id == TypeId::of::<A>() {
-                trace!("found loaded asset, returning");
-                return handle.into_typed_handle();
-            }
-        }
-
-        trace!("loaded asset not found");
-        let file_ext = path
-            .as_ref()
-            .extension()
-            .expect("file extension")
-            .to_owned();
-        let path = path.as_ref().to_str().unwrap().to_owned();
-
-        let asset_type_id = TypeId::of::<A>();
-        for loader in self
-            .ext_to_loader
-            .iter()
-            .filter(|(ext, _)| ext.contains(&file_ext.to_str().unwrap()))
-            .map(|(_, i)| i)
-        {
-            let internal_loader = &self.loaders[*loader];
-            let result = internal_loader.loader.load(
-                context.clone(),
-                internal_loader.async_dispatch.clone(),
-                &internal_loader.handler,
-                path.clone(),
-                file_ext.to_str().unwrap().to_owned(),
-                asset_type_id,
-            );
-
-            match result {
-                Ok(h) => {
-                    let handle = h.into();
-                    self.loaded_assets
-                        .insert(path.clone(), (TypeId::of::<A>(), handle));
-                    return handle.into();
-                }
-                _ => {}
-            }
-        }
-
-        panic!("Could not find asset loader for path: {}", path);
-    }
-}
-
-#[derive(Debug, WinnyResource)]
-pub struct AssetServer {
-    asset_folder: String,
-    loaders: AssetLoaders,
-    render_context: Option<RenderContext>,
-}
-
-impl AssetServer {
-    pub fn new(asset_folder: String) -> Self {
-        Self {
-            asset_folder,
-            loaders: AssetLoaders::new(),
-            render_context: None,
-        }
-    }
-
-    pub fn register_loader(&mut self, loader: impl AssetLoader, future: AssetFuture) {
-        self.loaders.register_loader(loader, future);
-    }
-
-    pub fn load<A: Asset, P: AsRef<Path>>(&mut self, path: P) -> Handle<A> {
-        let _span = trace_span!("asset load").entered();
-        self.loaders.load(
-            self.asset_folder.clone(),
-            path,
-            self.render_context
-                .as_ref()
-                .expect("Do not load assets before the `StartUp` schedule")
-                .clone(),
-        )
-    }
-
-    pub fn store_asset<A: Asset>(&mut self, key: String, asset: A) -> Handle<A> {
-        let _span = trace_span!("asset load from bytes").entered();
-        self.loaders
-            .store_asset(self.asset_folder.clone(), asset, key)
-    }
-
-    fn insert_context(&mut self, context: RenderContext) {
-        self.render_context = Some(context);
-    }
-}
-
-fn update_asset_server_context(mut server: ResMut<AssetServer>, context: Res<RenderContext>) {
-    // cheap to make
-    server.insert_context(context.clone())
 }
 
 pub trait AssetApp {
+    fn register_asset<A: Asset>(&mut self) -> &mut Self;
     fn register_asset_loader<A: Asset>(&mut self, loader: impl AssetLoader) -> &mut Self;
 }
 
 impl AssetApp for App {
-    fn register_asset_loader<A: Asset>(&mut self, loader: impl AssetLoader) -> &mut Self {
-        let assets: Assets<A> = Assets::new();
+    fn register_asset<A: Asset>(&mut self) -> &mut Self {
+        let assets: Assets<A> = Assets::default();
         self.insert_resource(assets)
             .register_event::<AssetLoaderEvent<A>>();
 
-        let (asset_result_tx, asset_result_rx) = std::sync::mpsc::channel();
-        let asset_result_rx = ecs::threads::ChannelReciever::new(asset_result_rx);
+        self
+    }
+
+    fn register_asset_loader<A: Asset>(&mut self, loader: impl AssetLoader) -> &mut Self {
+        let (asset_result_tx, asset_result_rx) = crossbeam_channel::unbounded();
+
+        self.add_systems(Schedule::PostUpdate, flush_errored_handles::<A>);
 
         self.add_systems(
             AppSchedule::Platform,
@@ -524,22 +124,27 @@ impl AssetApp for App {
                   mut asset_loader_events: EventWriter<AssetLoaderEvent<A>>| {
                 match asset_result_rx.try_recv() {
                     Ok(event) => match event {
-                        AssetEvent::Err { handle } => {
-                            asset_loader_events.send(AssetLoaderEvent::Err { handle })
-                        }
-                        AssetEvent::Loaded { asset } => {
-                            info!(
-                                "Loaded asset [{}]: {:?}",
-                                std::any::type_name::<A>(),
-                                asset.path
-                            );
+                        AssetEvent::Err {
+                            error,
+                            path,
+                            handle,
+                        } => asset_loader_events.send(AssetLoaderEvent::Err {
+                            error,
+                            path,
+                            handle: handle.into(),
+                        }),
+                        AssetEvent::Loaded {
+                            path,
+                            handle,
+                            asset,
+                        } => {
+                            info!("Loaded asset [{}]: {:?}", std::any::type_name::<A>(), path);
 
                             asset_loader_events.send(AssetLoaderEvent::Loaded {
-                                handle: asset.handle.into(),
+                                handle: handle.into(),
                             });
 
-                            let id = asset.handle.id();
-                            assets.insert(asset, id);
+                            assets.insert(asset.into_asset(), handle.id());
                         }
                     },
                     Err(e) => match e {
@@ -553,207 +158,153 @@ impl AssetApp for App {
             },
         );
 
-        let result =
-            move |handle: ErasedHandle,
-                  result: Result<ErasedLoadedAsset, (String, AssetLoaderError)>| {
-                if let Err(e) = asset_result_tx.send(match result {
-                    Ok(asset) => {
-                        let asset = asset.into();
-                        AssetEvent::Loaded { asset }
-                    }
-                    Err((path, e)) => {
-                        error!("{}: {:?}", e, path);
-
-                        AssetEvent::Err {
-                            handle: handle.into(),
-                        }
-                    }
-                }) {
-                    error!("Asset reciever channel closed: {}", e);
-                    panic!();
-                }
-            };
-
-        let mut server = self.world_mut().resource_mut::<AssetServer>();
-        server.register_loader(loader, AssetFuture::new(result));
-        drop(server);
+        {
+            let handler = self.world().resource::<Assets<A>>().handler.clone();
+            let server = self.world_mut().resource_mut::<AssetServer>();
+            server.register_loader::<A>(loader, asset_result_tx, handler);
+        }
 
         self
     }
 }
 
+fn flush_errored_handles<A: Asset>(
+    reader: EventReader<AssetLoaderEvent<A>>,
+    server: Res<AssetServer>,
+) {
+    for event in reader.peak_read() {
+        match event {
+            AssetLoaderEvent::Err { path, .. } => server.remove::<A, &String>(path),
+            _ => (),
+        }
+    }
+}
+
 #[derive(WinnyEvent)]
 pub enum AssetLoaderEvent<A: Asset> {
-    Loaded { handle: Handle<A> },
-    Err { handle: Handle<A> },
+    Loaded {
+        handle: Handle<A>,
+    },
+    Err {
+        handle: Handle<A>,
+        path: String,
+        error: AssetLoaderError,
+    },
 }
 
-impl<A: Asset> Debug for AssetLoaderEvent<A> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Loaded { handle } => write!(f, "AssetLoaderEvent::Loaded: {:?}", handle),
-            Self::Err { handle } => write!(f, "AssetLoaderEvent::Err: {:?}", handle),
+/// Temporary [`Asset`] storage.
+struct ErasedAsset {
+    asset: DumbVec,
+}
+
+impl<A: Asset> From<A> for ErasedAsset {
+    fn from(value: A) -> Self {
+        Self {
+            asset: {
+                let mut storage = DumbVec::new::<A>();
+                unsafe { storage.push(value) };
+
+                storage
+            },
         }
     }
 }
 
-enum AssetEvent<A: Asset + Send + Sync> {
-    Loaded { asset: LoadedAsset<A> },
-    Err { handle: Handle<A> },
-}
-
-impl<A: Asset> Debug for AssetEvent<A> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AssetEvent").finish()
+impl ErasedAsset {
+    /// Caller ensures that this contains [`Asset`] of type A.
+    fn into_asset<A: Asset>(mut self) -> A {
+        unsafe { self.asset.pop::<A>() }
     }
 }
 
-#[derive(Debug)]
-pub enum AssetLoaderError {
-    UnsupportedFileExtension,
-    FileNotFound,
-    FailedToParse,
-    FailedToBuild,
+enum AssetEvent {
+    Loaded {
+        path: PathBuf,
+        handle: ErasedHandle,
+        asset: ErasedAsset,
+    },
+    Err {
+        handle: ErasedHandle,
+        path: String,
+        error: AssetLoaderError,
+    },
 }
-
-impl Display for AssetLoaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnsupportedFileExtension => {
-                write!(f, "File extension is not supported")
-            }
-            Self::FileNotFound => {
-                write!(f, "File could not be found")
-            }
-            Self::FailedToParse => {
-                write!(f, "File parser failed")
-            }
-            Self::FailedToBuild => {
-                write!(f, "Asset builder failed")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AssetLoaderError {}
-
-pub trait AssetLoadState: Clone + Send + Sync + 'static {}
 
 pub trait AssetLoader: Send + Sync + 'static {
     type Asset: Asset;
-    // type LoadState: AssetLoadState;
+    type Settings: Default + Send + Sync;
 
-    fn load(
-        context: RenderContext,
+    #[allow(async_fn_in_trait)]
+    async fn load(
         reader: ByteReader<Cursor<Vec<u8>>>,
+        settings: Self::Settings,
         path: String,
         ext: &str,
-    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>>;
-    // fn load_state(&self) -> Self::LoadState;
+    ) -> Result<Self::Asset, AssetLoaderError>;
     fn extensions(&self) -> &'static [&'static str];
+    fn settings(&self) -> Self::Settings {
+        Self::Settings::default()
+    }
 }
 
-pub trait ErasedAssetLoader: Send + Sync + 'static {
+trait ErasedAssetLoader: Send + Sync + 'static {
     fn load(
         &self,
-        context: RenderContext,
-        sender: AssetFuture,
         handler: &AssetHandleCreator,
+        sender: Sender<AssetEvent>,
         path: String,
         ext: String,
-        asset_type_id: TypeId,
-    ) -> Result<ErasedHandle, ()>;
-    fn store_asset(
-        &self,
-        sender: AssetFuture,
-        handler: &AssetHandleCreator,
-        asset: ErasedLoadedAsset,
-        asset_type_id: TypeId,
-    ) -> Result<ErasedHandle, ErasedLoadedAsset>;
-    fn extensions(&self) -> &'static [&'static str];
+    ) -> ErasedHandle;
 }
-
-pub struct AsyncAssetSender {
-    result: Box<dyn Fn(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>)>,
-}
-
-impl AsyncAssetSender {
-    pub fn new(
-        result: impl Fn(ErasedHandle, Result<ErasedLoadedAsset, (String, AssetLoaderError)>) + 'static,
-    ) -> Self {
-        Self {
-            result: Box::new(result),
-        }
-    }
-
-    pub fn send_result<A: Asset>(
-        &self,
-        handle: ErasedHandle,
-        result: Result<LoadedAsset<A>, (String, AssetLoaderError)>,
-    ) {
-        (self.result)(handle, result.map(|a| a.into()))
-    }
-}
-
-unsafe impl Sync for AsyncAssetSender {}
-unsafe impl Send for AsyncAssetSender {}
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<L: AssetLoader> ErasedAssetLoader for L {
     fn load(
         &self,
-        context: RenderContext,
-        sender: AssetFuture,
         handler: &AssetHandleCreator,
+        sender: Sender<AssetEvent>,
         path: String,
         ext: String,
-        asset_type_id: TypeId,
-    ) -> Result<ErasedHandle, ()> {
-        if TypeId::of::<L::Asset>() != asset_type_id {
-            return Err(());
-        }
+    ) -> ErasedHandle {
+        let handle = handler.reserve();
 
-        let handle = handler.new_id();
-
+        let settings = self.settings();
         std::thread::spawn(move || {
-            let _span = trace_span!("load thread").entered();
             let binary = match pollster::block_on(load_binary(path.as_str())) {
                 Ok(f) => f,
                 Err(_) => {
-                    panic!("Could not find file: {:?}", path);
+                    error!("Could not find file: {:?}", path);
+                    if let Err(e) = sender.send(AssetEvent::Err {
+                        handle,
+                        path,
+                        error: AssetLoaderError::FileNotFound,
+                    }) {
+                        error!("Asset sender error: {}", e);
+                    }
+
+                    return;
                 }
             };
             let reader = ByteReader::new(BufReader::new(Cursor::new(binary)));
 
-            let result = pollster::block_on(L::load(context, reader, path.clone(), ext.as_str()))
-                .map(|asset| LoadedAsset::new(asset, path.clone(), handle.clone()));
-            sender.send_result(handle, result.map_err(|e| (path, e)));
+            let result = pollster::block_on(L::load(reader, settings, path.clone(), ext.as_str()));
+            if let Err(e) = sender.send(match result {
+                Ok(a) => AssetEvent::Loaded {
+                    path: path.into(),
+                    handle: handle.clone(),
+                    asset: a.into(),
+                },
+                Err(e) => AssetEvent::Err {
+                    error: e,
+                    handle,
+                    path,
+                },
+            }) {
+                error!("Asset sender error: {}", e);
+            }
         });
 
-        Ok(handle)
-    }
-
-    fn store_asset(
-        &self,
-        sender: AssetFuture,
-        handler: &AssetHandleCreator,
-        asset: ErasedLoadedAsset,
-        asset_type_id: TypeId,
-    ) -> Result<ErasedHandle, ErasedLoadedAsset> {
-        if TypeId::of::<L::Asset>() != asset_type_id {
-            return Err(asset);
-        }
-
-        let handle = handler.new_id();
-        let mut asset: LoadedAsset<L::Asset> = asset.into();
-        asset.handle = handle;
-        sender.send_result::<L::Asset>(handle, Ok(asset));
-
-        Ok(handle)
-    }
-
-    fn extensions(&self) -> &'static [&'static str] {
-        self.extensions()
+        handle
     }
 }
 
@@ -788,20 +339,6 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AssetLoaderPlugin {
-    pub asset_folder: String,
-}
-
-impl Plugin for AssetLoaderPlugin {
-    fn build(&mut self, app: &mut App) {
-        let server = AssetServer::new(self.asset_folder.clone());
-        app.insert_resource(server)
-            .add_systems(AppSchedule::PreStartUp, update_asset_server_context)
-            .add_systems(AppSchedule::Platform, update_asset_server_context);
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 fn format_url(file_name: &str) -> reqwest::Url {
     let window = web_sys::window().unwrap();
@@ -828,9 +365,7 @@ pub async fn load_string(file_name: &str) -> Result<String, ()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::env::current_dir;
-        let path = std::path::Path::new(current_dir().unwrap().to_str().unwrap())
-            .join("res")
-            .join(file_name);
+        let path = std::path::Path::new(current_dir().unwrap().to_str().unwrap()).join(file_name);
         std::fs::read_to_string(path).map_err(|_| ())
     }
 }
@@ -850,33 +385,44 @@ pub async fn load_binary(file_name: &str) -> Result<Vec<u8>, ()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::env::current_dir;
-        let path = std::path::Path::new(current_dir().unwrap().to_str().unwrap())
-            .join("res")
-            .join(file_name);
+        let path = std::path::Path::new(current_dir().unwrap().to_str().unwrap()).join(file_name);
         std::fs::read(path).map_err(|_| ())
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug)]
+pub enum AssetLoaderError {
+    UnsupportedFileExtension,
+    FileNotFound,
+    FailedToParse,
+    FailedToBuild,
+    SyntaxError,
+    SemanticError,
+}
 
-    struct Texture;
-    impl Asset for Texture {}
-
-    #[test]
-    fn handle() {
-        let mut h: Handle<Texture> = Handle::new(AssetId(0));
-        let new_h: Handle<Texture> = Handle::new(AssetId(1));
-        println!("PRE: h: {h:?}, new_h: {new_h:?}");
-        assert!(h.is_changed() == false);
-
-        // Cannot dereference a handle
-        // *h = new_h;
-        h.point_to(&new_h);
-
-        println!("POST: h: {h:?}, new_h: {new_h:?}");
-        assert!(h.is_changed());
-        println!("IS_CHANGED: h: {h:?}, new_h: {new_h:?}");
+impl Display for AssetLoaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedFileExtension => {
+                write!(f, "File extension is not supported")
+            }
+            Self::FileNotFound => {
+                write!(f, "File could not be found")
+            }
+            Self::FailedToParse => {
+                write!(f, "File parser failed")
+            }
+            Self::FailedToBuild => {
+                write!(f, "Asset builder failed")
+            }
+            Self::SyntaxError => {
+                write!(f, "Syntax error in file type")
+            }
+            Self::SemanticError => {
+                write!(f, "Semantic error in file type")
+            }
+        }
     }
 }
+
+impl std::error::Error for AssetLoaderError {}

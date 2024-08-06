@@ -1,9 +1,10 @@
-use std::{alloc::Layout, any::TypeId};
-
-use crate::storage::DumbDrop;
-
 use super::*;
-
+#[cfg(feature = "editor")]
+use crate::egui_widget::ComponentEgui;
+use crate::storage::DumbDrop;
+#[cfg(feature = "editor")]
+use std::ptr::NonNull;
+use std::{alloc::Layout, any::TypeId};
 use util::tracing::{error, trace};
 
 // https://github.com/bevyengine/bevy/blob/main/crates/bevy_ecs/src/component.rs#L189C1-L193C3
@@ -12,44 +13,49 @@ use util::tracing::{error, trace};
     label = "invalid `Component`",
     note = "consider annotating `{Self}` with `#[derive(Component)]`"
 )]
+#[cfg(not(feature = "editor"))]
 pub trait Component: 'static + Send + Sync {}
+#[cfg(feature = "editor")]
+pub trait Component: 'static + Send + Sync {
+    type Dispatch: ComponentEgui + Default;
+}
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Components {
     next_id: usize,
-    type_id_table: fxhash::FxHashMap<std::any::TypeId, ComponentMeta>,
+    type_id_table: fxhash::FxHashMap<TypeId, ComponentMeta>,
     component_id_table: fxhash::FxHashMap<ComponentId, ComponentMeta>,
+    #[cfg(feature = "editor")]
+    component_egui_table: fxhash::FxHashMap<ComponentId, Box<dyn ComponentEgui>>,
+}
+
+impl Debug for Components {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Components")
+            .field("next_id", &self.next_id)
+            .field("type_id_table", &self.type_id_table)
+            .field("component_id_table", &self.component_id_table)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Components {
     pub fn register<T: Component>(&mut self) -> &ComponentMeta {
-        let type_id = std::any::TypeId::of::<T>();
+        let type_id = TypeId::of::<T>();
         if self.type_id_table.get(&type_id).is_none() {
+            trace!("Registering component: {}", std::any::type_name::<T>(),);
             let id = self.new_id();
             let meta = ComponentMeta::new::<T>(id);
             self.type_id_table.insert(type_id, meta);
             self.component_id_table.insert(meta.id, meta);
-
-            trace!("Registering component: {}", std::any::type_name::<T>(),);
+            #[cfg(feature = "editor")]
+            self.component_egui_table
+                .insert(meta.id, Box::new(T::Dispatch::default()));
         }
 
         // just created
         self.type_id_table.get(&type_id).unwrap()
     }
-
-    // pub fn register_by_id(&mut self, type_id: std::any::TypeId, name: &'static str) -> ComponentId {
-    //     if let Some(meta) = self.id_table.get(&type_id) {
-    //         meta.id
-    //     } else {
-    //         let id = self.new_id();
-    //         let meta = ComponentMeta { id, name };
-    //         self.id_table.insert(type_id, meta);
-    //
-    //         trace!("Registering component by id: {}", name);
-    //
-    //         id
-    //     }
-    // }
 
     pub fn meta<T: Component>(&self) -> &ComponentMeta {
         self.type_id_table
@@ -78,6 +84,18 @@ impl Components {
         }
 
         component_ids
+    }
+
+    #[cfg(feature = "editor")]
+    pub fn display_component(
+        &self,
+        component_id: &ComponentId,
+        component: NonNull<u8>,
+        ui: &mut egui::Ui,
+    ) {
+        if let Some(widget) = self.component_egui_table.get(component_id) {
+            widget.display_component(component, ui);
+        }
     }
 
     fn new_id(&mut self) -> ComponentId {
@@ -148,30 +166,5 @@ impl ComponentId {
 impl SparseArrayIndex for ComponentId {
     fn index(&self) -> usize {
         self.id()
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ComponentSet {
-    pub ids: Vec<TypeId>,
-}
-
-impl ComponentSet {
-    pub fn new(mut ids: Vec<TypeId>) -> Self {
-        // Assume that Entity is the first Component?
-        ids.insert(0, std::any::TypeId::of::<Entity>());
-        Self { ids }
-    }
-
-    pub fn contains<T: Component>(&self) -> bool {
-        self.ids.contains(&TypeId::of::<T>())
-    }
-
-    pub fn contains_id(&self, id: &TypeId) -> bool {
-        self.ids.contains(id)
-    }
-
-    pub fn equivalent(&self, components: &[TypeId]) -> bool {
-        self.ids.eq(components)
     }
 }

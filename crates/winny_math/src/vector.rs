@@ -1,8 +1,10 @@
-use std::ops::{Add, AddAssign, Mul, Neg, SubAssign};
-
 use crate::prelude::Matrix4x4f;
+#[cfg(feature = "widgets")]
+use ecs::egui_widget::Widget;
+use ecs::WinnyWidget;
+use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
-#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Default)]
+#[derive(WinnyWidget, Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Default)]
 pub struct Vec2 {
     pub x: i32,
     pub y: i32,
@@ -64,7 +66,23 @@ impl std::ops::AddAssign<Vec2> for Vec2 {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, PartialEq)]
 pub struct Vec2f {
-    pub v: [f32; 2],
+    pub x: f32,
+    pub y: f32,
+}
+
+#[cfg(feature = "widgets")]
+impl Widget for Vec2f {
+    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+        ui.with_layout(
+            ecs::prelude::egui::Layout::left_to_right(ecs::prelude::egui::Align::TOP),
+            |ui| {
+                ui.label("x: ");
+                self.x.display(ui);
+                ui.label("y: ");
+                self.y.display(ui);
+            },
+        );
+    }
 }
 
 impl From<[f32; 2]> for Vec2f {
@@ -82,8 +100,17 @@ impl From<[usize; 2]> for Vec2f {
 impl Add<Vec2f> for Vec2f {
     type Output = Self;
     fn add(mut self, rhs: Vec2f) -> Self::Output {
-        self.v[0] += rhs.v[0];
-        self.v[1] += rhs.v[1];
+        self.x += rhs.x;
+        self.y += rhs.y;
+        self
+    }
+}
+
+impl Sub<Vec2f> for Vec2f {
+    type Output = Self;
+    fn sub(mut self, rhs: Vec2f) -> Self::Output {
+        self.x -= rhs.x;
+        self.y -= rhs.y;
         self
     }
 }
@@ -91,27 +118,27 @@ impl Add<Vec2f> for Vec2f {
 impl Mul<Vec2f> for Vec2f {
     type Output = Self;
     fn mul(mut self, rhs: Vec2f) -> Self::Output {
-        self.v[0] *= rhs.v[0];
-        self.v[1] *= rhs.v[1];
+        self.x *= rhs.x;
+        self.y *= rhs.y;
         self
     }
 }
 
 impl Vec2f {
     pub fn zero() -> Self {
-        Self { v: [0.0, 0.0] }
+        Self { x: 0., y: 0. }
     }
 
     pub fn one() -> Self {
-        Self { v: [1.; 2] }
+        Self { x: 1., y: 1. }
     }
 
-    pub fn new(x: f32, y: f32) -> Self {
-        Self { v: [x, y] }
+    pub const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
     }
 
     pub fn as_matrix(&self) -> [f32; 2] {
-        self.v
+        [self.x, self.y]
     }
 
     // pub fn distance(&self, other: &Vec2f) -> f32 {
@@ -121,19 +148,20 @@ impl Vec2f {
     // }
 
     pub fn is_zero(&self) -> bool {
-        self.v[0] == 0.0 && self.v[1] == 0.0
+        self.x == 0.0 && self.y == 0.0
     }
 
     pub fn normalize(&self) -> Vec2f {
         let m = self.magnitude();
 
         Vec2f {
-            v: [self.v[0] / m, self.v[1] / m],
+            x: self.x / m,
+            y: self.y / m,
         }
     }
 
     pub fn magnitude(&self) -> f32 {
-        (self.v[0] * self.v[0] + self.v[1] * self.v[1]).sqrt()
+        (self.x * self.x + self.y * self.y).sqrt()
     }
 }
 
@@ -209,7 +237,7 @@ impl Vec2f {
 //     }
 // }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(WinnyWidget, Debug, Default, Clone, Copy, PartialEq)]
 pub struct Vec3f {
     pub x: f32,
     pub y: f32,
@@ -386,21 +414,42 @@ impl std::ops::DivAssign<f32> for Vec3f {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, PartialEq)]
 pub struct Vec4f {
-    pub v: [f32; 4],
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub w: f32,
+}
+
+#[cfg(feature = "widgets")]
+impl Widget for Vec4f {
+    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+        ui.label("Vec4f");
+    }
+}
+
+impl From<[f32; 4]> for Vec4f {
+    fn from(value: [f32; 4]) -> Self {
+        Self {
+            x: value[0],
+            y: value[1],
+            z: value[2],
+            w: value[3],
+        }
+    }
 }
 
 impl From<Vec4f> for Vec3f {
     fn from(value: Vec4f) -> Self {
-        Vec3f::new(value.v[0], value.v[1], value.v[2])
+        Vec3f::new(value.x, value.y, value.z)
     }
 }
 
 impl SubAssign<Vec4f> for Vec4f {
     fn sub_assign(&mut self, rhs: Vec4f) {
-        self.v[0] -= rhs.v[0];
-        self.v[1] -= rhs.v[1];
-        self.v[2] -= rhs.v[2];
-        self.v[3] -= rhs.v[3];
+        self.x -= rhs.x;
+        self.y -= rhs.y;
+        self.z -= rhs.z;
+        self.w -= rhs.w;
     }
 }
 
@@ -408,10 +457,10 @@ impl Add<Vec4f> for Vec4f {
     type Output = Vec4f;
 
     fn add(mut self, rhs: Vec4f) -> Self::Output {
-        self.v[0] += rhs.v[0];
-        self.v[1] += rhs.v[1];
-        self.v[2] += rhs.v[2];
-        self.v[3] += rhs.v[3];
+        self.x += rhs.x;
+        self.y += rhs.y;
+        self.z += rhs.z;
+        self.w += rhs.w;
 
         self
     }
@@ -419,37 +468,48 @@ impl Add<Vec4f> for Vec4f {
 
 impl AddAssign<Vec4f> for Vec4f {
     fn add_assign(&mut self, rhs: Vec4f) {
-        self.v[0] += rhs.v[0];
-        self.v[1] += rhs.v[1];
-        self.v[2] += rhs.v[2];
-        self.v[3] += rhs.v[3];
+        self.x += rhs.x;
+        self.y += rhs.y;
+        self.z += rhs.z;
+        self.w += rhs.w;
     }
 }
 
 impl Vec4f {
-    pub fn new(x: f32, y: f32, z: f32, r: f32) -> Self {
-        Self { v: [x, y, z, r] }
+    pub const fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
+        Self { x, y, z, w }
     }
 
     pub fn zero() -> Self {
-        Self { v: [0.; 4] }
+        Self {
+            x: 0.,
+            y: 0.,
+            z: 0.,
+            w: 0.,
+        }
     }
 
     pub fn to_homogenous(v: Vec3f) -> Self {
         Self {
-            v: [v.x, v.y, v.z, 1.0],
+            x: v.x,
+            y: v.y,
+            z: v.z,
+            w: 1.,
         }
     }
 
     pub fn is_homogenous(&self) -> bool {
-        self.v[3] == 1.0
+        self.w == 1.0
     }
 
     pub fn normalize(&self) -> Vec4f {
         let m = self.magnitude();
 
         Vec4f {
-            v: [self.v[0] / m, self.v[1] / m, self.v[2] / m, self.v[3] / m],
+            x: self.x / m,
+            y: self.y / m,
+            z: self.z / m,
+            w: self.w / m,
         }
     }
 
@@ -457,16 +517,19 @@ impl Vec4f {
         let m = self.magnitude();
 
         Vec4f {
-            v: [self.v[0] / m, self.v[1] / m, self.v[2] / m, 1.0],
+            x: self.x / m,
+            y: self.y / m,
+            z: self.z / m,
+            w: 1.,
         }
     }
 
     pub fn magnitude(&self) -> f32 {
-        (self.v[0] * self.v[0]
-            + self.v[1] * self.v[1]
-            + self.v[2] * self.v[2]
-            + self.v[3] * self.v[3])
-            .sqrt()
+        (self.x * self.x + self.y * self.y + self.z * self.z + self.w * self.w).sqrt()
+    }
+
+    pub fn as_matrix(&self) -> [f32; 4] {
+        [self.x, self.y, self.z, self.w]
     }
 }
 

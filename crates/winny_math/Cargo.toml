@@ -4,5 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ecs = { path = "../ecs" }
+
 # cgmath = "0.18"
 bytemuck = { version = "1.12", features = ["derive"] }
+
+[features]
+widgets = []

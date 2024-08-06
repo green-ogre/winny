@@ -10,3 +10,6 @@ proc-macro = true
 proc-macro2 = "1.0.79"
 syn = { version = "2.0.53", featues = ["full"] }
 quote = "1.0.35"
+
+[features]
+widgets = []

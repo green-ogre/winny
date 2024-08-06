@@ -1,10 +1,11 @@
-use chrono::{DateTime, Local, TimeDelta};
-use ecs::{prelude::*, WinnyComponent, WinnyResource};
-
 use crate::{
     app::AppSchedule,
     prelude::{App, Plugin},
 };
+use chrono::{DateTime, Local, TimeDelta};
+#[cfg(feature = "editor")]
+use ecs::egui_widget::Widget;
+use ecs::{prelude::*, WinnyComponent, WinnyResource};
 
 pub struct TimePlugin;
 
@@ -67,6 +68,13 @@ impl TimeApp for App {
 
 #[derive(WinnyComponent)]
 pub struct Timer<E: Event>(chrono::DateTime<chrono::Local>, i64, Option<E>);
+
+#[cfg(feature = "editor")]
+impl<E: Event> Widget for Timer<E> {
+    fn display(&mut self, ui: &mut egui::Ui) {
+        ui.label(format!("Timer<{}>", std::any::type_name::<E>()));
+    }
+}
 
 impl<E: Event> Timer<E> {
     pub fn new(duration: impl Into<TimerDurationSeconds>, event: E) -> Self {

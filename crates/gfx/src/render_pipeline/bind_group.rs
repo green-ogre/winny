@@ -1,9 +1,9 @@
 use super::buffer::AsGpuBuffer;
-use crate::texture::{SamplerFilterType, Texture, TextureAtlas};
+use crate::texture::{Image, SamplerFilterType, Texture};
 use app::plugins::Plugin;
 use app::render::RenderContext;
-use asset::{Asset, AssetId, Handle};
-use ecs::{SparseArrayIndex, SparseSet, WinnyComponent, WinnyResource};
+use asset::prelude::*;
+use ecs::{SparseArrayIndex, SparseSet, WinnyComponent, WinnyResource, WinnyWidget};
 use fxhash::FxHashMap;
 use wgpu::BufferUsages;
 
@@ -227,6 +227,9 @@ pub struct BindGroup {
     binding: wgpu::BindGroup,
 }
 
+#[cfg(feature = "widgets")]
+ecs::ecs_macro::impl_label_widget!(BindGroup);
+
 impl BindGroup {
     pub fn new(
         resources: Vec<WgpuResource>,
@@ -394,8 +397,7 @@ pub trait AsBindGroup: Sized + AsWgpuResources {
 
 pub trait BindableAsset: Asset {}
 
-impl BindableAsset for Texture {}
-impl BindableAsset for TextureAtlas {}
+impl BindableAsset for Image {}
 
 /// [`BindGroup`] for a [`BindableAsset`].
 #[derive(WinnyComponent, Debug)]
@@ -415,7 +417,7 @@ impl BindGroupHandle {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(WinnyWidget, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BindGroupId(usize);
 
 impl SparseArrayIndex for BindGroupId {
@@ -449,7 +451,6 @@ impl AssetBindGroups {
         if let Some(bind_id) = self.stored_bindings.get(&handle.id()) {
             BindGroupHandle::new(*bind_id, handle.id())
         } else {
-            util::tracing::info!("inserting new bind group");
             let bind_id = self
                 .bindings
                 .insert_in_first_empty(bind_group(), |index| BindGroupId(index));

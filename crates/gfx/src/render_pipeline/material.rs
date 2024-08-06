@@ -4,7 +4,7 @@ use super::{
         UNIFORM,
     },
     buffer::AsGpuBuffer,
-    shader::{FragmentShader, DEFAULT_MATERIAL_2D_PATH_PARTICLE, DEFAULT_MATERIAL_2D_PATH_SPRITE},
+    shader::{FragmentShader, FragmentShaderSource},
 };
 use crate::{
     particle::ParticlePlugin,
@@ -13,8 +13,8 @@ use crate::{
 };
 use app::plugins::Plugin;
 use app::render::RenderContext;
-use asset::{AssetServer, Handle};
-use ecs::{Component, WinnyComponent};
+use asset::prelude::*;
+use ecs::{Component, WinnyComponent, WinnyWidget};
 use std::marker::PhantomData;
 use winny_math::vector::Vec4f;
 
@@ -36,8 +36,14 @@ pub trait Material: AsBindGroup + Clone + Component {
     const BLEND_STATE: wgpu::BlendState;
 
     fn resource_state<'s>(&self, texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s>;
-    fn particle_fragment_shader(&self, server: &mut AssetServer) -> Handle<FragmentShader>;
-    fn sprite_fragment_shader(&self, server: &mut AssetServer) -> Handle<FragmentShader>;
+
+    fn particle_fragment_shader(&self, _server: &mut AssetServer) -> Handle<FragmentShaderSource> {
+        Handle::dangling()
+    }
+
+    fn sprite_fragment_shader(&self, _server: &mut AssetServer) -> Handle<FragmentShaderSource> {
+        Handle::dangling()
+    }
 }
 
 impl Material for Material2d {
@@ -45,14 +51,6 @@ impl Material for Material2d {
 
     fn resource_state<'s>(&self, texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s> {
         texture
-    }
-
-    fn sprite_fragment_shader(&self, server: &mut AssetServer) -> Handle<FragmentShader> {
-        server.load(DEFAULT_MATERIAL_2D_PATH_SPRITE)
-    }
-
-    fn particle_fragment_shader(&self, server: &mut AssetServer) -> Handle<FragmentShader> {
-        server.load(DEFAULT_MATERIAL_2D_PATH_PARTICLE)
     }
 }
 
@@ -120,7 +118,7 @@ pub struct RawMaterial2d {
 unsafe impl AsGpuBuffer for RawMaterial2d {}
 
 /// Applies the `opacity` to the target of the [`ShaderMaterial2d`]
-#[derive(Debug, Clone, Copy)]
+#[derive(WinnyWidget, Debug, Clone, Copy)]
 pub struct Opacity(pub f32);
 
 impl Opacity {
@@ -136,7 +134,7 @@ impl Default for Opacity {
 }
 
 /// Applies the `saturation` to the target of the [`ShaderMaterial2d`]
-#[derive(Debug, Clone, Copy)]
+#[derive(WinnyWidget, Debug, Clone, Copy)]
 pub struct Saturation(pub f32);
 
 impl Saturation {
@@ -152,7 +150,7 @@ impl Default for Saturation {
 }
 
 /// Applies the `modulation` to the target of the [`ShaderMaterial2d`]
-#[derive(Debug, Clone, Copy)]
+#[derive(WinnyWidget, Debug, Clone, Copy)]
 pub struct Modulation(pub Vec4f);
 
 impl Modulation {

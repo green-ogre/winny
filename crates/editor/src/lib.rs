@@ -1,33 +1,24 @@
 use app::{
-    app::Schedule,
+    app::{AppSchedule, Schedule},
     plugins::Plugin,
-    window::{ViewPort, Window},
+    window::ViewPort,
 };
-use ecs::{prelude::*, WinnyResource};
+use ecs::{prelude::*, Components, Entities, Tables, UnsafeWorldCell, WinnyResource};
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
-
-use crate::{
-    camera::Camera,
-    gui::{EguiPlugin, UiRenderState},
-};
+use gfx::{camera::Camera, gui::EguiRenderer};
 
 pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&mut self, app: &mut app::app::App) {
-        app.register_resource::<UiState>()
-            .add_plugins(EguiPlugin::<UiState>::new())
-            .add_systems(Schedule::StartUp, startup)
-            .add_systems(Schedule::PostUpdate, update_camera_viewport);
+        app.register_resource::<Editor>()
+            .insert_resource(Editor::new())
+            .add_systems(Schedule::PostUpdate, update_camera_viewport)
+            .add_systems(AppSchedule::Render, render);
     }
 }
 
-fn startup(mut commands: Commands, window: Res<Window>) {
-    let ui_state = UiState::new(&window);
-    commands.insert_resource(ui_state);
-}
-
-fn update_camera_viewport(mut camera: Query<Mut<Camera>>, ui: Res<UiState>) {
+fn update_camera_viewport(mut camera: Query<Mut<Camera>>, ui: Res<Editor>) {
     let Ok(camera) = camera.get_single_mut() else {
         return;
     };
@@ -44,8 +35,19 @@ fn update_camera_viewport(mut camera: Query<Mut<Camera>>, ui: Res<UiState>) {
     camera.viewport = Some(viewport);
 }
 
+fn render(world: &mut World) {
+    // TODO: Might be UB, cannot test with miri.
+    unsafe {
+        let world = world.as_unsafe_world();
+        let context = world.get_resource::<EguiRenderer>().egui_context();
+        world
+            .get_resource_mut::<Editor>()
+            .draw_editor(context, world);
+    }
+}
+
 #[derive(WinnyResource, Clone)]
-pub struct UiState {
+pub struct Editor {
     state: DockState<EguiWindow>,
     viewport_rect: egui::Rect,
     // selected_entities: SelectedEntities,
@@ -53,19 +55,13 @@ pub struct UiState {
     // gizmo_mode: GizmoMode,
 }
 
-impl UiRenderState for UiState {
-    fn ui(&mut self) -> impl FnOnce(&egui::Context) {
-        |ctx| self.ui(ctx)
-    }
-}
-
-impl UiState {
-    pub fn new(_window: &Window) -> Self {
+impl Editor {
+    pub fn new() -> Self {
         let mut state = DockState::new(vec![EguiWindow::GameView]);
         let tree = state.main_surface_mut();
         let [game, _inspector] =
             tree.split_right(NodeIndex::root(), 0.75, vec![EguiWindow::Inspector]);
-        let [game, _hierarchy] = tree.split_left(game, 0.2, vec![EguiWindow::Hierarchy]);
+        let [game, _entities] = tree.split_left(game, 0.2, vec![EguiWindow::Entities]);
         let [_game, _bottom] =
             tree.split_below(game, 0.8, vec![EguiWindow::Resources, EguiWindow::Assets]);
 
@@ -90,8 +86,9 @@ impl UiState {
         }
     }
 
-    fn ui(&mut self, ctx: &egui::Context) {
+    fn draw_editor(&mut self, ctx: &egui::Context, world: UnsafeWorldCell<'_>) {
         let mut tab_viewer = TabViewer {
+            world,
             viewport_rect: &mut self.viewport_rect,
             // selected_entities: &mut self.selected_entities,
             // selection: &mut self.selection,
@@ -107,18 +104,35 @@ impl UiState {
 #[derive(Debug, Clone, Copy)]
 enum EguiWindow {
     GameView,
-    Hierarchy,
+    Entities,
     Resources,
     Assets,
     Inspector,
 }
 
 struct TabViewer<'a> {
-    // world: &'a mut World,
+    world: UnsafeWorldCell<'a>,
     // selected_entities: &'a mut SelectedEntities,
     // selection: &'a mut InspectorSelection,
     viewport_rect: &'a mut egui::Rect,
     // gizmo_mode: GizmoMode,
+}
+
+fn draw_entities(
+    components: &Components,
+    entities: &Entities,
+    tables: &mut Tables,
+    ui: &mut egui_dock::egui::Ui,
+) {
+    for (entity, meta) in entities.iter() {
+        let entity_table = tables.get_mut(meta.location.table_id).unwrap();
+        egui::CollapsingHeader::new(format!("Entity ({})", entity.index())).show(ui, |ui| {
+            for (component_id, column) in entity_table.iter_mut() {
+                let component = unsafe { column.get_row_ptr_unchecked(meta.location.table_row) };
+                components.display_component(component_id, component, ui);
+            }
+        });
+    }
 }
 
 impl egui_dock::TabViewer for TabViewer<'_> {
@@ -134,11 +148,19 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 
                 // draw_gizmo(ui, self.world, self.selected_entities, self.gizmo_mode);
             }
-            EguiWindow::Hierarchy => {
+            EguiWindow::Entities => {
                 // let selected = hierarchy_ui(self.world, ui, self.selected_entities);
                 // if selected {
                 //     *self.selection = InspectorSelection::Entities;
                 // }
+                unsafe {
+                    draw_entities(
+                        self.world.components(),
+                        self.world.entities(),
+                        self.world.tables_mut(),
+                        ui,
+                    );
+                }
             }
             // EguiWindow::Resources => select_resource(ui, &type_registry, self.selection),
             // EguiWindow::Assets => select_asset(ui, &type_registry, self.world, self.selection),
@@ -178,5 +200,17 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 
     fn clear_background(&self, window: &Self::Tab) -> bool {
         !matches!(window, EguiWindow::GameView)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn miri() {
+        let mut world = World::default();
+        world.insert_resource(Editor::new());
+        render(&mut world);
     }
 }

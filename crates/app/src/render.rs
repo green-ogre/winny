@@ -1,17 +1,38 @@
-use std::{ops::Deref, sync::Arc};
-
 use bytemuck::Pod;
+#[cfg(feature = "editor")]
+use ecs::egui_widget::Widget;
 use ecs::{WinnyComponent, WinnyResource};
+use std::{ops::Deref, sync::Arc};
 use wgpu::TextureFormat;
+
+#[cfg(feature = "editor")]
+pub trait DimensionsUnit: 'static + Copy + Send + Sync + Pod + Widget {}
+#[cfg(feature = "editor")]
+impl<T: 'static + Copy + Send + Sync + Pod + Widget> DimensionsUnit for T {}
+
+#[cfg(not(feature = "editor"))]
+pub trait DimensionsUnit: 'static + Copy + Send + Sync + Pod {}
+#[cfg(not(feature = "editor"))]
+impl<T: 'static + Copy + Send + Sync + Pod> DimensionsUnit for T {}
 
 /// Described a width and height of unit T
 #[repr(transparent)]
 #[derive(WinnyComponent, Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Dimensions<T: 'static + Copy + Send + Sync + Pod> {
+pub struct Dimensions<T: DimensionsUnit> {
     dimensions: [T; 2],
 }
 
-impl<T: 'static + Copy + Send + Sync + Pod> Dimensions<T> {
+#[cfg(feature = "editor")]
+impl<T: DimensionsUnit> Widget for Dimensions<T> {
+    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+        ecs::prelude::egui::CollapsingHeader::new("Dimensions").show(ui, |ui| {
+            self.dimensions[0].display(ui);
+            self.dimensions[1].display(ui);
+        });
+    }
+}
+
+impl<T: DimensionsUnit> Dimensions<T> {
     pub fn new(width: T, height: T) -> Self {
         Self {
             dimensions: [width, height],

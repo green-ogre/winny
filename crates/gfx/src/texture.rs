@@ -1,113 +1,105 @@
 use app::render::{Dimensions, RenderConfig, RenderContext, RenderDevice, RenderQueue};
-use asset::{load_binary, reader::ByteReader, Asset, AssetApp, AssetLoaderError};
+use asset::{reader::ByteReader, Asset, AssetApp, AssetLoaderError};
 use ecs::WinnyComponent;
 use image::{DynamicImage, GenericImageView};
-use std::{fmt::Display, future::Future, io::Cursor};
+use std::{
+    fmt::{Debug, Display},
+    io::Cursor,
+    ops::Deref,
+};
 use util::tracing::trace;
 use wgpu::util::DeviceExt;
+
+use crate::render_pipeline::render_assets::RenderAssetApp;
 
 pub struct TexturePlugin;
 
 impl app::plugins::Plugin for TexturePlugin {
     fn build(&mut self, app: &mut app::app::App) {
-        let texture_loader = TextureAssetLoader {};
         let image_loader = ImageAssetLoader {};
-        let atlas_loader = TextureAtlasLoader {};
 
-        app.register_asset_loader::<Texture>(texture_loader)
-            .register_asset_loader::<TextureAtlas>(atlas_loader)
+        app.register_asset::<Image>()
+            .register_render_asset::<Texture>()
+            .register_render_asset::<TextureAtlas>()
             .register_asset_loader::<Image>(image_loader);
-    }
-}
-
-struct TextureAtlasLoader;
-
-impl asset::AssetLoader for TextureAtlasLoader {
-    type Asset = TextureAtlas;
-
-    fn extensions(&self) -> &'static [&'static str] {
-        &["png"]
-    }
-
-    fn load(
-        _context: RenderContext,
-        _reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
-        _path: String,
-        _ext: &str,
-    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>> {
-        async move { panic!() }
     }
 }
 
 struct ImageAssetLoader;
 
+/// Describes the number of sprites within an [`Image`].
+#[derive(Debug)]
+pub struct AtlasDimensions(Dimensions<u32>);
+
+impl Default for AtlasDimensions {
+    fn default() -> Self {
+        Self(Dimensions::new(1, 1))
+    }
+}
+
+impl Deref for AtlasDimensions {
+    type Target = Dimensions<u32>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// [`Image`] settings for asset loading.
+#[derive(Debug, Default)]
+pub struct ImageSettings {
+    atlas_dimensions: AtlasDimensions,
+}
+
 impl asset::AssetLoader for ImageAssetLoader {
     type Asset = Image;
+    type Settings = ImageSettings;
 
     fn extensions(&self) -> &'static [&'static str] {
         &["png"]
     }
 
-    fn load(
-        _context: RenderContext,
+    async fn load(
         reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
+        settings: Self::Settings,
         _path: String,
         ext: &str,
-    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>> {
-        async move {
-            match ext {
-                "png" => Image::new(reader),
-                _ => Err(AssetLoaderError::UnsupportedFileExtension),
-            }
+    ) -> Result<Self::Asset, AssetLoaderError> {
+        match ext {
+            "png" => Image::new(reader, settings),
+            _ => Err(AssetLoaderError::UnsupportedFileExtension),
         }
     }
 }
 
-struct TextureAssetLoader;
-
-impl asset::AssetLoader for TextureAssetLoader {
-    type Asset = Texture;
-
-    fn extensions(&self) -> &'static [&'static str] {
-        &["png"]
-    }
-
-    fn load(
-        context: RenderContext,
-        reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
-        _path: String,
-        ext: &str,
-    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>> {
-        async move {
-            match ext {
-                "png" => {
-                    let source = Image::new(reader)?;
-                    Ok(Texture::from_image(
-                        &context.device,
-                        &context.queue,
-                        &source.image,
-                    ))
-                }
-                _ => Err(AssetLoaderError::UnsupportedFileExtension),
-            }
-        }
-    }
-}
-
+/// Source for a [`Texture`] and [`TextureAtlas`].
 pub struct Image {
-    pub image: DynamicImage,
+    image: DynamicImage,
+    atlas_dimensions: AtlasDimensions,
 }
 
 impl Asset for Image {}
 
+impl Debug for Image {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Image").finish_non_exhaustive()
+    }
+}
+
 impl Image {
-    pub fn new(mut reader: ByteReader<Cursor<Vec<u8>>>) -> Result<Self, AssetLoaderError> {
+    pub fn new(
+        mut reader: ByteReader<Cursor<Vec<u8>>>,
+        settings: ImageSettings,
+    ) -> Result<Self, AssetLoaderError> {
         let data = reader
             .read_all()
             .map_err(|_| AssetLoaderError::FailedToParse)?;
         let image = image::load_from_memory(&data).map_err(|_| AssetLoaderError::FailedToParse)?;
 
-        Ok(Self { image })
+        Ok(Self {
+            image,
+            atlas_dimensions: settings.atlas_dimensions,
+        })
     }
 }
 
@@ -136,49 +128,21 @@ impl TextureDimensions {
     }
 }
 
-///// Configuration for a [`wgpu::Texture`] and [`wgpu::Sampler`] within the [`asset::AssetServer`].
-//#[derive(WinnyComponent, Debug)]
-//pub struct TextureImportSettings {
-//    pub texture: Arc<wgpu::TextureDescriptor>,
-//    pub sampler: Arc<wgpu::SamplerDescriptor>,
-//}
-
 /// Handle to a GPU texture. Provides a [`wgpu::TextureView`] and [`wgpu::Sampler`].
 #[derive(Debug)]
 pub struct Texture {
     texture: wgpu::Texture,
 }
 
-impl asset::Asset for Texture {}
+#[cfg(feature = "widgets")]
+ecs::ecs_macro::impl_label_widget!(Texture);
 
 impl Texture {
     pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
-    pub async fn load_texture(
-        file_name: &str,
-        device: &RenderDevice,
-        queue: &RenderQueue,
-    ) -> Result<Texture, ()> {
-        let data = load_binary(file_name).await.map_err(|_| ())?;
-        Texture::from_image_bytes(device, queue, &data)
-    }
-
-    pub fn from_image_bytes(
-        device: &RenderDevice,
-        queue: &RenderQueue,
-        bytes: &[u8],
-    ) -> Result<Self, ()> {
-        let img = image::load_from_memory(bytes).map_err(|_| ())?;
-        Ok(Self::from_image(device, queue, &img))
-    }
-
-    pub fn from_image(
-        device: &RenderDevice,
-        queue: &RenderQueue,
-        img: &image::DynamicImage,
-    ) -> Self {
-        let rgba = img.to_rgba8();
-        let dimensions = img.dimensions();
+    pub fn from_image(device: &RenderDevice, queue: &RenderQueue, img: &Image) -> Self {
+        let rgba = img.image.to_rgba8();
+        let dimensions = img.image.dimensions();
 
         Self::from_bytes(&rgba, dimensions, device, queue)
     }
@@ -338,13 +302,12 @@ impl TextureAtlas {
     pub fn from_image(
         device: &RenderDevice,
         queue: &RenderQueue,
-        atlas_dimensions: &Dimensions<u32>,
         image: &Image,
     ) -> Result<Self, AtlasError> {
-        let texture = Texture::from_image(device, queue, &image.image);
+        let texture = Texture::from_image(device, queue, &image);
 
         Ok(TextureAtlas {
-            dimensions: atlas_dimensions.clone(),
+            dimensions: image.atlas_dimensions.clone(),
             texture,
         })
     }
