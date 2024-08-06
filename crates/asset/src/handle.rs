@@ -115,6 +115,6 @@ impl HandleGeneration {
     }
 
     pub fn increment(&mut self) {
-        self.current.wrapping_add(1);
+        self.current = self.current.wrapping_add(1);
     }
 }

@@ -82,9 +82,8 @@ fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) ->
             .variants
             .iter()
             .map(|field| {
-                let field_name = &field.ident;
-
-                quote! {}
+                let _field_name = &field.ident;
+                unimplemented!();
             })
             .collect::<Vec<_>>(),
         _ => panic!("Components may only be structs of enums"),
@@ -363,8 +362,7 @@ fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
             .iter()
             .map(|field| {
                 let _field_name = &field.ident;
-
-                quote! {}
+                unimplemented!();
             })
             .collect::<Vec<_>>(),
         _ => panic!("Components may only be structs of enums"),
@@ -394,6 +392,7 @@ fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
 }
 
 #[cfg(feature = "widgets")]
+#[allow(unused)]
 macro_rules! impl_label_widget {
     ($t:ty, $l:expr) => {
         impl Widget for $t {

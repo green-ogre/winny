@@ -26,7 +26,7 @@ impl Default for Transform {
     }
 }
 
-impl<const Offset: u32> VertexLayout<Offset> for Matrix4x4f {
+impl<const OFFSET: u32> VertexLayout<OFFSET> for Matrix4x4f {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
         wgpu::VertexBufferLayout {
@@ -35,22 +35,22 @@ impl<const Offset: u32> VertexLayout<Offset> for Matrix4x4f {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: Offset,
+                    shader_location: OFFSET,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: Offset + 1,
+                    shader_location: OFFSET + 1,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: Offset + 2,
+                    shader_location: OFFSET + 2,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
-                    shader_location: Offset + 3,
+                    shader_location: OFFSET + 3,
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],

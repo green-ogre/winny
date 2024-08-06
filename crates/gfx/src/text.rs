@@ -1,4 +1,4 @@
-use crate::camera::{Camera, Camera2dBundle};
+use crate::camera::Camera;
 use crate::render::{RenderEncoder, RenderView};
 use app::app::AppSchedule;
 use app::plugins::Plugin;

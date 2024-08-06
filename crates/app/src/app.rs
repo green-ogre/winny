@@ -22,7 +22,6 @@ use winit::{
     event::{self, DeviceEvent, DeviceId, ElementState},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::PhysicalKey,
-    window::Fullscreen,
 };
 use winny_math::vector::Vec2f;
 
@@ -276,50 +275,91 @@ impl ApplicationHandler for WinitApp {
 
         util::tracing::trace!("App resumed: Initializing");
         let window_plugin = self.app.world().resource::<WindowPlugin>();
-        let window_attributes = winit::window::Window::default_attributes()
+        let mut window_attributes = winit::window::Window::default_attributes()
             .with_title(window_plugin.title)
             .with_inner_size(PhysicalSize::new(
                 window_plugin.window_size.x,
                 window_plugin.window_size.y,
             ));
-        let window = event_loop.create_window(window_attributes).unwrap();
         // TODO: doesn't work?
-        window.set_maximized(window_plugin.maximized);
-        util::tracing::info!("New window: {:?}", *window_plugin);
+        // window.set_maximized(window_plugin.maximized);
 
         #[cfg(target_arch = "wasm32")]
-        let mut startup = true;
+        let mut do_startup = true;
         #[cfg(target_arch = "wasm32")]
         {
-            use winit::platform::web::WindowExtWebSys;
-            web_sys::window()
-                .and_then(|win| win.document())
-                .and_then(|doc| {
-                    let dst = doc.get_element_by_id("winny-wasm")?;
-                    let canvas = web_sys::Element::from(window.canvas()?);
-                    dst.append_child(&canvas).ok()?;
-                    Some(())
-                })
-                .expect("Couldn't append canvas to document body.");
+            use web_sys::wasm_bindgen::JsCast;
+            use web_sys::HtmlCanvasElement;
+            use winit::platform::web::WindowAttributesExtWebSys;
+
+            util::tracing::info!("document");
+            let document = web_sys::window().unwrap().document().unwrap();
+            util::tracing::info!("canvas");
+            let canvas = document
+                .create_element("canvas")
+                .unwrap()
+                .dyn_into::<HtmlCanvasElement>()
+                .unwrap();
+
+            // Get the WebGPU context
+            // match canvas.get_context("webgpu") {
+            //     Ok(Some(_)) => (),
+            //     Ok(None) => util::tracing::error!("WebGPU context not available"),
+            //     Err(e) => util::tracing::error!("Error getting WebGPU context: {:?}", e),
+            // };
+
+            util::tracing::info!("with canvas");
+            window_attributes = window_attributes.with_canvas(Some(canvas.clone()));
+            // let canvas = window
+            //     .canvas()
+            //     .expect("Could not construct canvas from winit window");
+            let dst = document
+                .get_element_by_id("winny-wasm")
+                .expect("Could not find doc element `winny-wasm`");
+            if let Err(e) = dst.append_child(&web_sys::Element::from(canvas.clone())) {
+                util::tracing::error!("{e:?}");
+            }
+
+            // let context: GpuCanvasContext = canvas
+            //     .get_context("webgpu")
+            //     .unwrap()
+            //     .unwrap()
+            //     .dyn_into::<GpuCanvasContext>()
+            //     .unwrap();
+
+            util::tracing::info!("create_window");
+            let window = event_loop.create_window(window_attributes).unwrap();
+            util::tracing::info!("New window: {:?}", *window_plugin);
+            let viewport = ViewPort::new(Vec2f::new(0.0, 0.0), window_plugin.viewport_size);
+            let window = Window::new(Arc::new(window), viewport);
 
             use winit::dpi::PhysicalSize;
-            if let Some(size) = window.request_inner_size(PhysicalSize::new(
-                window_plugin.window_size.0,
-                window_plugin.window_size.1,
+            if let Some(size) = window.winit_window.request_inner_size(PhysicalSize::new(
+                window_plugin.window_size.x,
+                window_plugin.window_size.y,
             )) {
                 util::tracing::info!("requested inner window size: {size:?}");
             } else {
-                startup = false;
+                do_startup = false;
                 util::tracing::info!("failed to request size, awaiting resized event");
             }
+
+            self.app.insert_resource(window);
+            self.created_window = true;
         }
 
-        let viewport = ViewPort::new(Vec2f::new(0.0, 0.0), window_plugin.viewport_size);
-        let window = Window::new(Arc::new(window), viewport);
-        self.app.insert_resource(window);
-        self.created_window = true;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let window = event_loop.create_window(window_attributes).unwrap();
+            util::tracing::info!("New window: {:?}", *window_plugin);
+            let viewport = ViewPort::new(Vec2f::new(0.0, 0.0), window_plugin.viewport_size);
+            let window = Window::new(Arc::new(window), viewport);
+            self.app.insert_resource(window);
+            self.created_window = true;
+        }
+
         #[cfg(target_arch = "wasm32")]
-        if !startup {
+        if !do_startup {
             return;
         }
         startup(&mut self.app.scheduler, &mut self.app.world);
@@ -339,7 +379,7 @@ impl ApplicationHandler for WinitApp {
             winit::event::WindowEvent::Resized(size) => {
                 #[cfg(target_arch = "wasm32")]
                 if !self.startup {
-                    self.app.startup();
+                    startup(&mut self.app.scheduler, &mut self.app.world);
                     self.startup = true;
                 }
                 self.app

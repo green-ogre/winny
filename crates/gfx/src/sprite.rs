@@ -421,11 +421,11 @@ pub struct SpriteInstance {
 
 unsafe impl AsGpuBuffer for SpriteInstance {}
 
-impl<const Offset: u32> AsVertexBuffer<Offset> for SpriteInstance {
+impl<const OFFSET: u32> AsVertexBuffer<OFFSET> for SpriteInstance {
     const LABEL: &'static str = "sprite instance";
 }
 
-impl<const Offset: u32> VertexLayout<Offset> for SpriteInstance {
+impl<const OFFSET: u32> VertexLayout<OFFSET> for SpriteInstance {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
         wgpu::VertexBufferLayout {
@@ -434,27 +434,27 @@ impl<const Offset: u32> VertexLayout<Offset> for SpriteInstance {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: Offset,
+                    shader_location: OFFSET,
                     format: wgpu::VertexFormat::Float32,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<f32>() as wgpu::BufferAddress,
-                    shader_location: Offset + 1,
+                    shader_location: OFFSET + 1,
                     format: wgpu::VertexFormat::Float32,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                    shader_location: Offset + 2,
+                    shader_location: OFFSET + 2,
                     format: wgpu::VertexFormat::Uint32,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: Offset + 3,
+                    shader_location: OFFSET + 3,
                     format: wgpu::VertexFormat::Uint32,
                 },
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: Offset + 4,
+                    shader_location: OFFSET + 4,
                     format: wgpu::VertexFormat::Uint32,
                 },
             ],

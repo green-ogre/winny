@@ -1,6 +1,5 @@
-use app::{app::Schedule, plugins::Plugin, render::RenderContext};
+use app::{plugins::Plugin, render::RenderContext};
 use asset::prelude::*;
-use ecs::Res;
 use std::ops::Deref;
 
 pub struct ShaderPlugin;
