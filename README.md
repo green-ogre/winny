@@ -1,4 +1,4 @@
-# [![Winny](res/cube.PNG)]
+# ![Winny](res/cube.PNG)
 
 ## EDITOR
     - Make resources and assets viewable.
