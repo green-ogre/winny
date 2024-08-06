@@ -62,9 +62,14 @@ fn vs_main(
     out.uv.x = (out.uv.x * instance.flip_h) + ((1.0 - out.uv.x) * (1.0 - instance.flip_h));
     out.uv.y = (out.uv.y * instance.flip_v) + ((1.0 - out.uv.y) * (1.0 - instance.flip_v));
 
-    transformation_matrix[0][3] *= 2.0 / camera.window_dimensions.x;
-    transformation_matrix[1][3] *= -2.0 / camera.window_dimensions.y;
-    // transformation_matrix[2][3] *= 1.0 / 1000.0;
+    transformation_matrix[0][3] *= 2.0 / camera.viewport_dimensions.x;
+    transformation_matrix[1][3] *= -2.0 / camera.viewport_dimensions.y;
+
+    camera_matrix[0][3] *= 2.0 / camera.viewport_dimensions.x;
+    camera_matrix[1][3] *= -2.0 / camera.viewport_dimensions.y;
+
+    camera_matrix[0][0] *= camera.viewport_dimensions.x / camera.window_dimensions.x;
+    camera_matrix[1][1] *= camera.viewport_dimensions.y / camera.window_dimensions.y;
 
     out.clip_position = vert.position * camera_matrix;
     out.clip_position *= transformation_matrix;

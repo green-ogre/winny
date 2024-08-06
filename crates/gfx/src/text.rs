@@ -1,18 +1,14 @@
+use crate::camera::{Camera, Camera2dBundle};
+use crate::render::{RenderEncoder, RenderView};
 use app::app::AppSchedule;
+use app::plugins::Plugin;
+use app::render::RenderContext;
 use app::window::{ViewPort, Window};
-use asset::{
-    Asset, AssetApp, AssetLoader, AssetLoaderError, AssetLoaderEvent, AssetServer, Assets, Handle,
-};
+use asset::prelude::*;
 use ecs::{Commands, EventReader, Query, Res, ResMut, WinnyResource};
 use wgpu_text::glyph_brush::ab_glyph::FontRef;
 use wgpu_text::glyph_brush::{Extra, Section};
 use wgpu_text::{BrushBuilder, TextBrush};
-
-use app::plugins::Plugin;
-use app::render::{RenderContext, RenderDevice, RenderQueue};
-
-use crate::camera::Camera;
-use crate::render::{RenderEncoder, RenderView};
 
 pub struct TextPlugin {
     text_path: String,
@@ -29,7 +25,8 @@ impl TextPlugin {
 impl Plugin for TextPlugin {
     fn build(&mut self, app: &mut app::app::App) {
         let loader = TextAssetLoader;
-        app.register_asset_loader::<Ttf>(loader)
+        app.register_asset::<Ttf>()
+            .register_asset_loader::<Ttf>(loader)
             .insert_resource(TextPath(self.text_path.clone()))
             .register_resource::<TextHandle>()
             .register_resource::<TextRenderer>()
@@ -48,24 +45,23 @@ struct TextAssetLoader;
 
 impl AssetLoader for TextAssetLoader {
     type Asset = Ttf;
+    type Settings = ();
 
     fn extensions(&self) -> &'static [&'static str] {
         &["ttf"]
     }
 
-    fn load(
-        _context: app::render::RenderContext,
+    async fn load(
         mut reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
+        _settings: Self::Settings,
         _path: String,
         _ext: &str,
-    ) -> impl std::future::Future<Output = Result<Self::Asset, asset::AssetLoaderError>> {
-        async move {
-            match reader.read_all() {
-                Ok(bytes) => Ok(Ttf {
-                    bytes: Box::leak(Box::new(bytes)),
-                }),
-                Err(_) => Err(AssetLoaderError::FailedToBuild),
-            }
+    ) -> Result<Self::Asset, asset::AssetLoaderError> {
+        match reader.read_all() {
+            Ok(bytes) => Ok(Ttf {
+                bytes: Box::leak(Box::new(bytes)),
+            }),
+            Err(_) => Err(AssetLoaderError::FailedToBuild),
         }
     }
 }
@@ -76,7 +72,7 @@ struct TextHandle(Handle<Ttf>);
 #[derive(WinnyResource)]
 struct TextPath(String);
 
-fn startup(mut commands: Commands, mut server: ResMut<AssetServer>, path: Res<TextPath>) {
+fn startup(mut commands: Commands, server: Res<AssetServer>, path: Res<TextPath>) {
     let handle = server.load(path.0.as_str());
     commands.insert_resource(TextHandle(handle));
     commands.run_system_once_when(text_setup, should_run_text_setup);
@@ -120,12 +116,12 @@ impl TextRenderer {
         Self { brush }
     }
 
-    pub fn draw<'a, F>(&mut self, device: &RenderDevice, queue: &RenderQueue, f: F)
+    pub fn draw<'a, F>(&mut self, context: &RenderContext, f: F)
     where
         F: FnOnce() -> Vec<Section<'a, Extra>>,
     {
         let sections = f();
-        if let Err(e) = self.brush.queue(&device, &queue, sections) {
+        if let Err(e) = self.brush.queue(&context.device, &context.queue, sections) {
             panic!("{e}");
         };
     }

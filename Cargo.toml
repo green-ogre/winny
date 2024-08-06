@@ -10,6 +10,7 @@ path = "src/lib.rs"
 [workspace]
 members = [
   "crates/*",
+  "examples/asset_reloading",
   "examples/camera",
   "examples/egui",
   "examples/particles",
@@ -27,9 +28,21 @@ winny_math = { path = "crates/winny_math" }
 asset = { path = "crates/asset" }
 gfx = { path = "crates/gfx" }
 hot_reload = { path = "crates/hot_reload", optional = true }
+editor = { path = "crates/editor", optional = true }
 
 [features]
+default = ["egui", "text"]
+
 hot_reload = ["dep:hot_reload"]
+editor = [
+  "dep:editor",
+  "ecs/editor",
+  "winny_math/widgets",
+  "audio/widgets",
+  "gfx/widgets",
+  "asset/widgets",
+  "app/editor",
+]
 egui = ["gfx/egui"]
 text = ["gfx/text"]
 gilrs = ["app/controller"]

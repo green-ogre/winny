@@ -1,7 +1,7 @@
 use winny::{
+    app::render::*,
     gfx::text::{TextPlugin, TextRenderer},
     prelude::*,
-    render::{RenderConfig, RenderDevice, RenderQueue},
 };
 
 pub fn main() {
@@ -15,32 +15,35 @@ pub fn main() {
                 },
                 ..Default::default()
             },
-            TextPlugin::new("DejaVuSans.ttf"),
+            TextPlugin::new("res/DejaVuSans.ttf"),
         ))
-        .add_systems(Schedule::PreRender, draw_text)
+        .add_systems(Schedule::StartUp, startup)
+        .add_systems(Schedule::PostUpdate, draw_text)
         .run();
 }
 
-fn draw_text(
-    mut text_renderer: Option<ResMut<TextRenderer>>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
-    config: Res<RenderConfig>,
-) {
+fn startup(mut commands: Commands) {
+    commands.spawn(Camera2dBundle::default());
+}
+
+fn draw_text(mut text_renderer: Option<ResMut<TextRenderer>>, context: Res<RenderContext>) {
     let Some(text_renderer) = &mut text_renderer else {
         return;
     };
 
     use winny::gfx::wgpu_text::glyph_brush::*;
 
-    text_renderer.draw(&device, &queue, || {
+    text_renderer.draw(&context, || {
         let corner = Section::default()
             .add_text(
                 Text::new("Hello, world!")
                     .with_scale(40.0)
                     .with_color([0.9, 0.5, 0.5, 1.0]),
             )
-            .with_bounds((config.width() as f32, config.height() as f32))
+            .with_bounds((
+                context.config.width() as f32,
+                context.config.height() as f32,
+            ))
             .with_layout(Layout::default().line_breaker(BuiltInLineBreaker::UnicodeLineBreaker));
 
         let middle = Section::default()
@@ -49,8 +52,14 @@ fn draw_text(
                     .with_scale(40.0)
                     .with_color([0.9, 0.5, 0.5, 1.0]),
             )
-            .with_bounds((config.width() as f32, config.height() as f32))
-            .with_screen_position((config.width() as f32 / 2., config.height() as f32 / 2.))
+            .with_bounds((
+                context.config.width() as f32,
+                context.config.height() as f32,
+            ))
+            .with_screen_position((
+                context.config.width() as f32 / 2.,
+                context.config.height() as f32 / 2.,
+            ))
             .with_layout(
                 Layout::default()
                     .h_align(HorizontalAlign::Center)

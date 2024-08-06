@@ -1,4 +1,6 @@
-#[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd)]
+use ecs::WinnyWidget;
+
+#[derive(WinnyWidget, Debug, Default, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Radf(pub f32);
 
 impl From<Degrees> for Radf {
@@ -7,7 +9,7 @@ impl From<Degrees> for Radf {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(WinnyWidget, Debug, Default, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Degrees(pub f32);
 
 impl From<Radf> for Degrees {

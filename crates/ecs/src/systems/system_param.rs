@@ -27,6 +27,46 @@ pub trait SystemParam {
     }
 }
 
+impl SystemParam for &World {
+    type State = ();
+    type Item<'world, 'state> = &'world World;
+
+    fn access(_world: &mut World) -> SystemAccess {
+        SystemAccess::default().world()
+    }
+
+    fn init_state(_world: &mut World) -> Self::State {
+        ()
+    }
+
+    fn to_param<'w, 's>(
+        _state: &'s mut Self::State,
+        world: UnsafeWorldCell<'w>,
+    ) -> Self::Item<'w, 's> {
+        unsafe { world.world() }
+    }
+}
+
+impl SystemParam for &mut World {
+    type State = ();
+    type Item<'world, 'state> = &'world mut World;
+
+    fn access(_world: &mut World) -> SystemAccess {
+        SystemAccess::default().world_mut()
+    }
+
+    fn init_state(_world: &mut World) -> Self::State {
+        ()
+    }
+
+    fn to_param<'w, 's>(
+        _state: &'s mut Self::State,
+        world: UnsafeWorldCell<'w>,
+    ) -> Self::Item<'w, 's> {
+        unsafe { world.world_mut() }
+    }
+}
+
 impl SystemParam for Commands<'_, '_> {
     type State = CommandQueue;
     type Item<'world, 'state> = Commands<'world, 'state>;

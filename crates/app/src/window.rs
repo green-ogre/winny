@@ -1,17 +1,17 @@
-use std::sync::Arc;
-
 use self::{
     app::AppSchedule,
     prelude::{AppExit, KeyCode, MouseMotion},
 };
-
 use super::*;
+#[cfg(feature = "editor")]
+use ecs::egui_widget::Widget;
 use ecs::{
     events::{EventReader, EventWriter},
     WinnyResource,
 };
 use plugins::Plugin;
 use prelude::{KeyInput, MouseInput};
+use std::sync::Arc;
 use winny_math::vector::Vec2f;
 
 pub extern crate winit;
@@ -22,6 +22,7 @@ pub struct WindowPlugin {
     pub window_size: Vec2f,
     pub viewport_size: Vec2f,
     pub close_on_escape: bool,
+    pub maximized: bool,
 }
 
 impl Default for WindowPlugin {
@@ -31,6 +32,7 @@ impl Default for WindowPlugin {
             window_size: [1920.0, 1080.0].into(),
             viewport_size: [1920.0, 1080.0].into(),
             close_on_escape: false,
+            maximized: false,
         }
     }
 }
@@ -91,16 +93,43 @@ pub struct ViewPort {
     pub max: Vec2f,
 }
 
+#[cfg(feature = "editor")]
+impl Widget for ViewPort {
+    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+        ui.with_layout(
+            ecs::prelude::egui::Layout::left_to_right(ecs::prelude::egui::Align::TOP),
+            |ui| {
+                ui.label("min: ");
+                self.min.display(ui);
+            },
+        );
+        ui.with_layout(
+            ecs::prelude::egui::Layout::left_to_right(ecs::prelude::egui::Align::TOP),
+            |ui| {
+                ui.label("max: ");
+                self.max.display(ui);
+            },
+        );
+    }
+}
+
 impl ViewPort {
     pub fn new(min: Vec2f, max: Vec2f) -> Self {
         Self { min, max }
     }
 
     pub fn width(&self) -> f32 {
-        self.max.v[0] - self.min.v[0]
+        self.max.x - self.min.x
     }
 
     pub fn height(&self) -> f32 {
-        self.max.v[1] - self.min.v[1]
+        self.max.y - self.min.y
+    }
+
+    pub fn center(&self) -> Vec2f {
+        Vec2f::new(
+            self.width() / 2.0 + self.min.x,
+            self.height() / 2.0 + self.min.y,
+        )
     }
 }

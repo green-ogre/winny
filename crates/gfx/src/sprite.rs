@@ -6,18 +6,19 @@ use crate::render_pipeline::bind_group::{
 use crate::render_pipeline::buffer::AsGpuBuffer;
 use crate::render_pipeline::material::{Material, Material2d};
 use crate::render_pipeline::pipeline::{FragmentType, RenderPipeline2d};
-use crate::render_pipeline::shader::{FragmentShader, VertexShader};
+use crate::render_pipeline::render_assets::{RenderAsset, RenderAssets};
+use crate::render_pipeline::shader::{FragmentShaderSource, VertexShader, VertexShaderSource};
 use crate::render_pipeline::vertex::{VertexLayout, VertexUv, FULLSCREEN_QUAD_VERTEX_UV};
-use crate::render_pipeline::vertex_buffer::{self, AsVertexBuffer, VertexBuffer};
-use crate::texture::TextureAtlas;
+use crate::render_pipeline::vertex_buffer::{AsVertexBuffer, VertexBuffer};
+use crate::texture::{Image, TextureAtlas};
 use crate::texture::{Texture, TextureDimensions};
 use crate::transform::Transform;
 use app::app::{AppSchedule, Schedule};
 use app::plugins::Plugin;
 use app::render::{Dimensions, RenderContext};
 use app::time::DeltaTime;
-use app::window::{ViewPort, Window};
-use asset::{AssetServer, Assets, Handle};
+use app::window::Window;
+use asset::prelude::*;
 use cgmath::{Quaternion, Rad, Rotation3};
 use ecs::prelude::*;
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
@@ -31,7 +32,7 @@ pub struct SpritePlugin;
 
 impl Plugin for SpritePlugin {
     fn build(&mut self, app: &mut app::app::App) {
-        app.register_resource::<SpriteVertShaderHandle>()
+        app.register_resource::<SpriteVertShader>()
             .register_resource::<SpriteBuffers>()
             .add_systems(Schedule::StartUp, startup)
             .add_systems(AppSchedule::Render, render_sprites);
@@ -52,7 +53,6 @@ impl<M: Material> Plugin for SpriteMaterialPlugin<M> {
             (
                 bind_new_sprite_bundles::<M>,
                 bind_updated_texture_handles::<M>,
-                bind_updated_atlas_handles::<M>,
                 prepare_for_render_pass::<M>,
             ),
         );
@@ -69,7 +69,7 @@ impl<M: Material> SpriteMaterialPlugin<M> {
 pub struct SpriteBundle<M: Material = Material2d> {
     pub sprite: Sprite,
     pub material: M,
-    pub handle: Handle<Texture>,
+    pub handle: Handle<Image>,
 }
 
 /// Describes local transformations in relation to the entity [`Transform`].
@@ -134,10 +134,10 @@ impl Sprite {
     }
 
     /// Creates a fullscreen quad, then scales about the origin for a one-to-one pixel size related
-    /// to the [`ViewPort`].
+    /// to the window's [`ViewPort`].
     pub(crate) fn to_vertices(
         &self,
-        viewport: &ViewPort,
+        window: &Window,
         texture_dimension: &TextureDimensions,
         animation: Option<&AnimatedSprite>,
     ) -> [VertexUv; 6] {
@@ -148,8 +148,8 @@ impl Sprite {
             atlas_scaling.1 /= animation.height as f32;
         }
         let normalized_scale = Vec2f::new(
-            atlas_scaling.0 * texture_dimension.width() / viewport.width(),
-            atlas_scaling.1 * texture_dimension.height() / viewport.height(),
+            atlas_scaling.0 * texture_dimension.width() / window.viewport.width(),
+            atlas_scaling.1 * texture_dimension.height() / window.viewport.height(),
         );
         let image_scale = scale_matrix4x4f(normalized_scale);
         for vert in vertices.iter_mut() {
@@ -273,7 +273,7 @@ impl AnimatedSprite {
 pub struct SpritePipelineEntity(Entity);
 
 #[derive(WinnyResource)]
-pub struct SpriteVertShaderHandle(Handle<VertexShader>);
+pub struct SpriteVertShader(Handle<VertexShaderSource>);
 
 fn bind_new_sprite_bundles<M: Material>(
     mut commands: Commands,
@@ -281,69 +281,45 @@ fn bind_new_sprite_bundles<M: Material>(
     mut bind_groups: ResMut<AssetBindGroups>,
     buffers: Res<SpriteBuffers>,
     context: Res<RenderContext>,
+    texture_params: <Texture as RenderAsset>::Params<'_>,
     pipelines: Query<(Entity, SpritePipeline, MaterialMarker<M>)>,
     bundles: Query<
-        (
-            Entity,
-            Option<Handle<Texture>>,
-            Option<Handle<TextureAtlas>>,
-            M,
-        ),
+        (Entity, Handle<Image>, M),
         (
             Without<(SpritePipelineEntity, TextureDimensions)>,
             With<(Sprite, Transform)>,
-            Or<Handle<Texture>, Handle<TextureAtlas>>,
         ),
     >,
-    textures: Res<Assets<Texture>>,
-    atlases: Res<Assets<TextureAtlas>>,
-    sprite_vert_shader_handle: Option<Res<SpriteVertShaderHandle>>,
-    vert_shaders: Res<Assets<VertexShader>>,
-    frag_shaders: Res<Assets<FragmentShader>>,
+    mut textures: ResMut<RenderAssets<Texture>>,
+    images: Res<Assets<Image>>,
+    sprite_vert_shader: Option<Res<SpriteVertShader>>,
+    mut vert_shaders: ResMut<Assets<VertexShaderSource>>,
+    mut frag_shaders: ResMut<Assets<FragmentShaderSource>>,
 ) {
     let mut pipeline_entity = None;
-    for (entity, texture_handle, atlas_handle, material) in bundles.iter() {
-        if let Some(vert_shader_handle) = &sprite_vert_shader_handle {
-            if let Some(vert_shader) = vert_shaders.get(&vert_shader_handle.0) {
-                if let Some(texture_handle) = texture_handle {
-                    if let Some(texture) = textures.get(texture_handle) {
-                        let dimensions = TextureDimensions::from_texture(&texture);
-                        commands.get_entity(entity).insert((
-                            bind_groups.get_handle_or_insert_with(texture_handle.clone(), || {
-                                let binding =
-                                    RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
-                                        &context,
-                                        material.clone(),
-                                        material.resource_state(&texture),
-                                    ));
-                                binding
-                            }),
-                            dimensions,
-                        ));
-                    } else {
-                        return;
-                    }
-                } else if let Some(atlas_handle) = atlas_handle {
-                    if let Some(atlas) = atlases.get(atlas_handle) {
-                        let dimensions = TextureDimensions::from_texture(&atlas.texture);
-                        commands.get_entity(entity).insert((
-                            bind_groups.get_handle_or_insert_with(atlas_handle.clone(), || {
-                                let binding =
-                                    RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
-                                        &context,
-                                        material.clone(),
-                                        material.resource_state(&atlas.texture),
-                                    ));
-                                binding
-                            }),
-                            dimensions,
-                        ));
-                    } else {
-                        return;
-                    }
+    for (entity, image_handle, material) in bundles.iter() {
+        if let Some(vert_shader_handle) = &sprite_vert_shader {
+            if let Some(vert_shader) = vert_shaders.get_mut(&vert_shader_handle.0) {
+                if let Some(image) = images.get(image_handle) {
+                    let texture = textures
+                        .entry(image_handle.clone())
+                        .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
+
+                    let dimensions = TextureDimensions::from_texture(&texture);
+                    commands.get_entity(entity).insert((
+                        bind_groups.get_handle_or_insert_with(image_handle.clone(), || {
+                            let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
+                                &context,
+                                material.clone(),
+                                material.resource_state(&texture),
+                            ));
+                            binding
+                        }),
+                        dimensions,
+                    ));
                 } else {
                     return;
-                };
+                }
 
                 if let Ok((pipeline, _, _)) = pipelines.get_single() {
                     commands
@@ -357,8 +333,8 @@ fn bind_new_sprite_bundles<M: Material>(
                             material.clone(),
                             &context,
                             &mut server,
-                            &frag_shaders,
-                            vert_shader,
+                            &mut frag_shaders,
+                            vert_shader.shader(&context),
                             &buffers,
                         );
 
@@ -372,19 +348,22 @@ fn bind_new_sprite_bundles<M: Material>(
                         pipeline_entity = Some(pipeline);
                     }
                 }
-            } else {
-                // util::tracing::error!("Could not retrieve asset sprite pipeline vertex shader");
             }
         } else {
             // This will only run when the first sprite pipeline is built, so we compile the
             // shader
             let vert_shader = wgpu::ShaderModuleDescriptor {
                 label: Some("particles vert"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sprite_vert.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../../../res/shaders/sprite_vert.wgsl").into(),
+                ),
             };
             let vert_shader = VertexShader(context.device.create_shader_module(vert_shader));
-            let handle = server.store_asset("shaders/sprite_vert.wgsl".into(), vert_shader);
-            commands.insert_resource(SpriteVertShaderHandle(handle));
+            let handle = vert_shaders.add(VertexShaderSource(
+                include_str!("../../../res/shaders/sprite_vert.wgsl").into(),
+                Some(vert_shader),
+            ));
+            commands.insert_resource(SpriteVertShader(handle));
         }
     }
 }
@@ -392,17 +371,22 @@ fn bind_new_sprite_bundles<M: Material>(
 fn bind_updated_texture_handles<M: Material>(
     mut bind_groups: ResMut<AssetBindGroups>,
     mut sprites: Query<(
-        Mut<Handle<Texture>>,
+        Mut<Handle<Image>>,
         Mut<BindGroupHandle>,
         Mut<TextureDimensions>,
         M,
     )>,
     context: Res<RenderContext>,
-    textures: Res<Assets<Texture>>,
+    images: Res<Assets<Image>>,
+    mut textures: ResMut<RenderAssets<Texture>>,
+    texture_params: <Texture as RenderAsset>::Params<'_>,
 ) {
     for (texture_handle, bind_group_handle, texture_dimensions, material) in sprites.iter_mut() {
         if texture_handle.is_changed() {
-            if let Some(texture) = textures.get(texture_handle) {
+            if let Some(image) = images.get(texture_handle) {
+                let texture = textures
+                    .entry(texture_handle.clone())
+                    .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
                 let dimensions = TextureDimensions::from_texture(texture);
                 let binding = bind_groups.get_handle_or_insert_with(texture_handle.clone(), || {
                     let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
@@ -416,44 +400,9 @@ fn bind_updated_texture_handles<M: Material>(
                 *bind_group_handle = binding;
                 *texture_dimensions = dimensions;
             } else {
-                // Could not find the new texture, so we mark as changed so we perform the same
-                // check next tick.
+                // Image is not yet created, so we mark the Handle<Image> as `changed` to repeat
+                // this operation.
                 texture_handle.mark_changed();
-            }
-        }
-    }
-}
-
-fn bind_updated_atlas_handles<M: Material>(
-    mut bind_groups: ResMut<AssetBindGroups>,
-    mut sprites: Query<(
-        Mut<Handle<TextureAtlas>>,
-        Mut<BindGroupHandle>,
-        Mut<TextureDimensions>,
-        M,
-    )>,
-    context: Res<RenderContext>,
-    atlases: Res<Assets<TextureAtlas>>,
-) {
-    for (atlas_handle, bind_group_handle, texture_dimensions, material) in sprites.iter_mut() {
-        if atlas_handle.is_changed() {
-            if let Some(atlas) = atlases.get(atlas_handle) {
-                let dimensions = TextureDimensions::from_texture(&atlas.texture);
-                let binding = bind_groups.get_handle_or_insert_with(atlas_handle.clone(), || {
-                    let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
-                        &context,
-                        material.clone(),
-                        material.resource_state(&atlas.texture),
-                    ));
-                    binding
-                });
-
-                *bind_group_handle = binding;
-                *texture_dimensions = dimensions;
-            } else {
-                // Could not find the new texture, so we mark as changed so we perform the same
-                // check next tick.
-                atlas_handle.mark_changed();
             }
         }
     }
@@ -560,14 +509,14 @@ impl SpriteBuffers {
         self.sprites.append(&mut sprites);
     }
 
-    pub fn write_buffers(&mut self, context: &RenderContext, viewport: &ViewPort) {
+    pub fn write_buffers(&mut self, context: &RenderContext, window: &Window) {
         self.sprites
             .sort_by(|(s1, _, _, _), (s2, _, _, _)| s1.z.cmp(&s2.z));
 
         let vertex_data: Vec<_> = self
             .sprites
             .iter()
-            .map(|(s, _, d, a)| s.to_vertices(&viewport, d, a.as_ref()))
+            .map(|(s, _, d, a)| s.to_vertices(&window, d, a.as_ref()))
             .flatten()
             .collect();
         let sprite_data = self
@@ -614,7 +563,7 @@ impl SpritePipeline {
         material: M,
         context: &RenderContext,
         server: &mut AssetServer,
-        frag_shaders: &Assets<FragmentShader>,
+        frag_shaders: &mut Assets<FragmentShaderSource>,
         vert_shader: &VertexShader,
         sprite_buffers: &SpriteBuffers,
     ) -> Self {
@@ -696,15 +645,9 @@ fn render_sprites(
     bind_groups: Res<AssetBindGroups>,
     view: Res<RenderView>,
     window: Res<Window>,
-    camera: Query<Camera>,
 ) {
-    let Ok(camera) = camera.get_single() else {
-        return;
-    };
-
-    let viewport = camera.viewport.unwrap_or_else(|| window.viewport);
     let num_sprites_in_buffer = buffers.sprites.len();
-    buffers.write_buffers(&context, &viewport);
+    buffers.write_buffers(&context, &window);
 
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("sprites"),
@@ -729,27 +672,27 @@ fn render_sprites(
     render_pass.set_vertex_buffer(2, buffers.transform_buffer.buffer().slice(..));
 
     if sprites.len() != num_sprites_in_buffer {
-        println!("{}, {}", sprites.len(), num_sprites_in_buffer);
+        // println!("{}, {}", sprites.len(), num_sprites_in_buffer);
         return;
     }
 
-    // let mut last_pipeline_entity = None;
-    // let mut last_material_id = None;
+    let mut last_pipeline_entity = None;
+    let mut last_material_id = None;
     let mut offset = 0;
     for (pipeline_entity, _, material_binding) in sprites.iter() {
         let (_, pipeline) = sprite_pipelines.get(pipeline_entity.0).unwrap();
 
-        // if last_pipeline_entity != Some(pipeline_entity) {
-        render_pass.set_pipeline(&pipeline.pipeline.0);
-        //     last_pipeline_entity = Some(pipeline_entity);
-        // }
+        if last_pipeline_entity != Some(pipeline_entity) {
+            render_pass.set_pipeline(&pipeline.pipeline.0);
+            last_pipeline_entity = Some(pipeline_entity);
+        }
 
-        // if last_material_id != Some(material_binding.id()) {
-        let material = bind_groups.get_from_id(material_binding.id()).unwrap();
-        render_pass.set_bind_group(0, pipeline.camera_binding.binding(), &[]);
-        render_pass.set_bind_group(1, &material.0.binding(), &[]);
-        //     last_material_id = Some(material_binding.id());
-        // }
+        if last_material_id != Some(material_binding.id()) {
+            let material = bind_groups.get_from_id(material_binding.id()).unwrap();
+            render_pass.set_bind_group(0, pipeline.camera_binding.binding(), &[]);
+            render_pass.set_bind_group(1, &material.0.binding(), &[]);
+            last_material_id = Some(material_binding.id());
+        }
 
         render_pass.draw(offset * 6..offset * 6 + 6, offset..offset + 1);
         offset += 1;

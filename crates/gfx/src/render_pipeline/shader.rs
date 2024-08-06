@@ -1,12 +1,7 @@
-use app::render::RenderContext;
-use app::{app::Schedule, plugins::Plugin};
-use asset::{Asset, AssetApp, AssetLoader, AssetServer};
-use ecs::{Res, ResMut};
-
-pub const DEFAULT_MATERIAL_2D_PATH_SPRITE: &'static str =
-    "winny/shaders/default/material2d_sprite.wgsl";
-pub const DEFAULT_MATERIAL_2D_PATH_PARTICLE: &'static str =
-    "winny/shaders/default/material2d_particle.wgsl";
+use app::{app::Schedule, plugins::Plugin, render::RenderContext};
+use asset::prelude::*;
+use ecs::Res;
+use std::ops::Deref;
 
 pub struct ShaderPlugin;
 
@@ -14,93 +9,117 @@ impl Plugin for ShaderPlugin {
     fn build(&mut self, app: &mut app::app::App) {
         let vert_loader = VertexShaderLoader;
         let frag_loader = FragmentShaderLoader;
-        app.add_systems(Schedule::StartUp, startup)
-            .register_asset_loader::<VertexShader>(vert_loader)
-            .register_asset_loader::<FragmentShader>(frag_loader);
+        app.register_asset::<VertexShaderSource>()
+            .register_asset::<FragmentShaderSource>()
+            .register_asset_loader::<VertexShaderSource>(vert_loader)
+            .register_asset_loader::<FragmentShaderSource>(frag_loader);
     }
 }
 
-// Load default shaders
-fn startup(mut server: ResMut<AssetServer>, context: Res<RenderContext>) {
-    let frag_shader = wgpu::ShaderModuleDescriptor {
-        label: Some("frag"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!("../shaders/material2d_particle.wgsl").into(),
-        ),
-    };
-    server.store_asset(
-        DEFAULT_MATERIAL_2D_PATH_PARTICLE.into(),
-        FragmentShader(context.device.create_shader_module(frag_shader)),
-    );
+pub struct VertexShader(pub wgpu::ShaderModule);
 
-    let frag_shader = wgpu::ShaderModuleDescriptor {
-        label: Some("frag"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/material2d_sprite.wgsl").into()),
-    };
-    server.store_asset(
-        DEFAULT_MATERIAL_2D_PATH_SPRITE.into(),
-        FragmentShader(context.device.create_shader_module(frag_shader)),
-    );
+impl Deref for VertexShader {
+    type Target = wgpu::ShaderModule;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
-pub struct VertexShader(pub wgpu::ShaderModule);
-impl Asset for VertexShader {}
+pub struct VertexShaderSource(pub String, pub Option<VertexShader>);
+
+impl Asset for VertexShaderSource {}
+
+impl VertexShaderSource {
+    fn create_shader(&mut self, context: &RenderContext) {
+        let vert_shader = wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(self.0.clone().into()),
+        };
+        let shader = VertexShader(context.device.create_shader_module(vert_shader));
+        self.1 = Some(shader);
+    }
+
+    pub fn shader(&mut self, context: &RenderContext) -> &VertexShader {
+        if self.1.is_none() {
+            self.create_shader(context);
+        }
+
+        self.1.as_ref().unwrap()
+    }
+}
 
 pub struct FragmentShader(pub wgpu::ShaderModule);
-impl Asset for FragmentShader {}
+
+impl Deref for FragmentShader {
+    type Target = wgpu::ShaderModule;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub struct FragmentShaderSource(pub String, pub Option<FragmentShader>);
+
+impl Asset for FragmentShaderSource {}
+
+impl FragmentShaderSource {
+    fn create_shader(&mut self, context: &RenderContext) {
+        let frag_shader = wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(self.0.clone().into()),
+        };
+        let shader = FragmentShader(context.device.create_shader_module(frag_shader));
+        self.1 = Some(shader);
+    }
+
+    pub fn shader(&mut self, context: &RenderContext) -> &FragmentShader {
+        if self.1.is_none() {
+            self.create_shader(context);
+        }
+
+        self.1.as_ref().unwrap()
+    }
+}
 
 pub struct VertexShaderLoader;
 
 impl AssetLoader for VertexShaderLoader {
-    type Asset = VertexShader;
+    type Asset = VertexShaderSource;
+    type Settings = ();
 
     fn extensions(&self) -> &'static [&'static str] {
         &["wgsl"]
     }
 
-    fn load(
-        context: app::render::RenderContext,
+    async fn load(
         mut reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
+        _settings: Self::Settings,
         _path: String,
         _ext: &str,
-    ) -> impl std::future::Future<Output = Result<Self::Asset, asset::AssetLoaderError>> {
-        async move {
-            let string = reader.read_all_to_string()?;
-            let vert_shader = wgpu::ShaderModuleDescriptor {
-                label: Some("vert"),
-                source: wgpu::ShaderSource::Wgsl(string.into()),
-            };
-            Ok(VertexShader(
-                context.device.create_shader_module(vert_shader),
-            ))
-        }
+    ) -> Result<Self::Asset, asset::AssetLoaderError> {
+        let string = reader.read_all_to_string()?;
+        Ok(VertexShaderSource(string, None))
     }
 }
 
 pub struct FragmentShaderLoader;
 
 impl AssetLoader for FragmentShaderLoader {
-    type Asset = FragmentShader;
+    type Asset = FragmentShaderSource;
+    type Settings = ();
 
     fn extensions(&self) -> &'static [&'static str] {
         &["wgsl"]
     }
 
-    fn load(
-        context: app::render::RenderContext,
+    async fn load(
         mut reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
+        _settings: Self::Settings,
         _path: String,
         _ext: &str,
-    ) -> impl std::future::Future<Output = Result<Self::Asset, asset::AssetLoaderError>> {
-        async move {
-            let string = reader.read_all_to_string()?;
-            let frag_shader = wgpu::ShaderModuleDescriptor {
-                label: Some("frag"),
-                source: wgpu::ShaderSource::Wgsl(string.into()),
-            };
-            Ok(FragmentShader(
-                context.device.create_shader_module(frag_shader),
-            ))
-        }
+    ) -> Result<Self::Asset, asset::AssetLoaderError> {
+        let string = reader.read_all_to_string()?;
+        Ok(FragmentShaderSource(string, None))
     }
 }

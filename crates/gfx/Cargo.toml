@@ -23,7 +23,6 @@ bytemuck = { version = "1.12", features = ["derive"] }
 wgpu = "0.20.1"
 
 egui = { version = "0.28.1", optional = true }
-egui_dock = { version = "0.13", optional = true }
 egui-wgpu = { version = "0.28.1", optional = true }
 # Outdated winit
 # egui-winit = { version = "0.28.1", optional = true }
@@ -52,5 +51,6 @@ getrandom = { version = "0.2.15", features = ["js"] }
 
 
 [features]
-egui = ["dep:egui", "dep:egui-wgpu", "dep:egui_dock"]
+egui = ["dep:egui", "dep:egui-wgpu"]
 text = ["dep:wgpu_text"]
+widgets = []

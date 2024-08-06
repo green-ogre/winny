@@ -22,6 +22,7 @@ use winit::{
     event::{self, DeviceEvent, DeviceId, ElementState},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::PhysicalKey,
+    window::Fullscreen,
 };
 use winny_math::vector::Vec2f;
 
@@ -278,10 +279,12 @@ impl ApplicationHandler for WinitApp {
         let window_attributes = winit::window::Window::default_attributes()
             .with_title(window_plugin.title)
             .with_inner_size(PhysicalSize::new(
-                window_plugin.window_size.v[0],
-                window_plugin.window_size.v[1],
+                window_plugin.window_size.x,
+                window_plugin.window_size.y,
             ));
         let window = event_loop.create_window(window_attributes).unwrap();
+        // TODO: doesn't work?
+        window.set_maximized(window_plugin.maximized);
         util::tracing::info!("New window: {:?}", *window_plugin);
 
         #[cfg(target_arch = "wasm32")]

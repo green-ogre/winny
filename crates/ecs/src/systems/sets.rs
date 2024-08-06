@@ -11,34 +11,6 @@ pub trait LabelId: 'static + Debug {
     fn id(&self) -> usize;
 }
 
-// pub struct LeakedLabel<T: ?Sized + LeakedBounds>(&'static T);
-//
-// impl<T: ?Sized + LeakedBounds> Debug for LeakedLabel<T> {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         f.debug_tuple("LeakedLabel").field(&self.0).finish()
-//     }
-// }
-//
-// impl<T: ?Sized + LeakedBounds> Hash for LeakedLabel<T> {
-//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-//         state.write_u64(self.0.id() as u64);
-//     }
-// }
-//
-// impl<T: ?Sized + LeakedBounds> PartialEq for LeakedLabel<T> {
-//     fn eq(&self, other: &Self) -> bool {
-//         self.0.id() == other.0.id()
-//     }
-// }
-//
-// impl<T: ?Sized + LeakedBounds> Eq for LeakedLabel<T> {}
-//
-// impl<T: ?Sized + LeakedBounds> LeakedLabel<T> {
-//     pub fn new(val: Box<T>) -> Self {
-//         Self(Box::leak(val))
-//     }
-// }
-
 pub trait SystemSetLabel: LabelId {}
 
 #[derive(Debug)]

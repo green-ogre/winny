@@ -3,6 +3,8 @@
 pub extern crate ecs_macro;
 pub use ecs_macro::*;
 
+#[cfg(feature = "editor")]
+pub mod egui_widget;
 pub mod events;
 pub mod prelude;
 pub mod query;

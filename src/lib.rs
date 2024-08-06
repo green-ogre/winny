@@ -1,6 +1,9 @@
 use app::{plugins::Plugin, time::TimePlugin, window::WindowPlugin};
 use asset::AssetLoaderPlugin;
 use audio::AudioPlugin;
+#[cfg(feature = "editor")]
+use editor::EditorPlugin;
+use gfx::gui::EguiPlugin;
 use gfx::render::RendererPlugin;
 use gfx::{
     render_pipeline::{
@@ -17,6 +20,8 @@ pub extern crate app;
 pub extern crate asset;
 pub extern crate audio;
 pub extern crate ecs;
+#[cfg(feature = "hot_reload")]
+pub extern crate editor;
 pub extern crate gfx;
 #[cfg(feature = "hot_reload")]
 pub extern crate hot_reload;
@@ -41,7 +46,6 @@ pub mod prelude {
 
 pub struct DefaultPlugins {
     pub window: WindowPlugin,
-    pub asset_loader: AssetLoaderPlugin,
     pub log: LogPlugin,
 }
 
@@ -51,9 +55,6 @@ impl Default for DefaultPlugins {
             window: WindowPlugin {
                 ..Default::default()
             },
-            asset_loader: AssetLoaderPlugin {
-                asset_folder: "res/".into(),
-            },
             log: Default::default(),
         }
     }
@@ -62,19 +63,24 @@ impl Default for DefaultPlugins {
 impl Plugin for DefaultPlugins {
     fn build(&mut self, app: &mut app::app::App) {
         app.add_plugins_priority((
-            self.log.clone(),
-            TimePlugin,
-            self.window.clone(),
             RendererPlugin,
             BindGroupPlugin,
-            self.asset_loader.clone(),
-            // CameraPlugin,
+            self.log.clone(),
+            self.window.clone(),
+            AssetLoaderPlugin,
             TexturePlugin,
-            // ModelPlugin,
+            TimePlugin,
             SpritePlugin,
             AudioPlugin,
             ShaderPlugin,
+            // ModelPlugin,
         ))
-        .add_plugins(MaterialPlugin::<Material2d>::new());
+        .add_plugins((
+            #[cfg(feature = "egui")]
+            EguiPlugin,
+            #[cfg(feature = "editor")]
+            EditorPlugin,
+            MaterialPlugin::<Material2d>::new(),
+        ));
     }
 }

@@ -5,13 +5,34 @@ pub struct SystemAccess {
     components: Vec<ComponentAccess>,
     resources: Vec<ResourceAccess>,
     filters: Vec<ComponentAccessFilter>,
+    world: Vec<WorldAccess>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+enum WorldAccess {
+    Immutable,
+    Mutable,
+    #[default]
+    None,
 }
 
 impl SystemAccess {
+    pub fn world(mut self) -> Self {
+        self.world.push(WorldAccess::Immutable);
+        self
+    }
+
+    pub fn world_mut(mut self) -> Self {
+        self.world.push(WorldAccess::Mutable);
+        self
+    }
+
     pub fn with(mut self, mut other: SystemAccess) -> Self {
         self.components.append(&mut other.components);
         self.resources.append(&mut other.resources);
         self.filters.append(&mut other.filters);
+        self.world.append(&mut other.world);
+
         self
     }
 
@@ -32,6 +53,26 @@ impl SystemAccess {
 
     // TODO: cannot determine if a system with disjoint mutable and immutable access is valid
     pub fn validate_or_panic(&self) {
+        if self.world.len() > 1 {
+            panic!("Cannot access mutliple references to the world at once in a system");
+        }
+
+        if let Some(world) = self.world.first() {
+            match world {
+                WorldAccess::None => {}
+                WorldAccess::Mutable => {
+                    if !self.components.is_empty() || !self.resources.is_empty() {
+                        panic!("Cannot mutably access World with any other system paramaters");
+                    }
+                }
+                WorldAccess::Immutable => {
+                    if self.is_read_and_write() {
+                        panic!("Cannot mutably access Components or Resources while immutably accessing World");
+                    }
+                }
+            }
+        }
+
         let mutable_access: Vec<_> = self.components.iter().filter(|c| c.is_mutable()).collect();
         let immutable_access: Vec<_> = self
             .components

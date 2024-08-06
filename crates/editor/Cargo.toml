@@ -1,0 +1,11 @@
+[package]
+name = "editor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ecs = { path = "../ecs" }
+gfx = { path = "../gfx" }
+app = { path = "../app" }
+
+egui_dock = "0.13"

@@ -1,16 +1,17 @@
 #[cfg(target_arch = "wasm32")]
 use app::input::mouse_and_key::KeyInput;
-use app::render::RenderContext;
 use app::{
     app::{App, Schedule},
     plugins::Plugin,
 };
-use asset::{Asset, AssetLoaderError, Assets, Handle, LoadedAsset};
+use asset::prelude::*;
 use asset::{AssetApp, AssetLoader};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, SampleFormat, StreamConfig,
 };
+#[cfg(feature = "widgets")]
+use ecs::egui_widget::Widget;
 #[cfg(target_arch = "wasm32")]
 use ecs::EventReader;
 use ecs::{
@@ -20,7 +21,6 @@ use hound::{WavReader, WavSpec};
 use rand::Rng;
 use std::{
     fmt::Debug,
-    future::Future,
     io::Cursor,
     ops::Range,
     sync::{
@@ -28,30 +28,37 @@ use std::{
         Arc,
     },
 };
-use util::tracing::{error, info, trace};
+use util::tracing::{error, trace};
 // use wav::WavFormat;
 
 pub mod prelude;
 // pub mod wav;
 
-#[derive(Debug)]
-pub enum Error {
-    PlayStream,
-    PauseStream,
-    HostNA,
-    SupportedOutputConfigNA,
-    OutputConfigNotSupported,
-    BuildStream,
-    WavReader,
-}
+pub struct AudioPlugin;
 
-macro_rules! map_stream_err {
-    ($err:expr, $f:expr) => {
-        $f.map_err(|err| {
-            error!("{:?}", err);
-            $err
-        })
-    };
+impl Plugin for AudioPlugin {
+    fn build(&mut self, app: &mut App) {
+        let loader = AudioAssetLoader {};
+        #[cfg(not(target_arch = "wasm32"))]
+        app.register_asset::<AudioSource>()
+            .register_asset_loader::<AudioSource>(loader)
+            .add_systems(
+                Schedule::PreUpdate,
+                (init_audio_bundle_streams, flush_finished_streams),
+            )
+            .insert_resource(GlobalAudio::new());
+        #[cfg(target_arch = "wasm32")]
+        app.register_asset_loader::<AudioSource>(loader)
+            .add_systems(
+                ecs::Schedule::PreUpdate,
+                (
+                    init_wasm_audio,
+                    init_audio_bundle_streams,
+                    flush_finished_streams,
+                ),
+            )
+            .insert_resource(GlobalAudio::new());
+    }
 }
 
 #[derive(WinnyResource)]
@@ -77,6 +84,15 @@ impl GlobalAudio {
             wasm_initialized: false,
         }
     }
+}
+
+macro_rules! map_stream_err {
+    ($err:expr, $f:expr) => {
+        $f.map_err(|err| {
+            error!("{:?}", err);
+            $err
+        })
+    };
 }
 
 fn device() -> Result<Device, Error> {
@@ -352,6 +368,13 @@ impl PlaybackSettings {
 
 pub struct StreamHandle(cpal::Stream, Receiver<()>);
 
+#[cfg(feature = "widgets")]
+impl Widget for StreamHandle {
+    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+        ui.label("StreamHandle");
+    }
+}
+
 unsafe impl Sync for StreamHandle {}
 unsafe impl Send for StreamHandle {}
 
@@ -365,18 +388,18 @@ pub enum StreamCommand {
 pub struct AudioPlayback {
     handle: StreamHandle,
     // commands: Sender<StreamCommand>,
-    path: String,
+    // path: String,
 }
 
 impl Drop for AudioPlayback {
     fn drop(&mut self) {
-        info!("exiting audio stream: {:?}", self.path);
+        // info!("exiting audio stream: {:?}", self.path);
     }
 }
 
 impl AudioPlayback {
     pub fn new(
-        source: &LoadedAsset<AudioSource>,
+        source: &AudioSource,
         playback_settings: PlaybackSettings,
         global_audio: &mut GlobalAudio,
     ) -> Result<Self, Error> {
@@ -385,25 +408,24 @@ impl AudioPlayback {
         let device = device()?;
         let config = config(&device)?;
 
-        info!("spawning audio playback: {:?}", source.path);
         let handle = source.stream(device, config, global_audio, playback_settings)?;
 
         Ok(Self {
             handle,
             // commands: commands_tx,
-            path: source.path.clone(),
+            // path: source.path.clone(),
         })
     }
 
     pub fn play(&self) {
-        info!("playing stream: {}", self.path);
+        // info!("playing stream: {}", self.path);
         if let Err(e) = self.handle.0.play() {
             error!("{e}");
         }
     }
 
     pub fn pause(&self) {
-        info!("pausing stream: {}", self.path);
+        // info!("pausing stream: {}", self.path);
         if let Err(e) = self.handle.0.pause() {
             error!("{e}");
         }
@@ -482,18 +504,17 @@ struct AudioAssetLoader;
 
 impl AssetLoader for AudioAssetLoader {
     type Asset = AudioSource;
+    type Settings = ();
 
-    fn load(
-        _context: RenderContext,
+    async fn load(
         reader: asset::reader::ByteReader<std::io::Cursor<Vec<u8>>>,
+        _settings: Self::Settings,
         _path: String,
         ext: &str,
-    ) -> impl Future<Output = Result<Self::Asset, AssetLoaderError>> {
-        async move {
-            match ext {
-                "wav" => AudioSource::new(reader),
-                _ => Err(AssetLoaderError::UnsupportedFileExtension),
-            }
+    ) -> Result<Self::Asset, AssetLoaderError> {
+        match ext {
+            "wav" => AudioSource::new(reader),
+            _ => Err(AssetLoaderError::UnsupportedFileExtension),
         }
     }
 
@@ -511,32 +532,6 @@ impl AssetLoader for AudioAssetLoader {
 //         }
 //     }
 // }
-
-pub struct AudioPlugin;
-
-impl Plugin for AudioPlugin {
-    fn build(&mut self, app: &mut App) {
-        let loader = AudioAssetLoader {};
-        #[cfg(not(target_arch = "wasm32"))]
-        app.register_asset_loader::<AudioSource>(loader)
-            .add_systems(
-                Schedule::PreUpdate,
-                (init_audio_bundle_streams, flush_finished_streams),
-            )
-            .insert_resource(GlobalAudio::new());
-        #[cfg(target_arch = "wasm32")]
-        app.register_asset_loader::<AudioSource>(loader)
-            .add_systems(
-                ecs::Schedule::PreUpdate,
-                (
-                    init_wasm_audio,
-                    init_audio_bundle_streams,
-                    flush_finished_streams,
-                ),
-            )
-            .insert_resource(GlobalAudio::new());
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -585,4 +580,15 @@ mod tests {
     //         .add_systems(Schedule::Update, exit_on_load)
     //         .run();
     // }
+}
+
+#[derive(Debug)]
+pub enum Error {
+    PlayStream,
+    PauseStream,
+    HostNA,
+    SupportedOutputConfigNA,
+    OutputConfigNotSupported,
+    BuildStream,
+    WavReader,
 }

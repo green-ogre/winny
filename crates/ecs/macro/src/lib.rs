@@ -1,23 +1,16 @@
 use core::panic;
-use proc_macro2::Ident;
-use std::hash::{DefaultHasher, Hash, Hasher};
-
 use proc_macro::TokenStream;
+use proc_macro2::Ident;
 use quote::{format_ident, quote, ToTokens};
+use std::hash::{DefaultHasher, Hash, Hasher};
+#[cfg(feature = "widgets")]
+use syn::Data;
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
     token::Comma,
     DeriveInput, Fields, LitInt, Result,
 };
-
-// enum StorageType {
-//     Table,
-//     SparseSet,
-// }
-
-// const TABLE: &str = "Table";
-// const SPARSE_SET: &str = "SparceSet";
 
 #[proc_macro_derive(Component, attributes(component))]
 pub fn component_impl(input: TokenStream) -> TokenStream {
@@ -34,41 +27,104 @@ pub fn internal_component_impl(input: TokenStream) -> TokenStream {
     parse_component(input, quote! { crate })
 }
 
+#[cfg(not(feature = "widgets"))]
 fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
-
-    // let mut storage = StorageType::Table;
-
-    // for meta in input.attrs.iter().filter(|a| a.path().is_ident("component")) {
-    //     meta.parse_nested_meta(|nested| {
-    //         if nested.path.is_ident("storage") {
-    //             storage = match nested.value()?.parse::<LitStr>()?.value() {
-    //                 s if s == TABLE => StorageType::Table,
-    //                 s if s == SPARSE_SET => StorageType::SparseSet,
-    //                 _ => {
-    //                     return Err(nested.error("Invalid storage type"));
-    //                 }
-    //             };
-    //             Ok(())
-    //         } else {
-    //             panic!("Invalid component attribute. Use \n\"component(storage = SparseSet)\"\nfor sparse set.");
-    //         }
-    //     }).expect("Invalid attribute(s)");
-    // }
-
-    // let storage = match storage {
-    //     StorageType::Table =>
-    //         Ident::new("Table", Span::call_site()),
-    //     StorageType::SparseSet =>
-    //         Ident::new("SparseSet", Span::call_site()),
-    // };
 
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     quote! {
         impl #impl_generics #path_to_ecs::storage::Component for #name #ty_generics #where_clause {}
+    }
+    .into()
+}
+
+#[cfg(feature = "widgets")]
+fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let name_as_str = &input.ident.to_string();
+
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let component_object = format_ident!("{}ComponentEguiObject", name);
+
+    let display_widgets = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => fields
+                .named
+                .iter()
+                .map(|field| {
+                    let field_name = &field.ident;
+
+                    quote! {
+                        #path_to_ecs::egui_widget::Widget::display(&mut component_mut.#field_name, ui);
+                    }
+                })
+                .collect::<Vec<_>>(),
+            Fields::Unnamed(fields) => fields
+                .unnamed
+                .iter()
+                .enumerate()
+                .map(|(i, _field)| {
+                    let field_name = syn::Index::from(i);
+
+                    quote! {
+                        #path_to_ecs::egui_widget::Widget::display(&mut component_mut.#field_name, ui);
+                    }
+                })
+                .collect::<Vec<_>>(),
+            Fields::Unit => Vec::new(),
+        },
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .map(|field| {
+                let field_name = &field.ident;
+
+                quote! {}
+            })
+            .collect::<Vec<_>>(),
+        _ => panic!("Components may only be structs of enums"),
+    };
+
+    let widgets = if display_widgets.is_empty() {
+        quote! {
+            ui.label(#name_as_str);
+        }
+    } else {
+        quote! {
+            #path_to_ecs::prelude::egui::CollapsingHeader::new(#name_as_str)
+                .show(ui, |ui| {
+                    #(#display_widgets)*
+                });
+        }
+    };
+
+    let display = if generics.params.is_empty() {
+        quote! {
+            let component_mut = unsafe { component.cast::<#name>().as_mut() };
+            #widgets
+        }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        impl #impl_generics #path_to_ecs::storage::Component for #name #ty_generics #where_clause {
+            type Dispatch = #component_object;
+        }
+
+        #[derive(Default)]
+        pub struct #component_object;
+
+        impl #path_to_ecs::egui_widget::ComponentEgui for #component_object {
+            fn display_component(&self, component: std::ptr::NonNull<u8>, ui: &mut #path_to_ecs::prelude::egui::Ui) {
+                #display
+            }
+        }
     }
     .into()
 }
@@ -235,12 +291,6 @@ fn parse_schedule_label(input: TokenStream, path_to_ecs: proc_macro2::TokenStrea
                         }
                     }
                 }
-
-                // impl #impl_generics Into<#path_to_ecs::sets::LeakedLabel<dyn #path_to_ecs::schedule::ScheduleLabel>> for #name #ty_generics #where_clause {
-                //     fn into(self) -> #path_to_ecs::sets::LeakedLabel<dyn #path_to_ecs::schedule::ScheduleLabel> {
-                //         #path_to_ecs::sets::LeakedLabel::new(Box::new(self))
-                //     }
-                // }
             }.into()
         }
         syn::Data::Union(_) => {
@@ -250,6 +300,135 @@ fn parse_schedule_label(input: TokenStream, path_to_ecs: proc_macro2::TokenStrea
             panic!("ScheduleLabel must be an Enum: {}", name.to_string());
         }
     }
+}
+
+#[proc_macro_derive(Widget)]
+pub fn widget_impl(input: TokenStream) -> TokenStream {
+    parse_widget(input, quote! { winny::ecs })
+}
+
+#[proc_macro_derive(WinnyWidget)]
+pub fn winny_widget_impl(input: TokenStream) -> TokenStream {
+    parse_widget(input, quote! { ::ecs })
+}
+
+#[proc_macro_derive(InternalWidget)]
+pub fn internal_widget_impl(input: TokenStream) -> TokenStream {
+    parse_widget(input, quote! { crate })
+}
+
+#[cfg(not(feature = "widgets"))]
+fn parse_widget(_input: TokenStream, _path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
+    quote! {}.into()
+}
+
+#[cfg(feature = "widgets")]
+fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let name_as_str = &input.ident.to_string();
+
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    let display_widgets = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => fields
+                .named
+                .iter()
+                .map(|field| {
+                    let field_name = &field.ident;
+
+                    quote! {
+                        #path_to_ecs::egui_widget::Widget::display(&mut self.#field_name, ui);
+                    }
+                })
+                .collect::<Vec<_>>(),
+            Fields::Unnamed(fields) => fields
+                .unnamed
+                .iter()
+                .enumerate()
+                .map(|(i, _field)| {
+                    let field_name = syn::Index::from(i);
+
+                    quote! {
+                        #path_to_ecs::egui_widget::Widget::display(&mut self.#field_name, ui);
+                    }
+                })
+                .collect::<Vec<_>>(),
+            Fields::Unit => Vec::new(),
+        },
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .map(|field| {
+                let _field_name = &field.ident;
+
+                quote! {}
+            })
+            .collect::<Vec<_>>(),
+        _ => panic!("Components may only be structs of enums"),
+    };
+
+    let widgets = if display_widgets.is_empty() {
+        quote! {
+            ui.label(#name_as_str);
+        }
+    } else {
+        quote! {
+            #path_to_ecs::prelude::egui::CollapsingHeader::new(#name_as_str)
+                .show(ui, |ui| {
+                    #(#display_widgets)*
+                });
+        }
+    };
+
+    quote! {
+        impl #impl_generics #path_to_ecs::egui_widget::Widget for #name #ty_generics #where_clause {
+            fn display(&mut self, ui: &mut #path_to_ecs::prelude::egui::Ui) {
+                #widgets
+            }
+        }
+    }
+    .into()
+}
+
+#[cfg(feature = "widgets")]
+macro_rules! impl_label_widget {
+    ($t:ty, $l:expr) => {
+        impl Widget for $t {
+            fn display(&mut self, ui: &mut egui::Ui) {
+                ui.label($l);
+            }
+        }
+    };
+}
+
+struct LabelWidget {
+    type_name: Ident,
+}
+
+impl Parse for LabelWidget {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let type_name = input.parse::<Ident>()?;
+
+        Ok(LabelWidget { type_name })
+    }
+}
+
+#[proc_macro]
+pub fn impl_label_widget(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as LabelWidget);
+    let ty = &input.type_name;
+    let ty_name = &input.type_name.to_token_stream().to_string();
+
+    TokenStream::from(quote! {
+        impl ecs::egui_widget::Widget for #ty {
+            fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+                ui.label(#ty_name);
+            }
+        }
+    })
 }
 
 struct AllTuples {

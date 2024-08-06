@@ -5,11 +5,12 @@ use crate::{
         buffer::AsGpuBuffer,
         material::{Material, Material2d},
         pipeline::{FragmentType, RenderPipeline2d},
-        shader::{FragmentShader, VertexShader},
+        render_assets::{RenderAsset, RenderAssets},
+        shader::{FragmentShaderSource, VertexShader, VertexShaderSource},
         vertex::{VertexUv, FULLSCREEN_QUAD_VERTEX_UV},
         vertex_buffer::{AsVertexBuffer, InstanceIndex, VertexBuffer},
     },
-    texture::{Texture, TextureDimensions},
+    texture::{Image, Texture, TextureDimensions},
     transform::Transform,
 };
 use app::render::{RenderConfig, RenderContext};
@@ -18,7 +19,7 @@ use app::{
     plugins::Plugin,
     time::DeltaTime,
 };
-use asset::{AssetServer, Assets, Handle};
+use asset::prelude::*;
 use cgmath::{Quaternion, Rad, Rotation3};
 use ecs::{prelude::*, WinnyBundle, WinnyComponent, WinnyResource};
 use rand::Rng;
@@ -55,7 +56,7 @@ impl<M: Material> ParticlePlugin<M> {
 pub struct ParticleBundle<M: Material = Material2d> {
     pub emitter: ParticleEmitter,
     pub material: M,
-    pub handle: Handle<Texture>,
+    pub handle: Handle<Image>,
 }
 
 #[derive(WinnyComponent, Clone)]
@@ -175,8 +176,8 @@ impl ComputeEmitterUniform {
             acceleration: Vec4f::to_homogenous(emitter.acceleration),
             time_delta: dt.delta,
             time_elapsed: dt.wrapping_elapsed_as_seconds(),
-            width: emitter.width / context.config.width() as f32 * emitter_transform.scale.v[0],
-            height: emitter.height / context.config.height() as f32 * emitter_transform.scale.v[1],
+            width: emitter.width / context.config.width() as f32 * emitter_transform.scale.x,
+            height: emitter.height / context.config.height() as f32 * emitter_transform.scale.y,
             min_lifetime: emitter.lifetime.start,
             max_lifetime: emitter.lifetime.end,
             screen_width: context.config.width() as f32,
@@ -280,7 +281,7 @@ pub struct ParticlePipeline<T: Material> {
 impl<M: Material> ParticlePipeline<M> {
     pub fn new<'s>(
         vert_shader: &VertexShader,
-        frag_shaders: &Assets<FragmentShader>,
+        frag_shaders: &mut Assets<FragmentShaderSource>,
         server: &mut AssetServer,
         material: M,
         emitter: &ParticleEmitter,
@@ -338,16 +339,13 @@ impl<M: Material> ParticlePipeline<M> {
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
 
-        let render_pipeline = RenderPipeline2d::from_material(
+        let render_pipeline = RenderPipeline2d::from_material_layout(
             format!("particles: {}", M::LABEL).as_str(),
             FragmentType::Particle,
             context,
             server,
-            &[
-                &vertex_emitter_resources,
-                &vertex_particle_resources,
-                &material_resources,
-            ],
+            &[&vertex_emitter_resources, &vertex_particle_resources],
+            material_resources.layout(),
             &[&particle_vertex_buffer, &alive_index_buffer],
             vert_shader,
             frag_shaders,
@@ -365,7 +363,9 @@ impl<M: Material> ParticlePipeline<M> {
 
         let compute_shader = wgpu::ShaderModuleDescriptor {
             label: Some("particle compute"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/particles_compute.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../../res/shaders/particles_compute.wgsl").into(),
+            ),
         };
         let compute_layout =
             context
@@ -434,29 +434,35 @@ fn generate_particles_with_conditions(
 }
 
 #[derive(WinnyResource)]
-struct ParticleVertShaderHandle(Handle<VertexShader>);
+struct ParticleVertShaderHandle(Handle<VertexShaderSource>);
 
 fn bind_new_particle_bundles<M: Material>(
     mut commands: Commands,
     mut server: ResMut<AssetServer>,
     context: Res<RenderContext>,
     bundles: Query<
-        (Entity, Handle<Texture>, Transform, ParticleEmitter, M),
+        (Entity, Handle<Image>, Transform, ParticleEmitter, M),
         Without<ParticlePipeline<M>>,
     >,
-    textures: Res<Assets<Texture>>,
+    images: Res<Assets<Image>>,
+    mut textures: ResMut<RenderAssets<Texture>>,
+    texture_params: <Texture as RenderAsset>::Params<'_>,
     delta: Res<DeltaTime>,
     particle_vert_shader_handle: Option<Res<ParticleVertShaderHandle>>,
-    vert_shaders: Res<Assets<VertexShader>>,
-    frag_shaders: Res<Assets<FragmentShader>>,
+    mut vert_shaders: ResMut<Assets<VertexShaderSource>>,
+    mut frag_shaders: ResMut<Assets<FragmentShaderSource>>,
 ) {
     for (entity, handle, transform, emitter, material) in bundles.iter() {
         if let Some(vert_shader_handle) = &particle_vert_shader_handle {
-            if let Some(texture) = textures.get(handle) {
-                if let Some(vert_shader) = vert_shaders.get(&vert_shader_handle.0) {
+            if let Some(image) = images.get(handle) {
+                let texture = textures
+                    .entry(handle.clone())
+                    .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
+
+                if let Some(vert_shader) = vert_shaders.get_mut(&vert_shader_handle.0) {
                     let particle_render_pipeline = ParticlePipeline::new(
-                        vert_shader,
-                        &frag_shaders,
+                        vert_shader.shader(&context),
+                        &mut frag_shaders,
                         &mut server,
                         material.clone(),
                         emitter,
@@ -482,10 +488,15 @@ fn bind_new_particle_bundles<M: Material>(
             // shader
             let vert_shader = wgpu::ShaderModuleDescriptor {
                 label: Some("particles vert"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/particle_vert.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../../../res/shaders/particle_vert.wgsl").into(),
+                ),
             };
             let vert_shader = VertexShader(context.device.create_shader_module(vert_shader));
-            let handle = server.store_asset("shaders/particle_vert.wgsl".into(), vert_shader);
+            let handle = vert_shaders.add(VertexShaderSource(
+                include_str!("../../../res/shaders/particle_vert.wgsl").into(),
+                Some(vert_shader),
+            ));
             commands.insert_resource(ParticleVertShaderHandle(handle));
         }
     }
@@ -522,7 +533,7 @@ fn compute_emitters<M: Material>(
     mut encoder: ResMut<RenderEncoder>,
     emitters: Query<(ParticlePipeline<M>, ParticleEmitter), With<Transform>>,
 ) {
-    for (pipeline, emitter) in emitters.iter() {
+    for (pipeline, emitter) in emitters.iter().filter(|(_, e)| e.is_emitting) {
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("particle compute"),

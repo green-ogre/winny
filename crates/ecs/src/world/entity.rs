@@ -1,10 +1,8 @@
-use std::{fmt::Debug, sync::atomic::AtomicU32};
-
 use crate::{
     ArchId, ArchRow, Bundle, ComponentMeta, SparseArray, SparseArrayIndex, SwapEntity, TableId,
     TableRow, UnsafeWorldCell, World,
 };
-
+use std::{fmt::Debug, sync::atomic::AtomicU32};
 use util::tracing::trace;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,7 +26,7 @@ impl Entity {
         (self.0 >> 32) as u32
     }
 
-    fn index(&self) -> usize {
+    pub fn index(&self) -> usize {
         self.0 as u32 as usize
     }
 }
@@ -231,6 +229,16 @@ impl Entities {
         self.free_entities.push(entity.index() as u32);
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (Entity, &EntityMeta)> {
+        self.entities.iter().enumerate().filter_map(|(i, m)| {
+            if self.free_entities.contains(&(i as u32)) {
+                None
+            } else {
+                Some((Entity::new(m.generation, i as u32), m))
+            }
+        })
+    }
+
     fn is_valid(&self, entity: Entity) -> bool {
         self.entities
             .get(&entity)
@@ -270,7 +278,7 @@ impl<'w> EntityMut<'w> {
                 return;
             }
 
-            util::tracing::info!("meta found: {:?}", meta);
+            util::tracing::trace!("meta found: {:?}", meta);
 
             let mut bundle_ids = Vec::new();
             B::component_meta(&mut self.world.components, &mut |meta| {
@@ -344,7 +352,7 @@ impl<'w> EntityMut<'w> {
                 );
             }
         } else {
-            util::tracing::info!("entity is reserved, spawning bundle");
+            util::tracing::trace!("entity is reserved, spawning bundle");
             unsafe {
                 self.world
                     .as_unsafe_world()
