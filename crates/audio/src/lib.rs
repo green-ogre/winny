@@ -48,9 +48,10 @@ impl Plugin for AudioPlugin {
             )
             .insert_resource(GlobalAudio::new());
         #[cfg(target_arch = "wasm32")]
-        app.register_asset_loader::<AudioSource>(loader)
+        app.register_asset::<AudioSource>()
+            .register_asset_loader::<AudioSource>(loader)
             .add_systems(
-                ecs::Schedule::PreUpdate,
+                Schedule::PreUpdate,
                 (
                     init_wasm_audio,
                     init_audio_bundle_streams,

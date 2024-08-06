@@ -1,7 +1,4 @@
-use winny_math::{
-    matrix::Matrix4x4f,
-    vector::{Vec2f, Vec3f, Vec4f},
-};
+use winny_math::vector::{Vec2f, Vec3f, Vec4f};
 
 // pub const FULLSCREEN_QUAD_VERTEX: [Vertex; 6] = [
 //     Vertex {
@@ -57,7 +54,7 @@ pub const FULLSCREEN_QUAD_VERTEX_UV: [VertexUv; 6] = [
     },
 ];
 
-pub trait VertexLayout<const Offset: u32> {
+pub trait VertexLayout<const OFFSET: u32> {
     fn layout() -> wgpu::VertexBufferLayout<'static>;
 }
 
@@ -67,14 +64,14 @@ pub struct Vertex {
     pub position: Vec4f,
 }
 
-impl<const Offset: u32> VertexLayout<Offset> for Vertex {
+impl<const OFFSET: u32> VertexLayout<OFFSET> for Vertex {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[wgpu::VertexAttribute {
                 offset: 0,
-                shader_location: Offset,
+                shader_location: OFFSET,
                 format: wgpu::VertexFormat::Float32x4,
             }],
         }
@@ -105,7 +102,7 @@ pub struct VertexUv {
     _padding: [f32; 2],
 }
 
-impl<const Offset: u32> VertexLayout<Offset> for VertexUv {
+impl<const OFFSET: u32> VertexLayout<OFFSET> for VertexUv {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<VertexUv>() as wgpu::BufferAddress,
@@ -113,12 +110,12 @@ impl<const Offset: u32> VertexLayout<Offset> for VertexUv {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: Offset,
+                    shader_location: OFFSET,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: Offset + 1,
+                    shader_location: OFFSET + 1,
                     format: wgpu::VertexFormat::Float32x2,
                 },
             ],

@@ -312,30 +312,36 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
 impl<L: AssetLoader> ErasedAssetLoader for L {
     fn load(
         &self,
-        context: RenderContext,
-        sender: AssetFuture,
         handler: &AssetHandleCreator,
+        sender: Sender<AssetEvent>,
         path: String,
         ext: String,
     ) -> ErasedHandle {
-        let handle = handler.new_id();
+        let handle = handler.reserve();
 
+        let settings = self.settings();
         wasm_bindgen_futures::spawn_local(async move {
-            info!("reading file: {:?}", path);
             let binary = load_binary(path.as_str()).await.unwrap();
-            info!("finished reading file: {:?}", path);
             let reader = ByteReader::new(BufReader::new(Cursor::new(binary)));
-            let result = L::load(context, reader, path.clone(), ext.as_str())
-                .await
-                .map(|asset| LoadedAsset::new(asset, path.clone(), handle.clone()));
-            sender.send_result(handle, result.map_err(|e| (path, e)));
+            let result = L::load(reader, settings, path.clone(), ext.as_str())
+                .await;
+            if let Err(e) = sender.send(match result {
+                Ok(a) => AssetEvent::Loaded {
+                    path: path.into(),
+                    handle: handle.clone(),
+                    asset: a.into(),
+                },
+                Err(e) => AssetEvent::Err {
+                    error: e,
+                    handle,
+                    path,
+                },
+            }) {
+                error!("Asset sender error: {}", e);
+            }
         });
 
         handle
-    }
-
-    fn extensions(&self) -> Vec<&'static str> {
-        self.extensions()
     }
 }
 

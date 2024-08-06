@@ -4,7 +4,7 @@ use super::{
         UNIFORM,
     },
     buffer::AsGpuBuffer,
-    shader::{FragmentShader, FragmentShaderSource},
+    shader::FragmentShaderSource,
 };
 use crate::{
     particle::ParticlePlugin,

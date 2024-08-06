@@ -8,7 +8,6 @@ use ecs::{Commands, Res, ResMut, Take, WinnyResource};
 use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
-    sync::Arc,
 };
 use util::tracing::trace;
 
@@ -17,9 +16,7 @@ pub struct RendererPlugin;
 impl Plugin for RendererPlugin {
     fn build(&mut self, app: &mut app::app::App) {
         #[cfg(target_arch = "wasm32")]
-        {
-            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-        }
+        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
 
         app.register_resource::<Renderer>()
             .register_resource::<RenderView>()
@@ -27,10 +24,7 @@ impl Plugin for RendererPlugin {
             .register_resource::<RenderOutput>()
             .register_resource::<RenderEncoder>()
             .register_resource::<RenderContext>()
-            // .insert_resource(BindGroups::default())
-            // .insert_resource(Buffers::default())
             .add_systems(AppSchedule::Resized, resize)
-            // .add_systems(AppSchedule::SubmitEncoder, submit_encoder)
             .add_systems(AppSchedule::RenderStartup, startup)
             .add_systems(AppSchedule::PrepareRender, start_render)
             .add_systems(AppSchedule::PreRender, clear_screen)
@@ -63,7 +57,7 @@ fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>) {
 }
 
 fn startup(mut commands: Commands, window: Res<Window>) {
-    let (device, queue, renderer) = Renderer::new(Arc::clone(&window.winit_window));
+    let (device, queue, renderer) = Renderer::new(&window);
 
     let context = RenderContext {
         device: RenderDevice::new(device),
@@ -91,40 +85,40 @@ unsafe impl Send for Renderer {}
 unsafe impl Sync for Renderer {}
 
 impl Renderer {
-    pub fn new(window: Arc<app::winit::window::Window>) -> (wgpu::Device, wgpu::Queue, Self) {
-        let size = window.inner_size();
+    pub fn new(window: &Window) -> (wgpu::Device, wgpu::Queue, Self) {
+        let size = window.winit_window.inner_size();
 
+        util::tracing::info!("instance");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
             #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::GL,
+            backends: wgpu::Backends::BROWSER_WEBGPU,
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window).unwrap();
+        util::tracing::info!("surface");
+        let surface = instance
+            .create_surface(window.winit_window.clone())
+            .unwrap();
+        util::tracing::info!("adapter");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))
         .unwrap();
+
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
-                // For compute shaders
-                //required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
-                required_limits: if cfg!(target_arch = "wasm32") {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
-                },
+                required_limits: wgpu::Limits::default(),
                 required_features: wgpu::Features::default(),
                 label: None,
-                // memory_hints: wgpu::MemoryHints::Performance,
             },
             None,
         ))
         .unwrap();
+
         let surface_caps = surface.get_capabilities(&adapter);
         util::tracing::info!("Surface capabilities: {:?}", surface_caps);
         let surface_format = surface_caps

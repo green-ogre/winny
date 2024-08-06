@@ -1,6 +1,5 @@
 use crate::Entity;
 use cgmath::Quaternion;
-use egui::TextBuffer;
 use std::{ops::Range, path::PathBuf, ptr::NonNull};
 
 pub trait ComponentEgui {

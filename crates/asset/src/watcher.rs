@@ -164,6 +164,7 @@ impl FileWatcher {
     }
 }
 
+/// TODO: watch for added and removed files.
 /// Collection of [`FileWatcher`]s.
 #[derive(WinnyComponent, Debug)]
 pub struct DirWatcher {
