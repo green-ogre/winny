@@ -1,0 +1,8 @@
+[package]
+name = "custom_material"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+winny = { path = "../../", features = ["editor"] }
+bytemuck = { version = "1.12", features = ["derive"] }
