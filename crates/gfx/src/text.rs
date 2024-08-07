@@ -1,10 +1,8 @@
 use crate::camera::Camera;
 use crate::render::{RenderEncoder, RenderView};
-use app::app::AppSchedule;
-use app::plugins::Plugin;
-use app::render::RenderContext;
-use app::window::{ViewPort, Window};
-use asset::prelude::*;
+use app::prelude::*;
+use asset::server::AssetServer;
+use asset::*;
 use ecs::{Commands, EventReader, Query, Res, ResMut, WinnyResource};
 use wgpu_text::glyph_brush::ab_glyph::FontRef;
 use wgpu_text::glyph_brush::{Extra, Section};
@@ -23,7 +21,7 @@ impl TextPlugin {
 }
 
 impl Plugin for TextPlugin {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         let loader = TextAssetLoader;
         app.register_asset::<Ttf>()
             .register_asset_loader::<Ttf>(loader)

@@ -1,16 +1,12 @@
-use app::{
-    app::{AppSchedule, Schedule},
-    plugins::Plugin,
-    window::ViewPort,
-};
-use ecs::{prelude::*, Components, Entities, Tables, UnsafeWorldCell, WinnyResource};
+use app::prelude::*;
+use ecs::{Components, Entities, Tables, UnsafeWorldCell, WinnyResource, *};
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
 use gfx::{camera::Camera, gui::EguiRenderer};
 
 pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         app.register_resource::<Editor>()
             .insert_resource(Editor::new())
             .add_systems(Schedule::PostUpdate, update_camera_viewport)

@@ -1,5 +1,3 @@
-pub mod prelude;
-
 pub mod angle;
 pub mod matrix;
 pub mod quaternion;

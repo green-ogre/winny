@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
 pub extern crate ecs_macro;
+pub extern crate egui;
 pub use ecs_macro::*;
 
 #[cfg(feature = "editor")]
 pub mod egui_widget;
 pub mod events;
-pub mod prelude;
 pub mod query;
 pub mod schedule;
 pub mod storage;

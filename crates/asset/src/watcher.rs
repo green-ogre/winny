@@ -1,7 +1,7 @@
-use app::{app::AppSchedule, plugins::Plugin};
+use app::prelude::*;
 #[cfg(feature = "widgets")]
 use ecs::egui_widget::Widget;
-use ecs::{prelude::*, WinnyBundle};
+use ecs::{WinnyBundle, *};
 use ecs::{WinnyComponent, WinnyEvent};
 use std::{
     fmt::Display,
@@ -14,7 +14,7 @@ use crate::ReloadAsset;
 pub struct WatcherPlugin;
 
 impl Plugin for WatcherPlugin {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         app.register_event::<FileEvent>()
             .add_systems(AppSchedule::Platform, emit_watcher_events);
     }
@@ -143,7 +143,7 @@ pub struct FileWatcher {
 
 #[cfg(feature = "widgets")]
 impl Widget for FileWatcher {
-    fn display(&mut self, ui: &mut egui::Ui) {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
         self.state.display(ui);
     }
 }

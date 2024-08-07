@@ -34,6 +34,18 @@ struct VertexOutput {
   @location(0) uv: vec2<f32>,
 }
 
+struct CameraUniform {
+    m1: vec4<f32>,
+    m2: vec4<f32>,
+    m3: vec4<f32>,
+    m4: vec4<f32>,
+    viewport_dimensions: vec2<f32>,
+    window_dimensions: vec2<f32>,
+}
+
+@group(2) @binding(0)
+var<uniform> camera: CameraUniform;
+
 @vertex
 fn vs_main(vert: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
@@ -44,13 +56,28 @@ fn vs_main(vert: VertexInput, instance: InstanceInput) -> VertexOutput {
         emitter.m4,
     );
 
-    particle_transformation[0][3] *= 2.0 / 1000.0;
-    particle_transformation[1][3] *= -2.0 / 1000.0;
-    particle_transformation[2][3] *= 1.0 / 1000.0;
+    var camera_matrix = mat4x4<f32>(
+        camera.m1,
+        camera.m2,
+        camera.m3,
+        camera.m4,
+    );
+
+    let x_scale = 2.0 / camera.window_dimensions.x;
+    let y_scale = -2.0 / camera.window_dimensions.y;
+
+    particle_transformation[0][3] *= x_scale;
+    particle_transformation[1][3] *= y_scale;
+    camera_matrix[0][3] *= x_scale;
+    camera_matrix[1][3] *= y_scale;
+
+    camera_matrix[0][0] *= camera.viewport_dimensions.x / camera.window_dimensions.x;
+    camera_matrix[1][1] *= camera.viewport_dimensions.y / camera.window_dimensions.y;
 
     let particle = particle_storage[instance.alive_index];
     out.clip_position = vert.position * particle_transformation;
     out.clip_position += vec4<f32>(particle.translation.xy, 0.0, 0.0);
+    out.clip_position *= camera_matrix;
     out.clip_position.z = 0.0;
     out.uv = vert.uv;
     return out;

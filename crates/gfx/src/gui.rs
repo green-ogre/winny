@@ -1,16 +1,9 @@
 use crate::render::{RenderEncoder, RenderView};
-use app::render::{RenderContext, RenderDevice, RenderQueue};
-use app::{
-    app::{App, AppSchedule, Schedule},
-    input::mouse_and_key::{KeyCode, KeyInput, KeyState, MouseButton, MouseInput, MouseMotion},
-    plugins::Plugin,
-    window::Window,
-};
+use app::prelude::*;
 use ecs::{Commands, EventReader, Res, ResMut, WinnyResource};
 use egui::{Context, Rect, Vec2};
 use egui_wgpu::ScreenDescriptor;
 use std::ops::Deref;
-use util::prelude::*;
 
 // TODO: split into two plugins
 pub struct EguiPlugin;
@@ -310,7 +303,7 @@ fn into_key(key: KeyCode) -> egui::Key {
         KeyCode::Escape => egui::Key::Escape,
         _ => {
             // TODO: all keys
-            warn!("{:?} not converted to egui::Key", key);
+            util::warn!("{:?} not converted to egui::Key", key);
             egui::Key::F35
         }
     }

@@ -95,7 +95,7 @@ fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) ->
         }
     } else {
         quote! {
-            #path_to_ecs::prelude::egui::CollapsingHeader::new(#name_as_str)
+            #path_to_ecs::egui::CollapsingHeader::new(#name_as_str)
                 .show(ui, |ui| {
                     #(#display_widgets)*
                 });
@@ -120,7 +120,7 @@ fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) ->
         pub struct #component_object;
 
         impl #path_to_ecs::egui_widget::ComponentEgui for #component_object {
-            fn display_component(&self, component: std::ptr::NonNull<u8>, ui: &mut #path_to_ecs::prelude::egui::Ui) {
+            fn display_component(&self, component: std::ptr::NonNull<u8>, ui: &mut #path_to_ecs::egui::Ui) {
                 #display
             }
         }
@@ -374,7 +374,7 @@ fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
         }
     } else {
         quote! {
-            #path_to_ecs::prelude::egui::CollapsingHeader::new(#name_as_str)
+            #path_to_ecs::egui::CollapsingHeader::new(#name_as_str)
                 .show(ui, |ui| {
                     #(#display_widgets)*
                 });
@@ -383,7 +383,7 @@ fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
 
     quote! {
         impl #impl_generics #path_to_ecs::egui_widget::Widget for #name #ty_generics #where_clause {
-            fn display(&mut self, ui: &mut #path_to_ecs::prelude::egui::Ui) {
+            fn display(&mut self, ui: &mut #path_to_ecs::egui::Ui) {
                 #widgets
             }
         }
@@ -423,7 +423,7 @@ pub fn impl_label_widget(input: TokenStream) -> TokenStream {
 
     TokenStream::from(quote! {
         impl ecs::egui_widget::Widget for #ty {
-            fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+            fn display(&mut self, ui: &mut ecs::egui::Ui) {
                 ui.label(#ty_name);
             }
         }

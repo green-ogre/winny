@@ -1,4 +1,4 @@
-use app::{app::App, render::RenderContext};
+use app::prelude::*;
 use asset::{handle::Handle, Asset};
 use ecs::{system_param::SystemParam, Res, WinnyResource};
 use fxhash::FxHashMap;

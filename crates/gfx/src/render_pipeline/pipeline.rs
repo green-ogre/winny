@@ -4,8 +4,8 @@ use super::{
     shader::{FragmentShader, FragmentShaderSource, VertexShader},
     vertex_buffer::VertexBuffer,
 };
-use app::render::RenderContext;
-use asset::prelude::*;
+use app::render_util::RenderContext;
+use asset::{server::AssetServer, *};
 
 pub struct RenderPipeline2d(pub wgpu::RenderPipeline);
 

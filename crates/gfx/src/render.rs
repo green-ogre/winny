@@ -1,9 +1,4 @@
-use app::{
-    app::AppSchedule,
-    plugins::Plugin,
-    render::{RenderConfig, RenderContext, RenderDevice, RenderQueue},
-    window::{Window, WindowResized},
-};
+use app::prelude::*;
 use ecs::{Commands, Res, ResMut, Take, WinnyResource};
 use std::{
     fmt::Debug,
@@ -14,7 +9,7 @@ use util::tracing::trace;
 pub struct RendererPlugin;
 
 impl Plugin for RendererPlugin {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         #[cfg(target_arch = "wasm32")]
         std::panic::set_hook(Box::new(console_error_panic_hook::hook));
 
@@ -88,7 +83,6 @@ impl Renderer {
     pub fn new(window: &Window) -> (wgpu::Device, wgpu::Queue, Self) {
         let size = window.winit_window.inner_size();
 
-        util::tracing::info!("instance");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
@@ -97,11 +91,9 @@ impl Renderer {
             ..Default::default()
         });
 
-        util::tracing::info!("surface");
         let surface = instance
             .create_surface(window.winit_window.clone())
             .unwrap();
-        util::tracing::info!("adapter");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             compatible_surface: Some(&surface),

@@ -1,8 +1,9 @@
-use crate::prelude::Matrix4x4f;
 #[cfg(feature = "widgets")]
 use ecs::egui_widget::Widget;
 use ecs::WinnyWidget;
 use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
+
+use crate::matrix::Matrix4x4f;
 
 #[derive(WinnyWidget, Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Default)]
 pub struct Vec2 {
@@ -72,9 +73,9 @@ pub struct Vec2f {
 
 #[cfg(feature = "widgets")]
 impl Widget for Vec2f {
-    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
         ui.with_layout(
-            ecs::prelude::egui::Layout::left_to_right(ecs::prelude::egui::Align::TOP),
+            ecs::egui::Layout::left_to_right(ecs::egui::Align::TOP),
             |ui| {
                 ui.label("x: ");
                 self.x.display(ui);
@@ -422,7 +423,7 @@ pub struct Vec4f {
 
 #[cfg(feature = "widgets")]
 impl Widget for Vec4f {
-    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
         ui.label("Vec4f");
     }
 }
@@ -535,6 +536,8 @@ impl Vec4f {
 
 #[cfg(test)]
 mod tests {
+    use crate::matrix::Matrix4x4f;
+
     use super::*;
 
     #[test]

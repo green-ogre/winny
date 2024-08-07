@@ -1,3 +1,4 @@
+use app::core::App;
 use app::{plugins::Plugin, time::TimePlugin, window::WindowPlugin};
 use asset::AssetLoaderPlugin;
 use audio::AudioPlugin;
@@ -20,28 +21,25 @@ pub extern crate app;
 pub extern crate asset;
 pub extern crate audio;
 pub extern crate ecs;
-#[cfg(feature = "hot_reload")]
-pub extern crate editor;
 pub extern crate gfx;
 #[cfg(feature = "hot_reload")]
 pub extern crate hot_reload;
-extern crate self as winny;
+pub extern crate log;
+pub extern crate math;
 pub extern crate util;
-pub extern crate winny_math as math;
 
 pub mod prelude {
     pub use crate::DefaultPlugins;
     pub use app::prelude::*;
-    pub use asset::prelude::*;
-    pub use audio::prelude::*;
-    pub use ecs::prelude::*;
-    pub use gfx::prelude::*;
+    pub use asset::*;
+    pub use audio::*;
+    pub use ecs::*;
+    pub use gfx::*;
     #[cfg(feature = "hot_reload")]
     pub use hot_reload::prelude::*;
-    pub use log::LogPlugin;
-    pub use util::prelude::*;
-    pub use winny_math as math;
-    pub use winny_math::prelude::*;
+    pub use log::*;
+    pub use math::*;
+    pub use util::*;
 }
 
 pub struct DefaultPlugins {
@@ -61,7 +59,7 @@ impl Default for DefaultPlugins {
 }
 
 impl Plugin for DefaultPlugins {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         app.add_plugins_priority((
             RendererPlugin,
             BindGroupPlugin,

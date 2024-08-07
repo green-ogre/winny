@@ -8,14 +8,7 @@ name = "winny"
 path = "src/lib.rs"
 
 [workspace]
-members = [
-  "crates/*",
-  "examples/asset_reloading",
-  "examples/camera",
-  "examples/egui",
-  "examples/particles",
-  "examples/sprites",
-]
+members = ["crates/*", "examples/custom_material"]
 exclude = ["examples", "crates/deprecated"]
 
 [dependencies]
@@ -24,7 +17,7 @@ audio = { path = "crates/audio" }
 log = { path = "crates/log" }
 util = { path = "crates/util" }
 app = { path = "crates/app" }
-winny_math = { path = "crates/winny_math" }
+math = { path = "crates/math" }
 asset = { path = "crates/asset" }
 gfx = { path = "crates/gfx" }
 hot_reload = { path = "crates/hot_reload", optional = true }
@@ -37,7 +30,7 @@ hot_reload = ["dep:hot_reload"]
 editor = [
   "dep:editor",
   "ecs/editor",
-  "winny_math/widgets",
+  "math/widgets",
   "audio/widgets",
   "gfx/widgets",
   "asset/widgets",

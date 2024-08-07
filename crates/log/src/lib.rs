@@ -16,7 +16,7 @@ impl Default for LogPlugin {
 }
 
 impl app::plugins::Plugin for LogPlugin {
-    fn build(&mut self, _app: &mut app::app::App) {
+    fn build(&mut self, _app: &mut app::prelude::App) {
         // let old_handler = std::panic::take_hook();
         // std::panic::set_hook(Box::new(move |infos| {
         //     util::tracing::error!("{}", util::tracing_error::SpanTrace::capture());

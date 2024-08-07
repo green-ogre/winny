@@ -1,6 +1,6 @@
 use cgmath::{Matrix4, Quaternion, Zero};
 use ecs::WinnyComponent;
-use winny_math::{
+use math::{
     matrix::{scale_matrix4x4f, translation_matrix4x4f, Matrix4x4f},
     vector::{Vec2f, Vec3f, Vec4f},
 };

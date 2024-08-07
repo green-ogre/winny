@@ -3,9 +3,9 @@ struct VertexOutput {
   @location(0) uv: vec2<f32>,
 }
 
-@group(2) @binding(0)
+@group(3) @binding(0)
 var texture: texture_2d<f32>;
-@group(2) @binding(1)
+@group(3) @binding(1)
 var texture_sampler: sampler;
 
 struct MaterialUniform {
@@ -14,7 +14,7 @@ struct MaterialUniform {
   saturation: f32,
 }
 
-@group(2) @binding(2)
+@group(3) @binding(2)
 var<uniform> mat: MaterialUniform;
 
 @fragment
