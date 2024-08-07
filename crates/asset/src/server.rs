@@ -1,7 +1,6 @@
 use crate::{
     handle::{ErasedHandle, Handle},
-    prelude::AssetId,
-    Asset, AssetEvent, AssetLoader, ErasedAssetLoader,
+    Asset, AssetEvent, AssetId, AssetLoader, ErasedAssetLoader,
 };
 use crossbeam_channel::{Receiver, Sender};
 use ecs::WinnyResource;

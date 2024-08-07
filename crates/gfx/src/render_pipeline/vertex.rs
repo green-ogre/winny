@@ -1,25 +1,4 @@
-use winny_math::vector::{Vec2f, Vec3f, Vec4f};
-
-// pub const FULLSCREEN_QUAD_VERTEX: [Vertex; 6] = [
-//     Vertex {
-//         position: Vec4f{v:-1.0, 1.0, 0.0, 1.0],
-//     },
-//     Vertex {
-//         position: [-1.0, -1.0, 0.0, 1.0],
-//     },
-//     Vertex {
-//         position: [1.0, -1.0, 0.0, 1.0],
-//     },
-//     Vertex {
-//         position: [-1.0, 1.0, 0.0, 1.0],
-//     },
-//     Vertex {
-//         position: [1.0, -1.0, 0.0, 1.0],
-//     },
-//     Vertex {
-//         position: [1.0, 1.0, 0.0, 1.0],
-//     },
-// ];
+use math::vector::{Vec2f, Vec3f, Vec4f};
 
 pub const FULLSCREEN_QUAD_VERTEX_UV: [VertexUv; 6] = [
     VertexUv {

@@ -1,5 +1,5 @@
 use crate::{reader::ByteReader, Asset, AssetApp, AssetLoader, AssetLoaderError};
-use app::{app::App, plugins::Plugin};
+use app::prelude::*;
 use std::{io::Cursor, sync::Arc};
 use taplo::dom;
 

@@ -7,7 +7,7 @@ edition = "2021"
 [dependencies]
 ecs = { path = "../ecs" }
 util = { path = "../util" }
-winny_math = { path = "../winny_math" }
+math = { path = "../math" }
 
 wgpu = "0.20.1"
 chrono = { version = "0.4.19", features = ["wasmbind"] }

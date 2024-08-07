@@ -1,10 +1,10 @@
-use app::render::RenderContext;
+use app::render_util::RenderContext;
 use bytemuck::{NoUninit, Pod};
-use wgpu::util::DeviceExt;
-use winny_math::{
+use math::{
     matrix::Matrix4x4f,
     vector::{Vec2f, Vec4f},
 };
+use wgpu::util::DeviceExt;
 
 /// Must derive [`bytemuck::Pod`], [`bytemuck::Zeroable`], and be [`repr(C)`] while maintining
 /// aligment as defined by WebGPU:

@@ -1,10 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 use app::input::mouse_and_key::KeyInput;
-use app::{
-    app::{App, Schedule},
-    plugins::Plugin,
-};
-use asset::prelude::*;
+use app::prelude::*;
+use asset::*;
 use asset::{AssetApp, AssetLoader};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -30,9 +27,6 @@ use std::{
 };
 use util::tracing::{error, trace};
 // use wav::WavFormat;
-
-pub mod prelude;
-// pub mod wav;
 
 pub struct AudioPlugin;
 
@@ -371,7 +365,7 @@ pub struct StreamHandle(cpal::Stream, Receiver<()>);
 
 #[cfg(feature = "widgets")]
 impl Widget for StreamHandle {
-    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
         ui.label("StreamHandle");
     }
 }

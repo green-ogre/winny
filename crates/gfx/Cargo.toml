@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 util = { path = "../util" }
 ecs = { path = "../ecs" }
-winny_math = { path = "../winny_math" }
+math = { path = "../math" }
 app = { path = "../app" }
 asset = { path = "../asset" }
 

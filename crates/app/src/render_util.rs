@@ -24,8 +24,8 @@ pub struct Dimensions<T: DimensionsUnit> {
 
 #[cfg(feature = "editor")]
 impl<T: DimensionsUnit> Widget for Dimensions<T> {
-    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
-        ecs::prelude::egui::CollapsingHeader::new("Dimensions").show(ui, |ui| {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
+        ecs::egui::CollapsingHeader::new("Dimensions").show(ui, |ui| {
             self.dimensions[0].display(ui);
             self.dimensions[1].display(ui);
         });

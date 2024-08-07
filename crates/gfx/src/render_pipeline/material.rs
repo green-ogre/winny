@@ -11,17 +11,17 @@ use crate::{
     sprite::SpriteMaterialPlugin,
     texture::{SamplerFilterType, Texture},
 };
-use app::plugins::Plugin;
-use app::render::RenderContext;
-use asset::prelude::*;
+use app::render_util::RenderContext;
+use app::{core::App, plugins::Plugin};
+use asset::{server::AssetServer, *};
 use ecs::{Component, WinnyComponent, WinnyWidget};
+use math::vector::Vec4f;
 use std::marker::PhantomData;
-use winny_math::vector::Vec4f;
 
 pub struct MaterialPlugin<M: Material>(PhantomData<M>);
 
 impl<M: Material> Plugin for MaterialPlugin<M> {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         app.add_plugins((ParticlePlugin::<M>::new(), SpriteMaterialPlugin::<M>::new()));
     }
 }

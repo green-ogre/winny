@@ -13,25 +13,22 @@ use crate::render_pipeline::vertex_buffer::{AsVertexBuffer, VertexBuffer};
 use crate::texture::{Image, TextureAtlas};
 use crate::texture::{Texture, TextureDimensions};
 use crate::transform::Transform;
-use app::app::{AppSchedule, Schedule};
-use app::plugins::Plugin;
-use app::render::{Dimensions, RenderContext};
-use app::time::DeltaTime;
-use app::window::Window;
-use asset::prelude::*;
+use app::prelude::*;
+use asset::server::AssetServer;
+use asset::*;
 use cgmath::{Quaternion, Rad, Rotation3};
-use ecs::prelude::*;
+use ecs::*;
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
+use math::angle::{Degrees, Radf};
+use math::matrix::{scale_matrix4x4f, Matrix4x4f};
+use math::vector::{Vec2f, Vec3f};
 use std::marker::PhantomData;
 use std::ops::Range;
-use winny_math::angle::{Degrees, Radf};
-use winny_math::matrix::{scale_matrix4x4f, Matrix4x4f};
-use winny_math::vector::{Vec2f, Vec3f};
 
 pub struct SpritePlugin;
 
 impl Plugin for SpritePlugin {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         app.register_resource::<SpriteVertShader>()
             .register_resource::<SpriteBuffers>()
             .add_systems(Schedule::StartUp, startup)
@@ -47,7 +44,7 @@ fn startup(mut commands: Commands, context: Res<RenderContext>) {
 pub struct SpriteMaterialPlugin<M: Material>(PhantomData<M>);
 
 impl<M: Material> Plugin for SpriteMaterialPlugin<M> {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         app.add_systems(
             AppSchedule::PreRender,
             (

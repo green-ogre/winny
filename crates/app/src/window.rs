@@ -1,18 +1,16 @@
-use self::{
-    app::AppSchedule,
-    prelude::{AppExit, KeyCode, MouseMotion},
-};
+use self::prelude::{App, AppExit};
+
 use super::*;
+use crate::prelude::*;
 #[cfg(feature = "editor")]
 use ecs::egui_widget::Widget;
 use ecs::{
     events::{EventReader, EventWriter},
     WinnyResource,
 };
+use math::vector::Vec2f;
 use plugins::Plugin;
-use prelude::{KeyInput, MouseInput};
 use std::sync::Arc;
-use winny_math::vector::Vec2f;
 
 pub extern crate winit;
 
@@ -38,7 +36,7 @@ impl Default for WindowPlugin {
 }
 
 impl Plugin for WindowPlugin {
-    fn build(&mut self, app: &mut crate::app::App) {
+    fn build(&mut self, app: &mut App) {
         if self.close_on_escape {
             app.add_systems(AppSchedule::Platform, should_exit);
         }
@@ -95,16 +93,16 @@ pub struct ViewPort {
 
 #[cfg(feature = "editor")]
 impl Widget for ViewPort {
-    fn display(&mut self, ui: &mut ecs::prelude::egui::Ui) {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
         ui.with_layout(
-            ecs::prelude::egui::Layout::left_to_right(ecs::prelude::egui::Align::TOP),
+            ecs::egui::Layout::left_to_right(ecs::egui::Align::TOP),
             |ui| {
                 ui.label("min: ");
                 self.min.display(ui);
             },
         );
         ui.with_layout(
-            ecs::prelude::egui::Layout::left_to_right(ecs::prelude::egui::Align::TOP),
+            ecs::egui::Layout::left_to_right(ecs::egui::Align::TOP),
             |ui| {
                 ui.label("max: ");
                 self.max.display(ui);

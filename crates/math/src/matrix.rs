@@ -1,8 +1,9 @@
-use std::{f32::consts::PI, ops::Mul};
-
-use self::{angle::Radf, prelude::Vec2f, vector::Vec4f};
-
+use self::{
+    angle::Radf,
+    vector::{Vec2f, Vec4f},
+};
 use super::*;
+use std::{f32::consts::PI, ops::Mul};
 
 #[derive(Debug)]
 pub struct Matrix2x2f {

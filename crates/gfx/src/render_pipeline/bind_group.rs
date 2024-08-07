@@ -1,8 +1,8 @@
 use super::buffer::AsGpuBuffer;
 use crate::texture::{Image, SamplerFilterType, Texture};
-use app::plugins::Plugin;
-use app::render::RenderContext;
-use asset::prelude::*;
+use app::render_util::RenderContext;
+use app::{core::App, plugins::Plugin};
+use asset::*;
 use ecs::{SparseArrayIndex, SparseSet, WinnyComponent, WinnyResource, WinnyWidget};
 use fxhash::FxHashMap;
 use wgpu::BufferUsages;
@@ -10,7 +10,7 @@ use wgpu::BufferUsages;
 pub struct BindGroupPlugin;
 
 impl Plugin for BindGroupPlugin {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         app.insert_resource(AssetBindGroups::default());
     }
 }

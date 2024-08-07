@@ -1,4 +1,5 @@
 use crate::{
+    camera::{Camera, CameraUniform},
     render::{RenderEncoder, RenderView},
     render_pipeline::{
         bind_group::{self, AsBindGroup, BindGroup},
@@ -13,32 +14,31 @@ use crate::{
     texture::{Image, Texture, TextureDimensions},
     transform::Transform,
 };
-use app::render::{RenderConfig, RenderContext};
+use app::prelude::*;
 use app::{
-    app::{AppSchedule, Schedule},
-    plugins::Plugin,
-    time::DeltaTime,
+    render_util::{RenderConfig, RenderContext},
+    window::Window,
 };
-use asset::prelude::*;
+use asset::{server::AssetServer, *};
 use cgmath::{Quaternion, Rad, Rotation3};
-use ecs::{prelude::*, WinnyBundle, WinnyComponent, WinnyResource};
-use rand::Rng;
-use std::{marker::PhantomData, ops::Range};
-use winny_math::{
+use ecs::{WinnyBundle, WinnyComponent, WinnyResource, *};
+use math::{
     angle::Radf,
     matrix::{world_to_screen_space_matrix4x4f, Matrix4x4f},
     vector::{Vec2f, Vec3f, Vec4f},
 };
+use rand::Rng;
+use std::{marker::PhantomData, ops::Range};
 
 // WARN: Particles and Sprites exist within different contexts, therefore they're z position has no
 // relationship to each other, and one will always draw over the other
 pub struct ParticlePlugin<M: Material>(PhantomData<M>);
 
 impl<M: Material> Plugin for ParticlePlugin<M> {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         app.register_resource::<ParticleVertShaderHandle>()
             .add_systems(Schedule::PostUpdate, bind_new_particle_bundles::<M>)
-            .add_systems(AppSchedule::PreRender, update_emitter_uniforms::<M>)
+            .add_systems(AppSchedule::PreRender, update_uniforms::<M>)
             .add_systems(
                 AppSchedule::Render,
                 (compute_emitters::<M>, render_emitters::<M>),
@@ -262,6 +262,7 @@ impl From<&RawParticle> for ReadOnlyRawParticle {
 
 #[derive(WinnyComponent)]
 pub struct ParticlePipeline<T: Material> {
+    camera_binding: BindGroup,
     compute_pipeline: wgpu::ComputePipeline,
     render_pipeline: RenderPipeline2d,
     material_resources: BindGroup,
@@ -295,6 +296,13 @@ impl<M: Material> ParticlePipeline<M> {
             context,
             material.clone(),
             material.resource_state(texture),
+        );
+
+        let camera_binding = <&[CameraUniform] as AsBindGroup>::as_entire_binding_empty(
+            context,
+            &[],
+            std::mem::size_of::<CameraUniform>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
 
         let vertices = FULLSCREEN_QUAD_VERTEX_UV;
@@ -344,7 +352,11 @@ impl<M: Material> ParticlePipeline<M> {
             FragmentType::Particle,
             context,
             server,
-            &[&vertex_emitter_resources, &vertex_particle_resources],
+            &[
+                &vertex_emitter_resources,
+                &vertex_particle_resources,
+                &camera_binding,
+            ],
             material_resources.layout(),
             &[&particle_vertex_buffer, &alive_index_buffer],
             vert_shader,
@@ -392,6 +404,7 @@ impl<M: Material> ParticlePipeline<M> {
                 });
 
         Self {
+            camera_binding,
             render_pipeline,
             compute_pipeline,
             material_resources,
@@ -502,7 +515,7 @@ fn bind_new_particle_bundles<M: Material>(
     }
 }
 
-fn update_emitter_uniforms<M: Material>(
+fn update_uniforms<M: Material>(
     mut emitters: Query<(
         Mut<ParticlePipeline<M>>,
         Transform,
@@ -511,6 +524,8 @@ fn update_emitter_uniforms<M: Material>(
     )>,
     dt: Res<DeltaTime>,
     context: Res<RenderContext>,
+    camera: Query<(Camera, Transform)>,
+    window: Res<Window>,
 ) {
     for (pipeline, transform, emitter, dimensions) in emitters.iter_mut() {
         let vertex_emitter = VertexEmitterUniform::new(emitter, &context, transform, dimensions);
@@ -525,6 +540,16 @@ fn update_emitter_uniforms<M: Material>(
             &context,
             &pipeline.compute_emitter_resources.single_buffer(),
             &[compute_emitter],
+        );
+
+        let Ok((camera, transform)) = camera.get_single() else {
+            continue;
+        };
+
+        CameraUniform::write_buffer(
+            &context,
+            pipeline.camera_binding.single_buffer(),
+            &[CameraUniform::from_camera(camera, transform, &window)],
         );
     }
 }
@@ -587,7 +612,8 @@ fn render_emitters<M: Material>(
         render_pass.set_vertex_buffer(1, pipeline.alive_index_buffer.buffer().slice(..));
         render_pass.set_bind_group(0, &pipeline.vertex_emitter_resources.binding(), &[]);
         render_pass.set_bind_group(1, &pipeline.vertex_particle_resources.binding(), &[]);
-        render_pass.set_bind_group(2, &pipeline.material_resources.binding(), &[]);
+        render_pass.set_bind_group(2, &pipeline.camera_binding.binding(), &[]);
+        render_pass.set_bind_group(3, &pipeline.material_resources.binding(), &[]);
         render_pass.draw(0..6, 0..pipeline.buffer_len);
     }
 }

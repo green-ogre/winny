@@ -1,19 +1,17 @@
+use crate::prelude::*;
+use crate::window::Window;
+use crate::window::WindowPlugin;
 use crate::{
     input::mouse_and_key,
-    plugins::{Plugin, PluginSet},
-    prelude::{KeyState, MouseButton},
     window::{ViewPort, WindowResized},
 };
-use crate::{
-    prelude::{KeyCode, KeyInput, MouseInput, WindowPlugin},
-    window::Window,
-};
+use ecs::sets::IntoSystemStorage;
 use ecs::{
     events::Events,
-    prelude::*,
     schedule::{ScheduleLabel, Scheduler},
-    WinnyEvent, WinnyScheduleLabel,
+    WinnyEvent, WinnyScheduleLabel, *,
 };
+use math::vector::Vec2f;
 use mouse_and_key::MouseMotion;
 use std::{collections::VecDeque, sync::Arc};
 use winit::{
@@ -23,7 +21,6 @@ use winit::{
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::PhysicalKey,
 };
-use winny_math::vector::Vec2f;
 
 #[derive(Debug, WinnyEvent)]
 pub struct AppExit;
@@ -275,7 +272,7 @@ impl ApplicationHandler for WinitApp {
 
         util::tracing::trace!("App resumed: Initializing");
         let window_plugin = self.app.world().resource::<WindowPlugin>();
-        let mut window_attributes = winit::window::Window::default_attributes()
+        let window_attributes = winit::window::Window::default_attributes()
             .with_title(window_plugin.title)
             .with_inner_size(PhysicalSize::new(
                 window_plugin.window_size.x,

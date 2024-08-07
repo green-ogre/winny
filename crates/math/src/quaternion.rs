@@ -1,4 +1,4 @@
-use crate::{prelude::Matrix4x4f, vector::Vec3f};
+use crate::{matrix::Matrix4x4f, vector::Vec3f};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Quaternion {

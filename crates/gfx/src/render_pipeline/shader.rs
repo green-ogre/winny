@@ -1,11 +1,11 @@
-use app::{plugins::Plugin, render::RenderContext};
-use asset::prelude::*;
+use app::prelude::*;
+use asset::*;
 use std::ops::Deref;
 
 pub struct ShaderPlugin;
 
 impl Plugin for ShaderPlugin {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut App) {
         let vert_loader = VertexShaderLoader;
         let frag_loader = FragmentShaderLoader;
         app.register_asset::<VertexShaderSource>()

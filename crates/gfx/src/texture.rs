@@ -1,4 +1,5 @@
-use app::render::{Dimensions, RenderConfig, RenderContext, RenderDevice, RenderQueue};
+use crate::render_pipeline::render_assets::RenderAssetApp;
+use app::render_util::{Dimensions, RenderConfig, RenderContext, RenderDevice, RenderQueue};
 use asset::{reader::ByteReader, Asset, AssetApp, AssetLoaderError};
 use ecs::WinnyComponent;
 use image::{DynamicImage, GenericImageView};
@@ -10,12 +11,10 @@ use std::{
 use util::tracing::trace;
 use wgpu::util::DeviceExt;
 
-use crate::render_pipeline::render_assets::RenderAssetApp;
-
 pub struct TexturePlugin;
 
 impl app::plugins::Plugin for TexturePlugin {
-    fn build(&mut self, app: &mut app::app::App) {
+    fn build(&mut self, app: &mut app::prelude::App) {
         let image_loader = ImageAssetLoader {};
 
         app.register_asset::<Image>()

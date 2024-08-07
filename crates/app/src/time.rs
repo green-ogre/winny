@@ -1,16 +1,15 @@
-use crate::{
-    app::AppSchedule,
-    prelude::{App, Plugin},
+use crate::prelude::{
+    Plugin, {App, AppSchedule},
 };
 use chrono::{DateTime, Local, TimeDelta};
 #[cfg(feature = "editor")]
 use ecs::egui_widget::Widget;
-use ecs::{prelude::*, WinnyComponent, WinnyResource};
+use ecs::{WinnyComponent, WinnyResource, *};
 
 pub struct TimePlugin;
 
 impl Plugin for TimePlugin {
-    fn build(&mut self, app: &mut crate::app::App) {
+    fn build(&mut self, app: &mut App) {
         app.register_resource::<DeltaTime>()
             .add_systems(AppSchedule::PreStartUp, insert_delta)
             .add_systems(AppSchedule::Platform, update_delta);

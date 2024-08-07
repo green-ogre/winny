@@ -1,14 +1,7 @@
-use app::app::Schedule;
-use app::{
-    app::{App, AppSchedule},
-    plugins::Plugin,
-};
+use app::prelude::*;
 use crossbeam_channel::{Sender, TryRecvError};
 use ecs::{DumbVec, EventReader, EventWriter, Res, ResMut, SparseArray, WinnyEvent, WinnyResource};
-use prelude::handle::{ErasedHandle, Handle};
-use prelude::server::{AssetHandleCreator, AssetServer};
-use prelude::AssetId;
-use reader::ByteReader;
+use server::{AssetHandleCreator, AssetServer};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{
@@ -18,11 +11,13 @@ use std::{
 use util::tracing::{error, info};
 
 pub mod handle;
-pub mod prelude;
 pub mod reader;
 pub mod server;
 pub mod toml;
 pub mod watcher;
+
+#[allow(unused)]
+pub use crate::{handle::*, reader::*, server::*, toml::*, watcher::*};
 
 pub struct AssetLoaderPlugin;
 
@@ -323,8 +318,7 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
         wasm_bindgen_futures::spawn_local(async move {
             let binary = load_binary(path.as_str()).await.unwrap();
             let reader = ByteReader::new(BufReader::new(Cursor::new(binary)));
-            let result = L::load(reader, settings, path.clone(), ext.as_str())
-                .await;
+            let result = L::load(reader, settings, path.clone(), ext.as_str()).await;
             if let Err(e) = sender.send(match result {
                 Ok(a) => AssetEvent::Loaded {
                     path: path.into(),

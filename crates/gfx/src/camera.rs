@@ -1,10 +1,10 @@
 use crate::render_pipeline::bind_group::{self, AsBindGroup};
 use crate::{render_pipeline::buffer::AsGpuBuffer, transform::Transform};
-use app::render::Dimensions;
+use app::render_util::Dimensions;
 use app::window::ViewPort;
 use app::window::Window;
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
-use winny_math::matrix::Matrix4x4f;
+use math::matrix::Matrix4x4f;
 
 #[derive(WinnyBundle, Default)]
 pub struct Camera2dBundle {
@@ -40,15 +40,13 @@ impl CameraUniform {
         let viewport = camera.viewport.unwrap_or_else(|| window.viewport);
         let mut transform = transform.as_matrix();
 
-        // let viewport_center = viewport.center();
-        // let screen_center = window.viewport.center();
-        // let mut offset = screen_center - viewport_center;
-        // offset.x *= viewport.width() / window.viewport.width();
-        // offset.y *= viewport.height() / window.viewport.height();
-        // transform.m[0][3] -= offset.x;
-        // transform.m[1][3] -= offset.y;
+        let viewport_center = viewport.center();
+        let screen_center = window.viewport.center();
+        let offset = screen_center - viewport_center;
+        transform.m[0][3] += offset.x;
+        transform.m[1][3] -= offset.y;
 
-        // The why will already be flipped
+        // The y will already be flipped
         transform.m[0][3] *= -1.0;
 
         Self {
