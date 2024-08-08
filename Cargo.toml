@@ -11,17 +11,58 @@ path = "src/lib.rs"
 members = ["crates/*", "examples/custom_material"]
 exclude = ["examples", "crates/deprecated"]
 
-[dependencies]
-ecs = { path = "crates/ecs" }
-audio = { path = "crates/audio" }
-log = { path = "crates/log" }
-util = { path = "crates/util" }
-app = { path = "crates/app" }
-math = { path = "crates/math" }
-asset = { path = "crates/asset" }
-gfx = { path = "crates/gfx" }
-hot_reload = { path = "crates/hot_reload", optional = true }
-editor = { path = "crates/editor", optional = true }
+[dependencies.ecs]
+package = "ecs"
+path = "crates/ecs"
+
+[dependencies.audio]
+package = "audio"
+path = "crates/audio"
+
+[dependencies.log]
+package = "log"
+path = "crates/log"
+
+[dependencies.util]
+package = "util"
+path = "crates/util"
+
+[dependencies.app]
+package = "app"
+path = "crates/app"
+
+[dependencies.math]
+package = "math"
+path = "crates/math"
+
+[dependencies.asset]
+package = "asset"
+path = "crates/asset"
+
+[dependencies.gfx]
+package = "gfx"
+path = "crates/gfx"
+
+[dependencies.hot_reload]
+package = "hot_reload"
+path = "crates/hot_reload"
+optional = true
+
+[dependencies.editor]
+package = "editor"
+path = "crates/editor"
+optional = true
+
+[workspace.dependencies]
+wgpu = "0.20.1"
+chrono = { version = "0.4.19", features = ["wasmbind"] }
+winit = "0.30.3"
+bytemuck = { version = "1.12", features = ["derive"] }
+rand = "0.8.5"
+fxhash = "0.2.1"
+cgmath = "0.18"
+pollster = "0.3.0"
+
 
 [features]
 default = ["egui", "text"]

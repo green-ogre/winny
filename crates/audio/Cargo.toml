@@ -9,9 +9,9 @@ asset = { path = "../asset" }
 app = { path = "../app" }
 ecs = { path = "../ecs" }
 
+rand.workspace = true
 cpal = { version = "0.15.3", features = ["wasm-bindgen"] }
 hound = "3.5.1"
-rand = "0.8.5"
 
 [dev-dependencies]
 tracing-test = "0.2.5"

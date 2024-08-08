@@ -123,11 +123,20 @@ impl AssetApp for App {
                             error,
                             path,
                             handle,
-                        } => asset_loader_events.send(AssetLoaderEvent::Err {
-                            error,
-                            path,
-                            handle: handle.into(),
-                        }),
+                        } => {
+                            error!(
+                                "Failed to load asset [{}]: {:?}: {}",
+                                std::any::type_name::<A>(),
+                                path,
+                                error,
+                            );
+
+                            asset_loader_events.send(AssetLoaderEvent::Err {
+                                error,
+                                path,
+                                handle: handle.into(),
+                            })
+                        }
                         AssetEvent::Loaded {
                             path,
                             handle,

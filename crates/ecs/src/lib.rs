@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub extern crate ecs_macro;
+#[cfg(feature = "editor")]
 pub extern crate egui;
 pub use ecs_macro::*;
 

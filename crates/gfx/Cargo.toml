@@ -13,40 +13,23 @@ math = { path = "../math" }
 app = { path = "../app" }
 asset = { path = "../asset" }
 
-cgmath = "0.18"
 tobj = { version = "4.0.2", features = ["async"] }
 image = "0.25.1"
 
-pollster = "0.3.0"
-bytemuck = { version = "1.12", features = ["derive"] }
-
-wgpu = "0.20.1"
+cgmath.workspace = true
+pollster.workspace = true
+bytemuck.workspace = true
+wgpu.workspace = true
+rand.workspace = true
+fxhash.workspace = true
 
 egui = { version = "0.28.1", optional = true }
 egui-wgpu = { version = "0.28.1", optional = true }
-# Outdated winit
-# egui-winit = { version = "0.28.1", optional = true }
-
 wgpu_text = { version = "0.8.8", optional = true }
-
-# for particles
-rand = "0.8.5"
-# for atlases
-fxhash = "0.2.1"
-
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
-wasm-bindgen-futures = "0.4.30"
-reqwest = "0.12.5"
 wgpu = { version = "0.20.1", features = ["webgpu"] }
-wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = [
-  "Document",
-  "Window",
-  "Element",
-  "Location",
-] }
 # winit depends on getrandom without the js binding, causing wasm-pack to fail
 getrandom = { version = "0.2.15", features = ["js"] }
 
