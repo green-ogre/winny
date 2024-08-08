@@ -9,10 +9,10 @@ ecs = { path = "../ecs" }
 util = { path = "../util" }
 math = { path = "../math" }
 
-wgpu = "0.20.1"
-chrono = { version = "0.4.19", features = ["wasmbind"] }
-winit = { version = "0.30.3", features = ["rwh_05"] }
-bytemuck = { version = "1.12", features = ["derive"] }
+wgpu.workspace = true
+chrono.workspace = true
+winit.workspace = true
+bytemuck.workspace = true
 
 gilrs = { version = "0.10.3", optional = true }
 
@@ -26,5 +26,15 @@ web-sys = { version = "0.3", features = [
   "Window",
   "Element",
   "HtmlCanvasElement",
+  "Location",
+  "Blob",
+  "RequestInit",
+  "RequestMode",
+  "Request",
+  "ImageData",
+  "Response",
+  "HtmlImageElement",
+  "WebGl2RenderingContext",
+  "CanvasRenderingContext2d",
 ] }
 wgpu = { version = "0.20.1", features = ["webgpu"] }

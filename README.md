@@ -1,4 +1,4 @@
-# ![Winny](res/cube.PNG)
+# ![Winny](res/cube.png)
 
 ## General
   - Wasm support.

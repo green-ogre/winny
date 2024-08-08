@@ -293,7 +293,7 @@ impl ApplicationHandler for WinitApp {
             let document = web_sys::window().unwrap().document().unwrap();
             util::tracing::info!("canvas");
             let canvas = document
-                .create_element("canvas")
+                .get_element_by_id("canvas")
                 .unwrap()
                 .dyn_into::<HtmlCanvasElement>()
                 .unwrap();
@@ -306,16 +306,13 @@ impl ApplicationHandler for WinitApp {
             // };
 
             util::tracing::info!("with canvas");
-            window_attributes = window_attributes.with_canvas(Some(canvas.clone()));
-            // let canvas = window
-            //     .canvas()
-            //     .expect("Could not construct canvas from winit window");
-            let dst = document
-                .get_element_by_id("winny-wasm")
-                .expect("Could not find doc element `winny-wasm`");
-            if let Err(e) = dst.append_child(&web_sys::Element::from(canvas.clone())) {
-                util::tracing::error!("{e:?}");
-            }
+            let window_attributes = window_attributes.with_canvas(Some(canvas));
+            // let dst = document
+            //     .get_element_by_id("winny-wasm")
+            //     .expect("Could not find doc element `winny-wasm`");
+            // if let Err(e) = dst.append_child(&web_sys::Element::from(canvas.clone())) {
+            //     util::tracing::error!("{e:?}");
+            // }
 
             // let context: GpuCanvasContext = canvas
             //     .get_context("webgpu")

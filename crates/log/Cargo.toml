@@ -7,5 +7,20 @@ edition = "2021"
 app = { path = "../app" }
 util = { path = "../util" }
 
-# [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = { version = "0.3.0", features = ["console"] }
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = [
+  "Document",
+  "Window",
+  "Element",
+  "HtmlCanvasElement",
+  "Location",
+  "Blob",
+  "RequestInit",
+  "RequestMode",
+  "Request",
+  "ImageData",
+  "Response",
+  "HtmlImageElement",
+  "WebGl2RenderingContext",
+  "CanvasRenderingContext2d",
+] }

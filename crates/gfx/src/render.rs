@@ -4,7 +4,7 @@ use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
-use util::tracing::trace;
+use util::{info, tracing::trace};
 
 pub struct RendererPlugin;
 
@@ -87,19 +87,24 @@ impl Renderer {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
             #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::BROWSER_WEBGPU,
+            backends: wgpu::Backends::all(),
             ..Default::default()
         });
 
         let surface = instance
             .create_surface(window.winit_window.clone())
             .unwrap();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .unwrap();
+        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
+            &instance,
+            Some(&surface),
+        ))
+        .expect("No suitable GPU adapters found on the system!");
+        // let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        //     power_preference: wgpu::PowerPreference::default(),
+        //     compatible_surface: Some(&surface),
+        //     force_fallback_adapter: false,
+        // }))
+        // .unwrap();
 
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -119,6 +124,8 @@ impl Renderer {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
+
+        info!("MADE IT");
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
