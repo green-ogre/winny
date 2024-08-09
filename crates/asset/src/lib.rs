@@ -325,7 +325,10 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
 
         let settings = self.settings();
         wasm_bindgen_futures::spawn_local(async move {
-            let binary = load_binary(path.as_str()).await.unwrap();
+            let binary = match load_binary(path.as_str()).await {
+                Ok(b) => b,
+                Err(_) => panic!("Failed to load binary"),
+            };
             let reader = ByteReader::new(BufReader::new(Cursor::new(binary)));
             let result = L::load(reader, settings, path.clone(), ext.as_str()).await;
             if let Err(e) = sender.send(match result {
@@ -350,14 +353,7 @@ impl<L: AssetLoader> ErasedAssetLoader for L {
 
 #[cfg(target_arch = "wasm32")]
 fn format_url(file_name: &str) -> reqwest::Url {
-    let window = web_sys::window().unwrap();
-    let location = window.location();
-    let mut origin = location.origin().unwrap();
-    if !origin.ends_with("res") {
-        origin = format!("{}/res", origin);
-    }
-    let base = reqwest::Url::parse(&format!("{}/", origin,)).unwrap();
-    base.join(file_name).unwrap()
+    reqwest::Url::parse(file_name).unwrap()
 }
 
 pub async fn load_string(file_name: &str) -> Result<String, ()> {

@@ -6,6 +6,7 @@ use audio::AudioPlugin;
 use editor::EditorPlugin;
 use gfx::gui::EguiPlugin;
 use gfx::render::RendererPlugin;
+use gfx::ColorMaterial;
 use gfx::{
     render_pipeline::{
         bind_group::BindGroupPlugin,
@@ -79,6 +80,7 @@ impl Plugin for DefaultPlugins {
             #[cfg(feature = "editor")]
             EditorPlugin,
             MaterialPlugin::<Material2d>::new(),
+            MaterialPlugin::<ColorMaterial>::new(),
         ));
     }
 }

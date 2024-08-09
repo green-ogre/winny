@@ -87,7 +87,7 @@ impl Renderer {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
             #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::GL,
             ..Default::default()
         });
 
@@ -98,17 +98,15 @@ impl Renderer {
             &instance,
             Some(&surface),
         ))
-        .expect("No suitable GPU adapters found on the system!");
-        // let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        //     power_preference: wgpu::PowerPreference::default(),
-        //     compatible_surface: Some(&surface),
-        //     force_fallback_adapter: false,
-        // }))
-        // .unwrap();
+        .expect("No suitable GPU adapters found on the system");
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let required_limits = wgpu::Limits::default();
+        #[cfg(target_arch = "wasm32")]
+        let required_limits = wgpu::Limits::downlevel_webgl2_defaults();
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
-                required_limits: wgpu::Limits::default(),
+                required_limits,
                 required_features: wgpu::Features::default(),
                 label: None,
             },
@@ -124,8 +122,6 @@ impl Renderer {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
-
-        info!("MADE IT");
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,

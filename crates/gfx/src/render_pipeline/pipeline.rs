@@ -15,6 +15,7 @@ ecs::ecs_macro::impl_label_widget!(RenderPipeline2d);
 pub enum FragmentType {
     Sprite,
     Particle,
+    CpuParticle,
 }
 
 impl RenderPipeline2d {
@@ -33,6 +34,7 @@ impl RenderPipeline2d {
         let handle = match fragment_type {
             FragmentType::Sprite => material.sprite_fragment_shader(server),
             FragmentType::Particle => material.particle_fragment_shader(server),
+            FragmentType::CpuParticle => material.cpu_particle_fragment_shader(server),
         };
 
         let frag_shader = if handle.is_dangling() {
@@ -42,6 +44,9 @@ impl RenderPipeline2d {
                 }
                 FragmentType::Particle => {
                     include_str!("../../../../res/shaders/material2d_particle.wgsl")
+                }
+                FragmentType::CpuParticle => {
+                    include_str!("../../../../res/shaders/material2d_cpu_particle.wgsl")
                 }
             };
             let shader = wgpu::ShaderModuleDescriptor {

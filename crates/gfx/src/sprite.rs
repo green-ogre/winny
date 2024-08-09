@@ -461,10 +461,10 @@ impl<const OFFSET: u32> VertexLayout<OFFSET> for SpriteInstance {
 
 // Marks the kind of Material that a SpritePipeline is binded to
 #[derive(WinnyComponent)]
-struct MaterialMarker<M: Material>(PhantomData<M>);
+pub struct MaterialMarker<M: Material>(PhantomData<M>);
 
 #[derive(WinnyResource)]
-struct SpriteBuffers {
+pub struct SpriteBuffers {
     vertex_buffer: VertexBuffer,
     sprite_buffer: VertexBuffer,
     transform_buffer: VertexBuffer,
@@ -550,7 +550,7 @@ impl SpriteBuffers {
 }
 
 #[derive(WinnyComponent)]
-struct SpritePipeline {
+pub struct SpritePipeline {
     pipeline: RenderPipeline2d,
     camera_binding: BindGroup,
 }
