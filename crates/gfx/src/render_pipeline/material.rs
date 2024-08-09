@@ -6,23 +6,32 @@ use super::{
     buffer::AsGpuBuffer,
     shader::FragmentShaderSource,
 };
+// #[cfg(target_arch = "wasm32")]
+use crate::particle::CpuParticlePlugin;
 use crate::{
     particle::ParticlePlugin,
     sprite::SpriteMaterialPlugin,
     texture::{SamplerFilterType, Texture},
+    BindGroup, CpuParticlePipeline, MaterialMarker, ParticlePipeline, SpritePipeline,
 };
 use app::render_util::RenderContext;
 use app::{core::App, plugins::Plugin};
 use asset::{server::AssetServer, *};
+use ecs::*;
 use ecs::{Component, WinnyComponent, WinnyWidget};
-use math::vector::Vec4f;
+use math::vector::{Vec2f, Vec4f};
 use std::marker::PhantomData;
 
 pub struct MaterialPlugin<M: Material>(PhantomData<M>);
 
 impl<M: Material> Plugin for MaterialPlugin<M> {
     fn build(&mut self, app: &mut App) {
-        app.add_plugins((ParticlePlugin::<M>::new(), SpriteMaterialPlugin::<M>::new()));
+        // #[cfg(target_arch = "wasm32")]
+        // TODO: GPU particles are not working at the moment.
+        let particle_plugin = CpuParticlePlugin::<M>::new();
+        // #[cfg(not(target_arch = "wasm32"))]
+        // let particle_plugin = ParticlePlugin::<M>::new();
+        app.add_plugins((particle_plugin, SpriteMaterialPlugin::<M>::new()));
     }
 }
 
@@ -37,13 +46,29 @@ pub trait Material: AsBindGroup + Clone + Component {
 
     fn resource_state<'s>(&self, texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s>;
 
-    fn particle_fragment_shader(&self, _server: &mut AssetServer) -> Handle<FragmentShaderSource> {
+    fn particle_fragment_shader(&self, _server: &AssetServer) -> Handle<FragmentShaderSource> {
         Handle::dangling()
     }
 
-    fn sprite_fragment_shader(&self, _server: &mut AssetServer) -> Handle<FragmentShaderSource> {
+    fn cpu_particle_fragment_shader(&self, _server: &AssetServer) -> Handle<FragmentShaderSource> {
         Handle::dangling()
     }
+
+    fn sprite_fragment_shader(&self, _server: &AssetServer) -> Handle<FragmentShaderSource> {
+        Handle::dangling()
+    }
+
+    fn is_init(&self, server: &AssetServer, shaders: &Assets<FragmentShaderSource>) -> bool {
+        shaders
+            .get(&self.particle_fragment_shader(server))
+            .is_some()
+            && shaders
+                .get(&self.cpu_particle_fragment_shader(server))
+                .is_some()
+            && shaders.get(&self.sprite_fragment_shader(server)).is_some()
+    }
+
+    fn update(&self, _context: &RenderContext, _binding: &BindGroup) {}
 }
 
 impl Material for Material2d {
@@ -51,6 +76,11 @@ impl Material for Material2d {
 
     fn resource_state<'s>(&self, texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s> {
         texture
+    }
+
+    // Loaded in source
+    fn is_init(&self, _server: &AssetServer, _shaders: &Assets<FragmentShaderSource>) -> bool {
+        true
     }
 }
 
@@ -163,4 +193,83 @@ impl Default for Modulation {
     fn default() -> Self {
         Self(Vec4f::zero())
     }
+}
+
+/// Simple color material.
+#[derive(WinnyComponent, Default, Debug, Clone, Copy)]
+pub struct ColorMaterial {
+    pub opacity: Opacity,
+    pub saturation: Saturation,
+    pub modulation: Modulation,
+}
+
+impl ColorMaterial {
+    pub(crate) fn as_raw(&self) -> RawColorMaterial {
+        RawColorMaterial {
+            modulation: self.modulation.clamp(),
+            opacity: self.opacity.clamp(),
+            saturation: self.saturation.clamp(),
+            _padding: Vec2f::zero(),
+        }
+    }
+}
+
+/// Uniform of [`ColorMaterial`].
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct RawColorMaterial {
+    modulation: Vec4f,
+    opacity: f32,
+    saturation: f32,
+    _padding: Vec2f,
+}
+
+unsafe impl AsGpuBuffer for RawColorMaterial {}
+
+impl Material for ColorMaterial {
+    const BLEND_STATE: wgpu::BlendState = wgpu::BlendState::ALPHA_BLENDING;
+
+    fn resource_state<'s>(&self, _texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s> {}
+
+    fn particle_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
+        server.load("winny/res/shaders/color_material_particle.wgsl")
+    }
+
+    fn cpu_particle_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
+        server.load("winny/res/shaders/color_material_cpu_particle.wgsl")
+    }
+
+    fn sprite_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
+        server.load("winny/res/shaders/color_material_sprite.wgsl")
+    }
+
+    fn update(&self, context: &RenderContext, binding: &BindGroup) {
+        RawColorMaterial::write_buffer(context, binding.single_buffer(), &[self.as_raw()]);
+    }
+}
+
+impl AsWgpuResources for ColorMaterial {
+    type State<'s> = ();
+
+    fn as_wgpu_resources<'s>(
+        self,
+        context: &RenderContext,
+        label: &'static str,
+        _state: Self::State<'s>,
+        _buffer_type: Option<BufferType>,
+    ) -> Vec<super::bind_group::WgpuResource> {
+        <&[RawColorMaterial] as AsWgpuResources>::as_wgpu_resources(
+            &[self.as_raw()],
+            context,
+            label,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            Some(BufferType::Init),
+        )
+    }
+}
+
+impl AsBindGroup for ColorMaterial {
+    const LABEL: &'static str = "color material";
+    const BINDING_TYPES: &'static [wgpu::BindingType] = &[UNIFORM];
+    const VISIBILITY: &'static [wgpu::ShaderStages] = &[wgpu::ShaderStages::FRAGMENT];
 }

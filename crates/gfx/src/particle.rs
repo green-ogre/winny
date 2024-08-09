@@ -24,11 +24,12 @@ use cgmath::{Quaternion, Rad, Rotation3};
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource, *};
 use math::{
     angle::Radf,
-    matrix::{world_to_screen_space_matrix4x4f, Matrix4x4f},
+    matrix::{scale_matrix4x4f, world_to_screen_space_matrix4x4f, Matrix4x4f},
     vector::{Vec2f, Vec3f, Vec4f},
 };
 use rand::Rng;
 use std::{marker::PhantomData, ops::Range};
+use util::info;
 
 // WARN: Particles and Sprites exist within different contexts, therefore they're z position has no
 // relationship to each other, and one will always draw over the other
@@ -47,6 +48,25 @@ impl<M: Material> Plugin for ParticlePlugin<M> {
 }
 
 impl<M: Material> ParticlePlugin<M> {
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+/// For the time being, WebGPU will not run on wasm, therefore the compute shader and storage
+/// buffers are not supported for the [`ParticlePlugin`].
+pub struct CpuParticlePlugin<M: Material>(PhantomData<M>);
+
+impl<M: Material> Plugin for CpuParticlePlugin<M> {
+    fn build(&mut self, app: &mut App) {
+        app.register_resource::<ParticleVertShaderHandle>()
+            .add_systems(Schedule::PostUpdate, bind_new_cpu_particle_bundles::<M>)
+            .add_systems(AppSchedule::PreRender, update_cpu_uniforms::<M>)
+            .add_systems(AppSchedule::Render, render_cpu_emitters::<M>);
+    }
+}
+
+impl<M: Material> CpuParticlePlugin<M> {
     pub fn new() -> Self {
         Self(PhantomData)
     }
@@ -93,17 +113,12 @@ impl ParticleEmitter {
         &self,
         config: &RenderConfig,
         emitter_transform: &Transform,
-        texture: &TextureDimensions,
     ) -> Matrix4x4f {
         let angle: Radf = self.particle_rotation.into();
-        let texture_scale = Vec2f::new(
-            texture.width() / config.width() as f32,
-            texture.height() / config.height() as f32,
-        );
         let local_transformation = Transform {
             translation: Vec3f::zero(),
             rotation: Quaternion::from_angle_z(Rad(angle.0)),
-            scale: self.particle_scale * texture_scale,
+            scale: self.particle_scale,
         };
 
         emitter_transform.as_matrix() * local_transformation.as_matrix()
@@ -129,14 +144,10 @@ impl VertexEmitterUniform {
         emitter: &ParticleEmitter,
         context: &RenderContext,
         emitter_transform: &Transform,
-        texture_dimensions: &TextureDimensions,
     ) -> Self {
         Self {
-            emitter_transform: emitter.particle_transformation_matrix(
-                &context.config,
-                emitter_transform,
-                texture_dimensions,
-            ),
+            emitter_transform: emitter
+                .particle_transformation_matrix(&context.config, emitter_transform),
         }
     }
 }
@@ -278,7 +289,6 @@ pub struct ParticlePipeline<T: Material> {
     _phantom: PhantomData<T>,
 }
 
-// TODO: does not share texture bindings
 impl<M: Material> ParticlePipeline<M> {
     pub fn new<'s>(
         vert_shader: &VertexShader,
@@ -291,6 +301,7 @@ impl<M: Material> ParticlePipeline<M> {
         texture: &Texture,
         emitter_transform: &Transform,
         delta: &DeltaTime,
+        window: &Window,
     ) -> Self {
         let material_resources = <M as AsBindGroup>::as_entire_binding(
             context,
@@ -305,7 +316,17 @@ impl<M: Material> ParticlePipeline<M> {
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
 
-        let vertices = FULLSCREEN_QUAD_VERTEX_UV;
+        let mut vertices = FULLSCREEN_QUAD_VERTEX_UV;
+        let mut atlas_scaling = (1.0, 1.0);
+        let texture_dimensions = TextureDimensions::from_texture(texture);
+        let normalized_scale = Vec2f::new(
+            texture_dimensions.width() / window.viewport.width(),
+            texture_dimensions.height() / window.viewport.height(),
+        );
+        let image_scale = scale_matrix4x4f(normalized_scale);
+        for vert in vertices.iter_mut() {
+            vert.position = image_scale * vert.position;
+        }
         let particle_vertex_buffer = <VertexUv as AsVertexBuffer<0>>::as_entire_buffer(
             &context,
             &vertices,
@@ -335,12 +356,7 @@ impl<M: Material> ParticlePipeline<M> {
             wgpu::BufferUsages::VERTEX,
         );
 
-        let vertex_emitter_uniform = VertexEmitterUniform::new(
-            emitter,
-            context,
-            emitter_transform,
-            &TextureDimensions::from_texture(texture),
-        );
+        let vertex_emitter_uniform = VertexEmitterUniform::new(emitter, context, emitter_transform);
         let vertex_emitter_resources = <&[VertexEmitterUniform] as AsBindGroup>::as_entire_binding(
             context,
             &[vertex_emitter_uniform],
@@ -421,6 +437,150 @@ impl<M: Material> ParticlePipeline<M> {
     }
 }
 
+#[derive(WinnyComponent)]
+pub struct CpuParticlePipeline<T: Material> {
+    camera_binding: BindGroup,
+    render_pipeline: RenderPipeline2d,
+    material_resources: BindGroup,
+    particle_transform_buffer: VertexBuffer,
+    particle_vertex_buffer: VertexBuffer,
+    particles: Vec<RawParticle>,
+    emitter_uniform: ComputeEmitterUniform,
+
+    // This information may or may not be valuable
+    _phantom: PhantomData<T>,
+}
+
+impl<M: Material> CpuParticlePipeline<M> {
+    pub fn new<'s>(
+        vert_shader: &VertexShader,
+        frag_shaders: &mut Assets<FragmentShaderSource>,
+        server: &mut AssetServer,
+        material: M,
+        emitter: &ParticleEmitter,
+        buffer_len: u32,
+        context: &RenderContext,
+        texture: &Texture,
+        emitter_transform: &Transform,
+        delta: &DeltaTime,
+        window: &Window,
+    ) -> Self {
+        let material_resources = <M as AsBindGroup>::as_entire_binding(
+            context,
+            material.clone(),
+            material.resource_state(texture),
+        );
+
+        let camera_binding = <&[CameraUniform] as AsBindGroup>::as_entire_binding_empty(
+            context,
+            &[],
+            std::mem::size_of::<CameraUniform>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+
+        let mut vertices = FULLSCREEN_QUAD_VERTEX_UV;
+        let mut atlas_scaling = (1.0, 1.0);
+        let texture_dimensions = TextureDimensions::from_texture(texture);
+        let normalized_scale = Vec2f::new(
+            texture_dimensions.width() / window.viewport.width(),
+            texture_dimensions.height() / window.viewport.height(),
+        );
+        let image_scale = scale_matrix4x4f(normalized_scale);
+        for vert in vertices.iter_mut() {
+            vert.position = image_scale * vert.position;
+        }
+        let particle_vertex_buffer = <VertexUv as AsVertexBuffer<0>>::as_entire_buffer(
+            &context,
+            &vertices,
+            wgpu::BufferUsages::VERTEX,
+        );
+
+        let particles = generate_particles_with_conditions(emitter, delta, &context.config);
+
+        let particle_transform_buffer = <Matrix4x4f as AsVertexBuffer<2>>::as_entire_buffer_empty(
+            context,
+            particles.len() as u64 * std::mem::size_of::<Matrix4x4f>() as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+
+        let render_pipeline = RenderPipeline2d::from_material_layout(
+            format!("cpu particles: {}", M::LABEL).as_str(),
+            FragmentType::CpuParticle,
+            context,
+            server,
+            &[&camera_binding],
+            material_resources.layout(),
+            &[&particle_vertex_buffer, &particle_transform_buffer],
+            vert_shader,
+            frag_shaders,
+            material,
+        );
+
+        let emitter_uniform =
+            ComputeEmitterUniform::new(emitter, context, emitter_transform, delta);
+
+        Self {
+            camera_binding,
+            render_pipeline,
+            material_resources,
+            particle_vertex_buffer,
+            particle_transform_buffer,
+            particles,
+            emitter_uniform,
+
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn update_particles(&mut self, delta: &DeltaTime) {
+        let mut rng = rand::thread_rng();
+        for particle in self.particles.iter_mut() {
+            if particle.lifetime <= 0.0 {
+                particle.translation.x = rng.gen_range(0.0..self.emitter_uniform.width)
+                    - 0.5 * self.emitter_uniform.width;
+                particle.translation.y = rng.gen_range(0.0..self.emitter_uniform.height)
+                    - 0.5 * self.emitter_uniform.height;
+                particle.lifetime = rng.gen_range(
+                    self.emitter_uniform.min_lifetime..self.emitter_uniform.max_lifetime,
+                );
+                particle.creation_time = delta.wrapping_elapsed_as_seconds();
+                particle.velocity = self.emitter_uniform.initial_velocity;
+                particle.acceleration = self.emitter_uniform.acceleration;
+            } else {
+                particle.translation.x +=
+                    particle.velocity.x / self.emitter_uniform.screen_width * delta.delta;
+                particle.translation.y +=
+                    particle.velocity.y / self.emitter_uniform.screen_height * delta.delta;
+                particle.velocity.x += particle.acceleration.x * delta.delta;
+                particle.velocity.y += particle.acceleration.y * delta.delta;
+                particle.lifetime -= delta.delta;
+            }
+        }
+    }
+
+    pub fn particle_transforms(
+        &self,
+        context: &RenderContext,
+        emitter: &ParticleEmitter,
+        emitter_transform: &Transform,
+    ) -> Vec<Matrix4x4f> {
+        let emitter_transform =
+            emitter.particle_transformation_matrix(&context.config, emitter_transform);
+        self.particles
+            .iter()
+            .map(|p| {
+                Transform {
+                    translation: p.translation.into(),
+                    scale: p.scale,
+                    ..Default::default()
+                }
+                .as_matrix()
+                    * emitter_transform
+            })
+            .collect::<Vec<_>>()
+    }
+}
+
 fn generate_particles_with_conditions(
     emitter: &ParticleEmitter,
     delta: &DeltaTime,
@@ -464,6 +624,7 @@ fn bind_new_particle_bundles<M: Material>(
     particle_vert_shader_handle: Option<Res<ParticleVertShaderHandle>>,
     mut vert_shaders: ResMut<Assets<VertexShaderSource>>,
     mut frag_shaders: ResMut<Assets<FragmentShaderSource>>,
+    window: Res<Window>,
 ) {
     for (entity, handle, transform, emitter, material) in bundles.iter() {
         if let Some(vert_shader_handle) = &particle_vert_shader_handle {
@@ -473,6 +634,10 @@ fn bind_new_particle_bundles<M: Material>(
                     .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
 
                 if let Some(vert_shader) = vert_shaders.get_mut(&vert_shader_handle.0) {
+                    if !material.is_init(&server, &frag_shaders) {
+                        continue;
+                    }
+
                     let particle_render_pipeline = ParticlePipeline::new(
                         vert_shader.shader(&context),
                         &mut frag_shaders,
@@ -484,6 +649,7 @@ fn bind_new_particle_bundles<M: Material>(
                         &texture,
                         &transform,
                         &delta,
+                        &window,
                     );
 
                     let dimensions = TextureDimensions::from_texture(&texture);
@@ -515,6 +681,78 @@ fn bind_new_particle_bundles<M: Material>(
     }
 }
 
+fn bind_new_cpu_particle_bundles<M: Material>(
+    mut commands: Commands,
+    mut server: ResMut<AssetServer>,
+    context: Res<RenderContext>,
+    bundles: Query<
+        (Entity, Handle<Image>, Transform, ParticleEmitter, M),
+        Without<CpuParticlePipeline<M>>,
+    >,
+    images: Res<Assets<Image>>,
+    mut textures: ResMut<RenderAssets<Texture>>,
+    texture_params: <Texture as RenderAsset>::Params<'_>,
+    delta: Res<DeltaTime>,
+    particle_vert_shader_handle: Option<Res<ParticleVertShaderHandle>>,
+    mut vert_shaders: ResMut<Assets<VertexShaderSource>>,
+    mut frag_shaders: ResMut<Assets<FragmentShaderSource>>,
+    window: Res<Window>,
+) {
+    for (entity, handle, transform, emitter, material) in bundles.iter() {
+        if let Some(vert_shader_handle) = &particle_vert_shader_handle {
+            if let Some(image) = images.get(handle) {
+                let texture = textures
+                    .entry(handle.clone())
+                    .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
+
+                if let Some(vert_shader) = vert_shaders.get_mut(&vert_shader_handle.0) {
+                    if !material.is_init(&server, &frag_shaders) {
+                        continue;
+                    }
+
+                    let particle_render_pipeline = CpuParticlePipeline::new(
+                        vert_shader.shader(&context),
+                        &mut frag_shaders,
+                        &mut server,
+                        material.clone(),
+                        emitter,
+                        emitter.num_particles as u32,
+                        &context,
+                        &texture,
+                        &transform,
+                        &delta,
+                        &window,
+                    );
+
+                    let dimensions = TextureDimensions::from_texture(&texture);
+                    commands
+                        .get_entity(entity)
+                        .insert((particle_render_pipeline, dimensions));
+                } else {
+                    // util::tracing::error!(
+                    //     "Could not retrieve asset particle pipeline vertex shader"
+                    // );
+                }
+            }
+        } else {
+            // This will only run when the first particle pipeline is built, so we compile the
+            // shader
+            let vert_shader = wgpu::ShaderModuleDescriptor {
+                label: Some("particles vert"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../../../res/shaders/cpu_particle_vert.wgsl").into(),
+                ),
+            };
+            let vert_shader = VertexShader(context.device.create_shader_module(vert_shader));
+            let handle = vert_shaders.add(VertexShaderSource(
+                include_str!("../../../res/shaders/cpu_particle_vert.wgsl").into(),
+                Some(vert_shader),
+            ));
+            commands.insert_resource(ParticleVertShaderHandle(handle));
+        }
+    }
+}
+
 fn update_uniforms<M: Material>(
     mut emitters: Query<(
         Mut<ParticlePipeline<M>>,
@@ -528,7 +766,7 @@ fn update_uniforms<M: Material>(
     window: Res<Window>,
 ) {
     for (pipeline, transform, emitter, dimensions) in emitters.iter_mut() {
-        let vertex_emitter = VertexEmitterUniform::new(emitter, &context, transform, dimensions);
+        let vertex_emitter = VertexEmitterUniform::new(emitter, &context, transform);
         VertexEmitterUniform::write_buffer(
             &context,
             &pipeline.vertex_emitter_resources.single_buffer(),
@@ -540,6 +778,39 @@ fn update_uniforms<M: Material>(
             &context,
             &pipeline.compute_emitter_resources.single_buffer(),
             &[compute_emitter],
+        );
+
+        let Ok((camera, transform)) = camera.get_single() else {
+            continue;
+        };
+
+        CameraUniform::write_buffer(
+            &context,
+            pipeline.camera_binding.single_buffer(),
+            &[CameraUniform::from_camera(camera, transform, &window)],
+        );
+    }
+}
+
+fn update_cpu_uniforms<M: Material>(
+    mut emitters: Query<(
+        Mut<CpuParticlePipeline<M>>,
+        Transform,
+        ParticleEmitter,
+        TextureDimensions,
+    )>,
+    dt: Res<DeltaTime>,
+    context: Res<RenderContext>,
+    camera: Query<(Camera, Transform)>,
+    window: Res<Window>,
+) {
+    for (pipeline, transform, emitter, dimensions) in emitters.iter_mut() {
+        pipeline.update_particles(&dt);
+
+        Matrix4x4f::write_buffer(
+            &context,
+            &pipeline.particle_transform_buffer.buffer(),
+            &pipeline.particle_transforms(&context, emitter, transform),
         );
 
         let Ok((camera, transform)) = camera.get_single() else {
@@ -615,5 +886,37 @@ fn render_emitters<M: Material>(
         render_pass.set_bind_group(2, &pipeline.camera_binding.binding(), &[]);
         render_pass.set_bind_group(3, &pipeline.material_resources.binding(), &[]);
         render_pass.draw(0..6, 0..pipeline.buffer_len);
+    }
+}
+
+fn render_cpu_emitters<M: Material>(
+    mut encoder: ResMut<RenderEncoder>,
+    context: Res<RenderContext>,
+    view: Res<RenderView>,
+    emitters: Query<(CpuParticlePipeline<M>, M, ParticleEmitter), With<Transform>>,
+) {
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("cpu particles"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
+    });
+
+    for (pipeline, mat, _) in emitters.iter().filter(|(_, _, e)| e.is_emitting) {
+        mat.update(&context, &pipeline.material_resources);
+        render_pass.set_pipeline(&pipeline.render_pipeline.0);
+        render_pass.set_vertex_buffer(0, pipeline.particle_vertex_buffer.buffer().slice(..));
+        render_pass.set_vertex_buffer(1, pipeline.particle_transform_buffer.buffer().slice(..));
+        render_pass.set_bind_group(0, &pipeline.camera_binding.binding(), &[]);
+        render_pass.set_bind_group(1, &pipeline.material_resources.binding(), &[]);
+        render_pass.draw(0..6, 0..pipeline.particles.len() as u32);
     }
 }

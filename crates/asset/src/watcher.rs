@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
+use util::info;
 
 use crate::ReloadAsset;
 
@@ -45,24 +46,24 @@ fn emit_watcher_events(
     for (dir, asset) in dirs.iter_mut() {
         for file in dir.watchers() {
             for change in file.changes() {
-                util::tracing::info!("{:?}: {:?}", change, file.path().as_os_str());
-                file_writer.send(change);
-
                 if asset.is_some() {
+                    info!("{:?}: reloading", change);
                     asset_writer.send(ReloadAsset(file.path().into()));
                 }
+
+                file_writer.send(change);
             }
         }
     }
 
     for (file, asset) in files.iter_mut() {
         for change in file.changes() {
-            util::tracing::info!("{:?}: {:?}", change, file.path().as_os_str());
-            file_writer.send(change);
-
             if asset.is_some() {
+                info!("{:?}: reloading", change);
                 asset_writer.send(ReloadAsset(file.path().into()));
             }
+
+            file_writer.send(change);
         }
     }
 }

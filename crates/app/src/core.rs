@@ -298,28 +298,8 @@ impl ApplicationHandler for WinitApp {
                 .dyn_into::<HtmlCanvasElement>()
                 .unwrap();
 
-            // Get the WebGPU context
-            // match canvas.get_context("webgpu") {
-            //     Ok(Some(_)) => (),
-            //     Ok(None) => util::tracing::error!("WebGPU context not available"),
-            //     Err(e) => util::tracing::error!("Error getting WebGPU context: {:?}", e),
-            // };
-
             util::tracing::info!("with canvas");
             let window_attributes = window_attributes.with_canvas(Some(canvas));
-            // let dst = document
-            //     .get_element_by_id("winny-wasm")
-            //     .expect("Could not find doc element `winny-wasm`");
-            // if let Err(e) = dst.append_child(&web_sys::Element::from(canvas.clone())) {
-            //     util::tracing::error!("{e:?}");
-            // }
-
-            // let context: GpuCanvasContext = canvas
-            //     .get_context("webgpu")
-            //     .unwrap()
-            //     .unwrap()
-            //     .dyn_into::<GpuCanvasContext>()
-            //     .unwrap();
 
             util::tracing::info!("create_window");
             let window = event_loop.create_window(window_attributes).unwrap();

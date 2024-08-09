@@ -29,7 +29,7 @@ wgpu_text = { version = "0.8.8", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
-wgpu = { version = "0.20.1", features = ["webgpu"] }
+wgpu = { version = "0.20.1", features = ["webgpu", "webgl"] }
 # winit depends on getrandom without the js binding, causing wasm-pack to fail
 getrandom = { version = "0.2.15", features = ["js"] }
 

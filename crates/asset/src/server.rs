@@ -44,6 +44,10 @@ impl AssetServer {
         self.loaders.write().load::<A, P>(path)
     }
 
+    pub fn set_prefix<P: AsRef<Path>>(&self, path: P) {
+        self.loaders.write().set_prefix(path);
+    }
+
     pub fn remove<A: Asset, P: AsRef<Path>>(&self, path: P) {
         self.loaders
             .write()
@@ -126,6 +130,7 @@ struct AssetLoaders {
     type_to_loader: HashMap<TypeId, usize>,
     ext_to_loader: HashMap<&'static str, usize>,
     loaded_assets: HashMap<String, ErasedHandle>,
+    path_prefix: String,
 }
 
 impl AssetLoaders {
@@ -144,6 +149,10 @@ impl AssetLoaders {
             .push(InternalAssetLoader::new(loader, result, handler));
     }
 
+    pub fn set_prefix<P: AsRef<Path>>(&mut self, path: P) {
+        self.path_prefix = path.as_ref().to_str().unwrap().to_string();
+    }
+
     pub fn load<A: Asset, P: AsRef<Path>>(&mut self, path: P) -> Handle<A> {
         if let Some(handle) = self.loaded_assets.get(path.as_ref().to_str().unwrap()) {
             return (*handle).into();
@@ -154,7 +163,10 @@ impl AssetLoaders {
             .extension()
             .expect("file extension")
             .to_owned();
-        let path = path.as_ref().to_str().unwrap().to_owned();
+        let mut path = path.as_ref().to_str().unwrap().to_owned();
+        if !self.path_prefix.is_empty() {
+            path = format!("{}/{}", self.path_prefix, path);
+        }
 
         let asset_type_id = TypeId::of::<A>();
         match self.type_to_loader.get(&asset_type_id) {
@@ -187,7 +199,10 @@ impl AssetLoaders {
             .expect("file extension")
             .to_str()
             .unwrap();
-        let path = path.as_ref().to_str().unwrap().to_owned();
+        let mut path = path.as_ref().to_str().unwrap().to_owned();
+        if !self.path_prefix.is_empty() {
+            path = format!("{}/{}", self.path_prefix, path);
+        }
 
         match self.ext_to_loader.get(file_ext) {
             Some(loader) => {
