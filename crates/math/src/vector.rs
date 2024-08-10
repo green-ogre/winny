@@ -1,68 +1,6 @@
-#[cfg(feature = "widgets")]
-use ecs::egui_widget::Widget;
-use ecs::WinnyWidget;
-use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
-
 use crate::matrix::Matrix4x4f;
-
-#[derive(WinnyWidget, Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Default)]
-pub struct Vec2 {
-    pub x: i32,
-    pub y: i32,
-}
-
-impl Vec2 {
-    pub fn new(x: i32, y: i32) -> Self {
-        Vec2 { x, y }
-    }
-
-    pub fn zero() -> Self {
-        Vec2 { x: 0, y: 0 }
-    }
-
-    pub fn x(dist: i32) -> Self {
-        Vec2 { x: dist, y: 0 }
-    }
-
-    pub fn y(dist: i32) -> Self {
-        Vec2 { x: 0, y: dist }
-    }
-    //
-    // pub fn distance(&self, other: &Vec2) -> f32 {
-    //     let x = (self.x - other.x) as f32;
-    //     let y = (self.y - other.y) as f32;
-    //     (x * x + y * y).sqrt()
-    // }
-}
-
-impl std::ops::Add<Vec2> for Vec2 {
-    type Output = Vec2;
-
-    fn add(self, _rhs: Vec2) -> Vec2 {
-        Vec2 {
-            x: self.x + _rhs.x,
-            y: self.y + _rhs.y,
-        }
-    }
-}
-
-impl std::ops::Sub<Vec2> for Vec2 {
-    type Output = Vec2;
-
-    fn sub(self, _rhs: Vec2) -> Vec2 {
-        Vec2 {
-            x: self.x - _rhs.x,
-            y: self.y - _rhs.y,
-        }
-    }
-}
-
-impl std::ops::AddAssign<Vec2> for Vec2 {
-    fn add_assign(&mut self, rhs: Vec2) {
-        self.x += rhs.x;
-        self.y += rhs.y;
-    }
-}
+use ecs::egui_widget::Widget;
+use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, PartialEq)]
@@ -71,7 +9,6 @@ pub struct Vec2f {
     pub y: f32,
 }
 
-#[cfg(feature = "widgets")]
 impl Widget for Vec2f {
     fn display(&mut self, ui: &mut ecs::egui::Ui) {
         ui.with_layout(
@@ -138,15 +75,15 @@ impl Vec2f {
         Self { x, y }
     }
 
+    pub fn dist2(&self, other: &Vec2f) -> f32 {
+        let x = self.x - other.x;
+        let y = self.y - other.y;
+        x * x + y * y
+    }
+
     pub fn as_matrix(&self) -> [f32; 2] {
         [self.x, self.y]
     }
-
-    // pub fn distance(&self, other: &Vec2f) -> f32 {
-    //     let x = self.x - other.x;
-    //     let y = self.y - other.y;
-    //     (x * x + y * y).sqrt()
-    // }
 
     pub fn is_zero(&self) -> bool {
         self.x == 0.0 && self.y == 0.0
@@ -166,83 +103,28 @@ impl Vec2f {
     }
 }
 
-// impl std::ops::Add<Vec2f> for Vec2f {
-//     type Output = Vec2f;
-//
-//     fn add(self, _rhs: Vec2f) -> Vec2f {
-//         Vec2f {
-//             x: self.x + _rhs.x,
-//             y: self.y + _rhs.y,
-//         }
-//     }
-// }
-//
-// impl std::ops::AddAssign<Vec2f> for Vec2f {
-//     fn add_assign(&mut self, rhs: Vec2f) {
-//         self.x += rhs.x;
-//         self.y += rhs.y;
-//     }
-// }
-//
-// impl std::ops::Sub<Vec2f> for Vec2f {
-//     type Output = Vec2f;
-//
-//     fn sub(self, _rhs: Vec2f) -> Vec2f {
-//         Vec2f {
-//             x: self.x - _rhs.x,
-//             y: self.y - _rhs.y,
-//         }
-//     }
-// }
-//
-// impl std::ops::SubAssign<Vec2f> for Vec2f {
-//     fn sub_assign(&mut self, _rhs: Vec2f) {
-//         self.x -= _rhs.x;
-//         self.y -= _rhs.y;
-//     }
-// }
-//
-// impl std::ops::Mul<f32> for Vec2f {
-//     type Output = Vec2f;
-//
-//     fn mul(self, rhs: f32) -> Self::Output {
-//         Vec2f {
-//             x: self.x * rhs,
-//             y: self.y * rhs,
-//         }
-//     }
-// }
-//
-// impl std::ops::MulAssign<f32> for Vec2f {
-//     fn mul_assign(&mut self, rhs: f32) {
-//         self.x *= rhs;
-//         self.y *= rhs;
-//     }
-// }
-//
-// impl std::ops::Div<f32> for Vec2f {
-//     type Output = Vec2f;
-//
-//     fn div(self, rhs: f32) -> Self::Output {
-//         Vec2f {
-//             x: self.x / rhs,
-//             y: self.y / rhs,
-//         }
-//     }
-// }
-//
-// impl std::ops::DivAssign<f32> for Vec2f {
-//     fn div_assign(&mut self, rhs: f32) {
-//         self.x /= rhs;
-//         self.y /= rhs;
-//     }
-// }
-
-#[derive(WinnyWidget, Debug, Default, Clone, Copy, PartialEq)]
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vec3f {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+}
+
+impl Widget for Vec3f {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
+        ui.with_layout(
+            ecs::egui::Layout::left_to_right(ecs::egui::Align::Min),
+            |ui| {
+                ui.label("x: ");
+                self.x.display(ui);
+                ui.label("y: ");
+                self.y.display(ui);
+                ui.label("r: ");
+                self.z.display(ui);
+            },
+        );
+    }
 }
 
 impl Vec3f {
@@ -421,10 +303,21 @@ pub struct Vec4f {
     pub w: f32,
 }
 
-#[cfg(feature = "widgets")]
 impl Widget for Vec4f {
     fn display(&mut self, ui: &mut ecs::egui::Ui) {
-        ui.label("Vec4f");
+        ui.with_layout(
+            ecs::egui::Layout::left_to_right(ecs::egui::Align::Min),
+            |ui| {
+                ui.label("x: ");
+                self.x.display(ui);
+                ui.label("y: ");
+                self.y.display(ui);
+                ui.label("r: ");
+                self.z.display(ui);
+                ui.label("w: ");
+                self.w.display(ui);
+            },
+        );
     }
 }
 
@@ -488,6 +381,14 @@ impl Vec4f {
             z: 0.,
             w: 0.,
         }
+    }
+
+    pub fn dist2(&self, other: &Vec4f) -> f32 {
+        let x = self.x - other.x;
+        let y = self.y - other.y;
+        let z = self.z - other.z;
+        let w = self.w - other.w;
+        x * x + y * y + z * z + w * w
     }
 
     pub fn to_homogenous(v: Vec3f) -> Self {

@@ -179,8 +179,9 @@ impl Texture {
 
     pub fn empty(
         dimensions: Dimensions<u32>,
-        device: &RenderDevice,
+        context: &RenderContext,
         usage: wgpu::TextureUsages,
+        format: wgpu::TextureFormat,
     ) -> Self {
         let size = wgpu::Extent3d {
             width: dimensions.width(),
@@ -188,12 +189,12 @@ impl Texture {
             depth_or_array_layers: 1,
         };
 
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: Texture::TEXTURE_FORMAT,
+            format,
             usage,
             label: None,
             view_formats: &[],

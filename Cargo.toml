@@ -8,7 +8,7 @@ name = "winny"
 path = "src/lib.rs"
 
 [workspace]
-members = ["crates/*", "examples/custom_material"]
+members = ["crates/*", "examples/custom_material", "examples/lighting"]
 exclude = ["examples", "crates/deprecated"]
 
 [dependencies.ecs]
@@ -43,14 +43,13 @@ path = "crates/asset"
 package = "gfx"
 path = "crates/gfx"
 
-[dependencies.hot_reload]
-package = "hot_reload"
-path = "crates/hot_reload"
-optional = true
-
 [dependencies.editor]
 package = "editor"
 path = "crates/editor"
+
+[dependencies.hot_reload]
+package = "hot_reload"
+path = "crates/hot_reload"
 optional = true
 
 [workspace.dependencies]
@@ -65,18 +64,8 @@ pollster = "0.3.0"
 
 
 [features]
-default = ["egui", "text"]
-
+default = ["text"]
+editor = ["app/widgets"]
 hot_reload = ["dep:hot_reload"]
-editor = [
-  "dep:editor",
-  "ecs/editor",
-  "math/widgets",
-  "audio/widgets",
-  "gfx/widgets",
-  "asset/widgets",
-  "app/editor",
-]
-egui = ["gfx/egui"]
 text = ["gfx/text"]
 gilrs = ["app/controller"]

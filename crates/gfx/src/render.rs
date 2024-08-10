@@ -1,5 +1,6 @@
 use app::prelude::*;
 use ecs::{Commands, Res, ResMut, Take, WinnyResource};
+use math::vector::Vec4f;
 use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
@@ -19,6 +20,7 @@ impl Plugin for RendererPlugin {
             .register_resource::<RenderOutput>()
             .register_resource::<RenderEncoder>()
             .register_resource::<RenderContext>()
+            .insert_resource(ClearColor(Vec4f::new(0.05, 0.05, 0.05, 1.0)))
             .add_systems(AppSchedule::Resized, resize)
             .add_systems(AppSchedule::RenderStartup, startup)
             .add_systems(AppSchedule::PrepareRender, start_render)
@@ -27,7 +29,11 @@ impl Plugin for RendererPlugin {
     }
 }
 
-fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>) {
+/// Sets default background color.
+#[derive(WinnyResource)]
+pub struct ClearColor(pub Vec4f);
+
+fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>, clear: Res<ClearColor>) {
     {
         let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("downscale pass"),
@@ -35,10 +41,10 @@ fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>) {
                 view: &view,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.05,
-                        g: 0.05,
-                        b: 0.05,
-                        a: 1.0,
+                        r: clear.0.x as f64,
+                        g: clear.0.y as f64,
+                        b: clear.0.z as f64,
+                        a: clear.0.w as f64,
                     }),
                     store: wgpu::StoreOp::Store,
                 },

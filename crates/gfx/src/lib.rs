@@ -1,11 +1,12 @@
 #![allow(unused)]
 
 pub mod camera;
-#[cfg(feature = "egui")]
 pub mod gui;
+pub mod lighting;
+pub mod mesh2d;
 pub mod model;
 pub mod particle;
-// pub mod primitives;
+pub mod post_processing;
 pub mod render;
 pub mod render_pipeline;
 pub mod sprite;
@@ -14,7 +15,9 @@ pub mod text;
 pub mod texture;
 pub mod transform;
 
-pub use crate::{gui::*, model::*, particle::*, render::*, sprite::*, texture::*, transform::*};
+pub use crate::{
+    gui::*, lighting::*, model::*, particle::*, render::*, sprite::*, texture::*, transform::*,
+};
 
 #[allow(unused)]
 pub use crate::render_pipeline::{
@@ -27,7 +30,6 @@ pub use crate::text::*;
 
 pub extern crate bytemuck;
 pub extern crate cgmath;
-#[cfg(feature = "egui")]
 pub extern crate egui;
 pub extern crate wgpu;
 #[cfg(feature = "text")]

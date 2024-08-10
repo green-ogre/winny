@@ -9,10 +9,7 @@ ecs_macro = { path = "macro" }
 
 fxhash.workspace = true
 cgmath.workspace = true
-egui = { version = "0.28.1", optional = true }
+egui = "0.28.1"
 
 [dev-dependencies]
 tracing-test = "0.2.5"
-
-[features]
-editor = ["dep:egui", "ecs_macro/widgets"]

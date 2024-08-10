@@ -1,3 +1,4 @@
+use ecs::WinnyAsEgui;
 use math::vector::{Vec2f, Vec3f, Vec4f};
 
 pub const FULLSCREEN_QUAD_VERTEX_UV: [VertexUv; 6] = [
@@ -38,7 +39,7 @@ pub trait VertexLayout<const OFFSET: u32> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(WinnyAsEgui, Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: Vec4f,
 }
@@ -53,6 +54,14 @@ impl<const OFFSET: u32> VertexLayout<OFFSET> for Vertex {
                 shader_location: OFFSET,
                 format: wgpu::VertexFormat::Float32x4,
             }],
+        }
+    }
+}
+
+impl From<Vec2f> for Vertex {
+    fn from(value: Vec2f) -> Self {
+        Self {
+            position: Vec4f::new(value.x, value.y, 0.0, 1.0),
         }
     }
 }

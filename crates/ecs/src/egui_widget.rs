@@ -1,13 +1,41 @@
-use crate::Entity;
+use crate::{Component, Entity, Resource};
 use cgmath::Quaternion;
-use std::{ops::Range, path::PathBuf, ptr::NonNull};
+use ecs_macro::InternalResource;
+use std::{any::TypeId, ops::Range, path::PathBuf, ptr::NonNull};
 
-pub trait ComponentEgui {
-    fn display_component(&self, component: NonNull<u8>, ui: &mut egui::Ui);
+pub trait AsEgui {
+    fn egui() -> impl Egui;
+}
+
+pub unsafe trait Egui: Send + Sync {
+    fn display(&self, resource: NonNull<u8>, ui: &mut egui::Ui);
 }
 
 pub trait Widget {
     fn display(&mut self, ui: &mut egui::Ui);
+}
+
+#[derive(InternalResource, Default)]
+pub struct EguiRegistery {
+    pub resources: fxhash::FxHashMap<TypeId, Box<dyn Egui>>,
+    pub components: fxhash::FxHashMap<TypeId, Box<dyn Egui>>,
+    pub black_listed: fxhash::FxHashMap<TypeId, ()>,
+}
+
+impl EguiRegistery {
+    pub fn register_component<C: Component + AsEgui>(&mut self) {
+        self.components
+            .insert(TypeId::of::<C>(), Box::new(C::egui()));
+    }
+
+    pub fn register_resource<R: Resource + AsEgui>(&mut self) {
+        self.resources
+            .insert(TypeId::of::<R>(), Box::new(R::egui()));
+    }
+
+    pub fn blacklist<T: 'static>(&mut self) {
+        self.black_listed.insert(TypeId::of::<T>(), ());
+    }
 }
 
 macro_rules! impl_widget {

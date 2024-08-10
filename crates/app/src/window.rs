@@ -2,11 +2,9 @@ use self::prelude::{App, AppExit};
 
 use super::*;
 use crate::prelude::*;
-#[cfg(feature = "editor")]
-use ecs::egui_widget::Widget;
 use ecs::{
     events::{EventReader, EventWriter},
-    WinnyResource,
+    WinnyAsEgui, WinnyResource,
 };
 use math::vector::Vec2f;
 use plugins::Plugin;
@@ -45,6 +43,7 @@ impl Plugin for WindowPlugin {
             .register_resource::<Window>()
             .register_resource::<WindowResized>()
             .register_event::<MouseInput>()
+            .register_event::<MouseWheel>()
             .register_event::<MouseMotion>()
             .register_event::<KeyInput>();
     }
@@ -83,32 +82,12 @@ fn should_exit(mut event_writer: EventWriter<AppExit>, key_input: EventReader<Ke
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(WinnyAsEgui, Debug, Clone, Copy)]
 pub struct ViewPort {
     // top left
     pub min: Vec2f,
     // bottom right
     pub max: Vec2f,
-}
-
-#[cfg(feature = "editor")]
-impl Widget for ViewPort {
-    fn display(&mut self, ui: &mut ecs::egui::Ui) {
-        ui.with_layout(
-            ecs::egui::Layout::left_to_right(ecs::egui::Align::TOP),
-            |ui| {
-                ui.label("min: ");
-                self.min.display(ui);
-            },
-        );
-        ui.with_layout(
-            ecs::egui::Layout::left_to_right(ecs::egui::Align::TOP),
-            |ui| {
-                ui.label("max: ");
-                self.max.display(ui);
-            },
-        );
-    }
 }
 
 impl ViewPort {
@@ -129,5 +108,13 @@ impl ViewPort {
             self.width() / 2.0 + self.min.x,
             self.height() / 2.0 + self.min.y,
         )
+    }
+
+    pub fn dimensions(&self) -> Dimensions<f32> {
+        Dimensions::new(self.width(), self.height())
+    }
+
+    pub fn dimensions_u32(&self) -> Dimensions<u32> {
+        Dimensions::new(self.width() as u32, self.height() as u32)
     }
 }

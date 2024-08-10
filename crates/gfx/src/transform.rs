@@ -1,14 +1,22 @@
+use crate::render_pipeline::vertex::VertexLayout;
+use app::plugins::Plugin;
 use cgmath::{Matrix4, Quaternion, Zero};
-use ecs::WinnyComponent;
+use ecs::{WinnyAsEgui, WinnyComponent};
 use math::{
     matrix::{scale_matrix4x4f, translation_matrix4x4f, Matrix4x4f},
     vector::{Vec2f, Vec3f, Vec4f},
 };
 
-use crate::render_pipeline::vertex::VertexLayout;
+pub struct TransformPlugin;
+
+impl Plugin for TransformPlugin {
+    fn build(&mut self, app: &mut app::prelude::App) {
+        app.egui_component::<Transform>();
+    }
+}
 
 /// Position of an entity in world space.
-#[derive(WinnyComponent, Debug, Clone, Copy)]
+#[derive(WinnyComponent, WinnyAsEgui, Debug, Clone, Copy)]
 pub struct Transform {
     /// Translations are described in world space and converted to clip space on the GPU
     pub translation: Vec3f,

@@ -1,7 +1,7 @@
 use crate::render::{RenderEncoder, RenderView};
 use app::prelude::*;
 use ecs::{Commands, EventReader, Res, ResMut, WinnyResource};
-use egui::{Context, Rect, Vec2};
+use egui::{Context, MouseWheelUnit, Rect, Vec2};
 use egui_wgpu::ScreenDescriptor;
 use std::ops::Deref;
 
@@ -103,7 +103,6 @@ impl EguiRenderer {
     }
 
     fn on_mouse_input(&mut self, event: &MouseInput) {
-        util::tracing::trace!("{event:?}");
         if let Some(pos) = self.pointer_pos_in_points {
             let pressed = event.state == KeyState::Pressed;
             let button = match event.button {
@@ -118,6 +117,20 @@ impl EguiRenderer {
                 modifiers: self.egui_input.modifiers,
             });
         }
+    }
+
+    fn on_mouse_wheel(&mut self, event: &MouseWheel) {
+        let delta = match event.0 {
+            MouseScrollDelta::PixelDelta(x, y) => egui::Vec2::new(x, -y),
+            MouseScrollDelta::LineDelta(x, y) => egui::Vec2::new(x, -y),
+        };
+        let unit = MouseWheelUnit::Point;
+
+        self.egui_input.events.push(egui::Event::MouseWheel {
+            unit,
+            delta,
+            modifiers: self.egui_input.modifiers,
+        });
     }
 
     // https://github.com/emilk/egui/blob/master/crates/egui-winit/src/lib.rs#L227
@@ -247,6 +260,7 @@ fn handle_input(
     key_input: EventReader<KeyInput>,
     mouse_input: EventReader<MouseInput>,
     mouse_motion: EventReader<MouseMotion>,
+    mouse_wheel: EventReader<MouseWheel>,
 ) {
     for key in key_input.peak_read() {
         egui.on_key_event(key);
@@ -258,6 +272,10 @@ fn handle_input(
 
     for motion in mouse_motion.peak_read() {
         egui.on_mouse_motion(&window, motion);
+    }
+
+    for mouse in mouse_wheel.peak_read() {
+        egui.on_mouse_wheel(mouse);
     }
 }
 

@@ -53,6 +53,10 @@ impl<'w> UnsafeWorldCell<'w> {
         &self.world().resources
     }
 
+    pub unsafe fn resources_mut(self) -> &'w mut Resources {
+        &mut self.world_mut().resources
+    }
+
     pub unsafe fn components(self) -> &'w Components {
         &self.world().components
     }

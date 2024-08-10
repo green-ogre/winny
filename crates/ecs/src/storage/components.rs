@@ -1,9 +1,5 @@
 use super::*;
-#[cfg(feature = "editor")]
-use crate::egui_widget::ComponentEgui;
 use crate::storage::DumbDrop;
-#[cfg(feature = "editor")]
-use std::ptr::NonNull;
 use std::{alloc::Layout, any::TypeId};
 use util::tracing::{error, trace};
 
@@ -13,20 +9,16 @@ use util::tracing::{error, trace};
     label = "invalid `Component`",
     note = "consider annotating `{Self}` with `#[derive(Component)]`"
 )]
-#[cfg(not(feature = "editor"))]
+#[cfg(not(target_arch = "wasm32"))]
 pub trait Component: 'static + Send + Sync {}
-#[cfg(feature = "editor")]
-pub trait Component: 'static + Send + Sync {
-    type Dispatch: ComponentEgui + Default;
-}
+#[cfg(target_arch = "wasm32")]
+pub trait Component: 'static {}
 
 #[derive(Default)]
 pub struct Components {
     next_id: usize,
     type_id_table: fxhash::FxHashMap<TypeId, ComponentMeta>,
     component_id_table: fxhash::FxHashMap<ComponentId, ComponentMeta>,
-    #[cfg(feature = "editor")]
-    component_egui_table: fxhash::FxHashMap<ComponentId, Box<dyn ComponentEgui>>,
 }
 
 impl Debug for Components {
@@ -34,7 +26,6 @@ impl Debug for Components {
         f.debug_struct("Components")
             .field("next_id", &self.next_id)
             .field("type_id_table", &self.type_id_table)
-            .field("component_id_table", &self.component_id_table)
             .finish_non_exhaustive()
     }
 }
@@ -48,9 +39,6 @@ impl Components {
             let meta = ComponentMeta::new::<T>(id);
             self.type_id_table.insert(type_id, meta);
             self.component_id_table.insert(meta.id, meta);
-            #[cfg(feature = "editor")]
-            self.component_egui_table
-                .insert(meta.id, Box::new(T::Dispatch::default()));
         }
 
         // just created
@@ -63,9 +51,8 @@ impl Components {
             .unwrap()
     }
 
-    pub fn meta_from_id(&self, id: ComponentId) -> &ComponentMeta {
-        // must be valid component id
-        self.component_id_table.get(&id).unwrap()
+    pub fn meta_from_id(&self, id: ComponentId) -> Option<&ComponentMeta> {
+        self.component_id_table.get(&id)
     }
 
     pub fn id(&self, type_id: &std::any::TypeId) -> ComponentId {
@@ -84,18 +71,6 @@ impl Components {
         }
 
         component_ids
-    }
-
-    #[cfg(feature = "editor")]
-    pub fn display_component(
-        &self,
-        component_id: &ComponentId,
-        component: NonNull<u8>,
-        ui: &mut egui::Ui,
-    ) {
-        if let Some(widget) = self.component_egui_table.get(component_id) {
-            widget.display_component(component, ui);
-        }
     }
 
     fn new_id(&mut self) -> ComponentId {

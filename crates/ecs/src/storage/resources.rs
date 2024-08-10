@@ -1,7 +1,5 @@
-use std::ptr::NonNull;
-
+use std::{any::TypeId, ptr::NonNull};
 use util::tracing::trace;
-
 use super::*;
 
 // https://github.com/bevyengine/bevy/blob/main/crates/bevy_ecs/src/system/system_param.rs#L483
@@ -102,7 +100,7 @@ impl<R: Resource> Take<R> {
 }
 
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ResourceId(usize);
 
 impl ResourceId {
@@ -123,9 +121,10 @@ impl SparseArrayIndex for ResourceId {
 
 #[derive(Debug)]
 pub struct Resources {
-    resources: SparseArray<ResourceId, DumbVec>,
-    id_table: fxhash::FxHashMap<std::any::TypeId, ResourceId>,
-    next_id: usize,
+    pub resources: SparseArray<ResourceId, DumbVec>,
+    pub resource_id_table: fxhash::FxHashMap<ResourceId, ResourceMeta>,
+    pub id_table: fxhash::FxHashMap<std::any::TypeId, ResourceMeta>,
+    pub next_id: usize,
 }
 
 impl Default for Resources {
@@ -133,6 +132,7 @@ impl Default for Resources {
         Self {
             resources: SparseArray::new(),
             id_table: fxhash::FxHashMap::default(),
+            resource_id_table: fxhash::FxHashMap::default(),
             next_id: 0,
         }
     }
@@ -141,14 +141,25 @@ impl Default for Resources {
 impl Resources {
     pub fn register<R: Resource>(&mut self) -> ResourceId {
         let type_id = std::any::TypeId::of::<R>();
-        *self.id_table.entry(type_id).or_insert_with(|| {
+        if self.id_table.contains_key(&type_id) {
+            self.id_table.get(&type_id).unwrap().resource_id
+        } else {
             trace!("Registering resource: {}", std::any::type_name::<R>(),);
 
             let id = ResourceId::new(self.next_id);
             self.next_id += 1;
 
-            id
-        })
+            let meta = ResourceMeta {
+                resource_id: id,
+                type_id,
+                name: std::any::type_name::<R>()
+            };
+
+            self.id_table.insert(type_id, meta.clone());
+            self.resource_id_table.insert(meta.resource_id, meta.clone());
+
+            meta.resource_id
+    }
     }
 
     pub fn insert<R: Resource>(&mut self, res: R, id: ResourceId) {
@@ -180,7 +191,7 @@ impl Resources {
 
     pub fn id<R: Resource>(&self) -> Option<ResourceId> {
         let id = std::any::TypeId::of::<R>();
-        self.id_table.get(&id).cloned()
+        self.id_table.get(&id).map(|m| m.resource_id)
     }
 
     pub fn id_unwrapped<R: Resource>(&self) -> ResourceId {
@@ -193,6 +204,14 @@ impl Resources {
         }
     }
 
+    pub fn get_id(&self, type_id: &TypeId) -> Option<ResourceId> {
+        self.id_table.get(&type_id).map(|m| m.resource_id)
+    }
+
+    pub fn meta(&self, type_id: &TypeId) -> Option<&ResourceMeta> {
+        self.id_table.get(type_id)
+    }
+
     pub fn get_ptr<R: Resource>(&self, id: ResourceId) -> Option<NonNull<R>> {
         self.resources
             .get(&id)
@@ -202,7 +221,23 @@ impl Resources {
             ))?
     }
 
+    pub unsafe fn get_raw_ptr(&self, id: ResourceId) -> Option<NonNull<u8>> {
+        self.resources
+            .get(&id)
+            .map(|res| Self::is_valid(res).then(|| 
+                // caller promises that R and ResourceId match
+                unsafe { res.get_unchecked(0) }
+            ))?
+    }
+
     fn is_valid(res: &DumbVec) -> bool {
         res.len() == 1
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResourceMeta {
+    pub resource_id: ResourceId,
+    pub type_id: TypeId,
+    pub name: &'static str,
 }

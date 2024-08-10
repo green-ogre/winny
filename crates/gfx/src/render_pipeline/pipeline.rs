@@ -82,6 +82,7 @@ impl RenderPipeline2d {
             vert_shader,
             frag_shader,
             blend_state,
+            None,
         )
     }
 
@@ -93,6 +94,7 @@ impl RenderPipeline2d {
         vert_shader: &VertexShader,
         frag_shader: &FragmentShader,
         blend_state: wgpu::BlendState,
+        format: Option<wgpu::TextureFormat>,
     ) -> Self {
         let layout = context
             .device
@@ -118,13 +120,68 @@ impl RenderPipeline2d {
                         module: &frag_shader.0,
                         entry_point: "fs_main",
                         targets: &[Some(wgpu::ColorTargetState {
-                            format: context.config.format(),
+                            format: format.unwrap_or_else(|| context.config.format()),
                             blend: Some(blend_state),
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     }),
                     primitive: Default::default(),
+                    multisample: Default::default(),
+                    depth_stencil: None,
+                    multiview: None,
+                }),
+        )
+    }
+}
+
+pub struct LineRenderPipeline(pub wgpu::RenderPipeline);
+
+impl LineRenderPipeline {
+    pub fn new(
+        label: &str,
+        context: &RenderContext,
+        bind_group_layouts: &[&wgpu::BindGroupLayout],
+        buffers: &[wgpu::VertexBufferLayout<'static>],
+        vert_shader: &VertexShader,
+        frag_shader: &FragmentShader,
+        blend_state: wgpu::BlendState,
+        format: Option<wgpu::TextureFormat>,
+    ) -> Self {
+        let layout = context
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts,
+                push_constant_ranges: &[],
+            });
+
+        Self(
+            context
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &vert_shader.0,
+                        entry_point: "vs_main",
+                        buffers,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &frag_shader.0,
+                        entry_point: "fs_main",
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: format.unwrap_or_else(|| context.config.format()),
+                            blend: Some(blend_state),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::LineList,
+                        ..Default::default()
+                    },
                     multisample: Default::default(),
                     depth_stencil: None,
                     multiview: None,

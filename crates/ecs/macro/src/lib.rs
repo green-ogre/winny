@@ -3,7 +3,6 @@ use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::{format_ident, quote, ToTokens};
 use std::hash::{DefaultHasher, Hash, Hasher};
-#[cfg(feature = "widgets")]
 use syn::Data;
 use syn::{
     parse::{Parse, ParseStream},
@@ -27,7 +26,7 @@ pub fn internal_component_impl(input: TokenStream) -> TokenStream {
     parse_component(input, quote! { crate })
 }
 
-#[cfg(not(feature = "widgets"))]
+#[cfg(not(feature = "editor"))]
 fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
@@ -41,89 +40,16 @@ fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) ->
     .into()
 }
 
-#[cfg(feature = "widgets")]
+#[cfg(feature = "editor")]
 fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
-    let name_as_str = &input.ident.to_string();
 
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-    let component_object = format_ident!("{}ComponentEguiObject", name);
-
-    let display_widgets = match &input.data {
-        Data::Struct(data) => match &data.fields {
-            Fields::Named(fields) => fields
-                .named
-                .iter()
-                .map(|field| {
-                    let field_name = &field.ident;
-
-                    quote! {
-                        #path_to_ecs::egui_widget::Widget::display(&mut component_mut.#field_name, ui);
-                    }
-                })
-                .collect::<Vec<_>>(),
-            Fields::Unnamed(fields) => fields
-                .unnamed
-                .iter()
-                .enumerate()
-                .map(|(i, _field)| {
-                    let field_name = syn::Index::from(i);
-
-                    quote! {
-                        #path_to_ecs::egui_widget::Widget::display(&mut component_mut.#field_name, ui);
-                    }
-                })
-                .collect::<Vec<_>>(),
-            Fields::Unit => Vec::new(),
-        },
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .map(|field| {
-                let _field_name = &field.ident;
-                unimplemented!();
-            })
-            .collect::<Vec<_>>(),
-        _ => panic!("Components may only be structs of enums"),
-    };
-
-    let widgets = if display_widgets.is_empty() {
-        quote! {
-            ui.label(#name_as_str);
-        }
-    } else {
-        quote! {
-            #path_to_ecs::egui::CollapsingHeader::new(#name_as_str)
-                .show(ui, |ui| {
-                    #(#display_widgets)*
-                });
-        }
-    };
-
-    let display = if generics.params.is_empty() {
-        quote! {
-            let component_mut = unsafe { component.cast::<#name>().as_mut() };
-            #widgets
-        }
-    } else {
-        quote! {}
-    };
 
     quote! {
-        impl #impl_generics #path_to_ecs::storage::Component for #name #ty_generics #where_clause {
-            type Dispatch = #component_object;
-        }
-
-        #[derive(Default)]
-        pub struct #component_object;
-
-        impl #path_to_ecs::egui_widget::ComponentEgui for #component_object {
-            fn display_component(&self, component: std::ptr::NonNull<u8>, ui: &mut #path_to_ecs::egui::Ui) {
-                #display
-            }
-        }
+        impl #impl_generics #path_to_ecs::storage::Component for #name #ty_generics #where_clause {}
     }
     .into()
 }
@@ -301,34 +227,58 @@ fn parse_schedule_label(input: TokenStream, path_to_ecs: proc_macro2::TokenStrea
     }
 }
 
-#[proc_macro_derive(Widget)]
-pub fn widget_impl(input: TokenStream) -> TokenStream {
-    parse_widget(input, quote! { winny::ecs })
+// #[proc_macro_derive(AsWidget)]
+// pub fn widget_impl(input: TokenStream) -> TokenStream {
+//     parse_widget(input, quote! { winny::ecs })
+// }
+//
+// #[proc_macro_derive(WinnyAsWidget)]
+// pub fn winny_widget_impl(input: TokenStream) -> TokenStream {
+//     parse_widget(input, quote! { ::ecs })
+// }
+//
+// #[proc_macro_derive(InternalAsWidget)]
+// pub fn internal_widget_impl(input: TokenStream) -> TokenStream {
+//     parse_widget(input, quote! { crate })
+// }
+//
+// fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
+//     let input = parse_macro_input!(input as DeriveInput);
+//     let name = &input.ident;
+//
+//     quote! {
+//         impl #path_to_ecs::egui_widget::Widget for #name {
+//             fn display(&mut self, ui: &mut #path_to_ecs::egui::Ui) {
+//                 <Self as AsEgui>::display(self, ui);
+//             }
+//         }
+//     }
+//     .into()
+// }
+
+#[proc_macro_derive(AsEgui)]
+pub fn as_egui_impl(input: TokenStream) -> TokenStream {
+    parse_as_egui(input, quote! { winny::ecs })
 }
 
-#[proc_macro_derive(WinnyWidget)]
-pub fn winny_widget_impl(input: TokenStream) -> TokenStream {
-    parse_widget(input, quote! { ::ecs })
+#[proc_macro_derive(WinnyAsEgui)]
+pub fn winny_as_egui_impl(input: TokenStream) -> TokenStream {
+    parse_as_egui(input, quote! { ::ecs })
 }
 
-#[proc_macro_derive(InternalWidget)]
-pub fn internal_widget_impl(input: TokenStream) -> TokenStream {
-    parse_widget(input, quote! { crate })
+#[proc_macro_derive(InternalAsEgui)]
+pub fn internal_as_egui_impl(input: TokenStream) -> TokenStream {
+    parse_as_egui(input, quote! { crate })
 }
 
-#[cfg(not(feature = "widgets"))]
-fn parse_widget(_input: TokenStream, _path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
-    quote! {}.into()
-}
-
-#[cfg(feature = "widgets")]
-fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
+fn parse_as_egui(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let name_as_str = &input.ident.to_string();
 
     let generics = &input.generics;
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    // let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let component_object = format_ident!("__{}ComponentEguiObject", name);
 
     let display_widgets = match &input.data {
         Data::Struct(data) => match &data.fields {
@@ -337,9 +287,28 @@ fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
                 .iter()
                 .map(|field| {
                     let field_name = &field.ident;
+                    let field_name_str = field.ident.to_token_stream().to_string();
+
+                    let components = match &field.ty {
+                        syn::Type::Array(arr) => {
+                            let len = &arr.len;
+                            quote! {
+                                for i in 0..#len {
+                                    #path_to_ecs::egui_widget::Widget::display(&mut component_mut.#field_name[i], ui);
+                                }
+                            }
+                        }
+                        _ => quote! {
+                            #path_to_ecs::egui_widget::Widget::display(&mut component_mut.#field_name, ui);
+                        }
+                    };
 
                     quote! {
-                        #path_to_ecs::egui_widget::Widget::display(&mut self.#field_name, ui);
+                        #path_to_ecs::egui::CollapsingHeader::new(#field_name_str)
+                            .open(Some(true))
+                            .show(ui, |ui| {
+                                #components
+                            });
                     }
                 })
                 .collect::<Vec<_>>(),
@@ -347,11 +316,30 @@ fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
                 .unnamed
                 .iter()
                 .enumerate()
-                .map(|(i, _field)| {
+                .map(|(i, field)| {
                     let field_name = syn::Index::from(i);
+                    let ty = &field.ty;
+
+                    let components = match &field.ty {
+                        syn::Type::Array(arr) => {
+                            let len = &arr.len;
+                            quote! {
+                                for i in 0..#len {
+                                    #path_to_ecs::egui_widget::Widget::display(&mut component_mut.#field_name[i], ui);
+                                }
+                            }
+                        }
+                        _ => quote! {
+                            #path_to_ecs::egui_widget::Widget::display(&mut component_mut.#field_name, ui);
+                        }
+                    };
 
                     quote! {
-                        #path_to_ecs::egui_widget::Widget::display(&mut self.#field_name, ui);
+                        #path_to_ecs::egui::CollapsingHeader::new(std::any::type_name::<#ty>())
+                            .open(Some(true))
+                            .show(ui, |ui| {
+                                #components
+                            });
                     }
                 })
                 .collect::<Vec<_>>(),
@@ -374,24 +362,52 @@ fn parse_widget(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> To
         }
     } else {
         quote! {
-            #path_to_ecs::egui::CollapsingHeader::new(#name_as_str)
-                .show(ui, |ui| {
-                    #(#display_widgets)*
-                });
+            #(#display_widgets)*
         }
     };
 
+    let display = if generics.params.is_empty() {
+        quote! {
+            let component_mut = unsafe { ptr.cast::<#name>().as_mut() };
+            #widgets
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
-        impl #impl_generics #path_to_ecs::egui_widget::Widget for #name #ty_generics #where_clause {
+        pub struct #component_object;
+
+        impl #path_to_ecs::egui_widget::AsEgui for #name {
+            fn egui() -> impl #path_to_ecs::egui_widget::Egui {
+                #component_object {}
+            }
+        }
+
+        unsafe impl #path_to_ecs::egui_widget::Egui for #component_object {
+            fn display(&self, ptr: std::ptr::NonNull<u8>, ui: &mut #path_to_ecs::egui::Ui) {
+                #display
+            }
+        }
+
+        impl #path_to_ecs::egui_widget::Widget for #name {
             fn display(&mut self, ui: &mut #path_to_ecs::egui::Ui) {
-                #widgets
+                #path_to_ecs::egui::CollapsingHeader::new(#name_as_str)
+                    .open(Some(true))
+                    .show(ui, |ui| {
+                        <#component_object as #path_to_ecs::egui_widget::Egui>::display(
+                            &#component_object,
+                            unsafe { std::ptr::NonNull::new_unchecked(&mut *self).cast::<u8>() },
+                            ui
+                        );
+                });
             }
         }
     }
     .into()
 }
 
-#[cfg(feature = "widgets")]
+#[cfg(feature = "editor")]
 #[allow(unused)]
 macro_rules! impl_label_widget {
     ($t:ty, $l:expr) => {

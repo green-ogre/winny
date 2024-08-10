@@ -1,5 +1,5 @@
 use crate::Asset;
-use ecs::{SparseArrayIndex, WinnyComponent, WinnyWidget};
+use ecs::{SparseArrayIndex, WinnyAsEgui, WinnyComponent};
 use std::{hash::Hash, marker::PhantomData};
 
 // TODO: could become enum with strong and weak variants which determine
@@ -85,7 +85,7 @@ impl<A: Asset> Into<Handle<A>> for ErasedHandle {
 }
 
 /// Index into an [`Assets`] resource.
-#[derive(WinnyWidget, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(WinnyAsEgui, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AssetId(pub(crate) u32);
 
 impl SparseArrayIndex for AssetId {

@@ -9,3 +9,4 @@ gfx = { path = "../gfx" }
 app = { path = "../app" }
 
 egui_dock = "0.13"
+fxhash.workspace = true

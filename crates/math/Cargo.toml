@@ -7,6 +7,3 @@ edition = "2021"
 ecs = { path = "../ecs" }
 
 bytemuck.workspace = true
-
-[features]
-widgets = []

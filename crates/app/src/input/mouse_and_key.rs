@@ -116,6 +116,15 @@ impl KeyInput {
     }
 }
 
+#[derive(WinnyEvent, Debug, Clone, Copy)]
+pub struct MouseWheel(pub MouseScrollDelta);
+
+#[derive(Debug, Clone, Copy)]
+pub enum MouseScrollDelta {
+    LineDelta(f32, f32),
+    PixelDelta(f32, f32),
+}
+
 #[derive(Debug, Clone, Copy, WinnyEvent)]
 pub struct MouseInput {
     pub button: MouseButton,

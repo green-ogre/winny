@@ -1,13 +1,18 @@
 use app::prelude::*;
-use ecs::{Components, Entities, Tables, UnsafeWorldCell, WinnyResource, *};
+use ecs::{
+    egui_widget::EguiRegistery, Components, Entities, Tables, UnsafeWorldCell, WinnyResource, *,
+};
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
 use gfx::{camera::Camera, gui::EguiRenderer};
+use std::any::TypeId;
 
 pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&mut self, app: &mut App) {
-        app.register_resource::<Editor>()
+        app.egui_blacklist::<EguiRegistery>()
+            .egui_blacklist::<Editor>()
+            .register_resource::<Editor>()
             .insert_resource(Editor::new())
             .add_systems(Schedule::PostUpdate, update_camera_viewport)
             .add_systems(AppSchedule::Render, render);
@@ -46,9 +51,7 @@ fn render(world: &mut World) {
 pub struct Editor {
     state: DockState<EguiWindow>,
     viewport_rect: egui::Rect,
-    // selected_entities: SelectedEntities,
-    // selection: InspectorSelection,
-    // gizmo_mode: GizmoMode,
+    selection: Selection,
 }
 
 impl Editor {
@@ -61,24 +64,12 @@ impl Editor {
         let [_game, _bottom] =
             tree.split_below(game, 0.8, vec![EguiWindow::Resources, EguiWindow::Assets]);
 
-        // let size = window.winit_window.inner_size();
-        // let screen_size_in_pixels = Vec2::new(size.width as f32, size.height as f32);
-        //
-        // let native_pixels_per_point = window.winit_window.scale_factor() as f32;
-        // let screen_size_in_points = screen_size_in_pixels / (zoom_factor * native_pixels_per_point);
-        //
-        // let viewport_rect = (screen_size_in_points.x > 0.0 && screen_size_in_points.y > 0.0)
-        //     .then(|| Rect::from_min_size(Default::default(), screen_size_in_points))
-        //     .unwrap();
-
         let viewport_rect = egui::Rect::ZERO;
 
         Self {
             state,
-            // selected_entities: SelectedEntities::default(),
-            // selection: InspectorSelection::Entities,
+            selection: Selection::None,
             viewport_rect,
-            // gizmo_mode: GizmoMode::Translate,
         }
     }
 
@@ -86,15 +77,20 @@ impl Editor {
         let mut tab_viewer = TabViewer {
             world,
             viewport_rect: &mut self.viewport_rect,
-            // selected_entities: &mut self.selected_entities,
-            // selection: &mut self.selection,
-            // gizmo_mode: self.gizmo_mode,
+            selection: &mut self.selection,
         };
 
         DockArea::new(&mut self.state)
             .style(Style::from_egui(ctx.style().as_ref()))
             .show(ctx, &mut tab_viewer);
     }
+}
+
+#[derive(Clone, Copy)]
+enum Selection {
+    None,
+    Resource(TypeId),
+    Entities(Entity),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -108,26 +104,111 @@ enum EguiWindow {
 
 struct TabViewer<'a> {
     world: UnsafeWorldCell<'a>,
-    // selected_entities: &'a mut SelectedEntities,
-    // selection: &'a mut InspectorSelection,
+    selection: &'a mut Selection,
     viewport_rect: &'a mut egui::Rect,
-    // gizmo_mode: GizmoMode,
 }
 
-fn draw_entities(
-    components: &Components,
-    entities: &Entities,
-    tables: &mut Tables,
+fn draw_entities(ui: &mut egui_dock::egui::Ui, entities: &Entities, selection: &mut Selection) {
+    for (entity, _) in entities.iter() {
+        let checked = match selection {
+            Selection::Entities(e) => *e == entity,
+            _ => false,
+        };
+        if ui
+            .selectable_label(checked, format!("Entity({})", entity.index()))
+            .clicked()
+        {
+            *selection = Selection::Entities(entity);
+        }
+    }
+}
+
+fn draw_entity(
     ui: &mut egui_dock::egui::Ui,
+    registery: &mut EguiRegistery,
+    components: &mut Components,
+    tables: &mut Tables,
+    entities: &Entities,
+    entity: Entity,
 ) {
-    for (entity, meta) in entities.iter() {
-        let entity_table = tables.get_mut(meta.location.table_id).unwrap();
-        egui::CollapsingHeader::new(format!("Entity ({})", entity.index())).show(ui, |ui| {
-            for (component_id, column) in entity_table.iter_mut() {
-                let component = unsafe { column.get_row_ptr_unchecked(meta.location.table_row) };
-                components.display_component(component_id, component, ui);
+    if let Some(meta) = entities.meta(entity) {
+        let table = tables.get_mut(meta.location.table_id).unwrap();
+        for (component_id, column) in table.iter_mut() {
+            let m = components.meta_from_id(*component_id).unwrap();
+            if registery.black_listed.contains_key(&m.type_id) {
+                continue;
             }
-        });
+
+            if let Some(drawer) = registery.components.get(&m.type_id) {
+                let component = unsafe { column.get_row_ptr_unchecked(meta.location.table_row) };
+
+                ecs::egui::CollapsingHeader::new(m.name)
+                    .open(Some(true))
+                    .show(ui, |ui| {
+                        drawer.display(component, ui);
+                    });
+            }
+        }
+    } else {
+        panic!("selected entity that does not exist");
+    }
+}
+
+fn draw_resources(
+    ui: &mut egui_dock::egui::Ui,
+    registery: &mut EguiRegistery,
+    resources: &mut Resources,
+    selection: &mut Selection,
+) {
+    for (index, _) in resources.resources.iter_indexed_mut() {
+        let resource_id = ResourceId::new(index);
+        let meta = resources.resource_id_table.get(&resource_id).unwrap();
+
+        if registery.black_listed.contains_key(&meta.type_id) {
+            continue;
+        }
+
+        let checked = match selection {
+            Selection::Resource(r) => *r == meta.type_id,
+            _ => false,
+        };
+        if ui
+            .selectable_label(
+                checked,
+                format!("({}) {}", meta.resource_id.index(), meta.name),
+            )
+            .clicked()
+        {
+            *selection = Selection::Resource(meta.type_id);
+        }
+    }
+}
+
+/// Blacklisted types cannot be selected, therefore there is no need to check.
+fn draw_selected(
+    ui: &mut egui_dock::egui::Ui,
+    registery: &mut EguiRegistery,
+    resources: &mut Resources,
+    selection: &mut Selection,
+    components: &mut Components,
+    tables: &mut Tables,
+    entities: &Entities,
+) {
+    match selection {
+        Selection::None => {}
+        Selection::Resource(type_id) => {
+            if let Some(meta) = resources.meta(type_id) {
+                if let Some(drawer) = registery.resources.get(type_id) {
+                    let resource = unsafe { resources.get_raw_ptr(meta.resource_id).unwrap() };
+                    drawer.display(resource, ui);
+                }
+            } else {
+                panic!("selected resource that does not exist");
+            }
+        }
+        Selection::Entities(entity) => {
+            draw_entity(ui, registery, components, tables, entities, *entity);
+        }
     }
 }
 
@@ -135,57 +216,35 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     type Tab = EguiWindow;
 
     fn ui(&mut self, ui: &mut egui_dock::egui::Ui, window: &mut Self::Tab) {
-        // let type_registry = self.world.resource::<AppTypeRegistry>().0.clone();
-        // let type_registry = type_registry.read();
-
         match window {
             EguiWindow::GameView => {
                 *self.viewport_rect = ui.clip_rect();
-
-                // draw_gizmo(ui, self.world, self.selected_entities, self.gizmo_mode);
             }
-            EguiWindow::Entities => {
-                // let selected = hierarchy_ui(self.world, ui, self.selected_entities);
-                // if selected {
-                //     *self.selection = InspectorSelection::Entities;
-                // }
+            EguiWindow::Entities => unsafe {
+                draw_entities(ui, self.world.entities(), self.selection);
+            },
+            EguiWindow::Resources => {
                 unsafe {
-                    draw_entities(
-                        self.world.components(),
-                        self.world.entities(),
-                        self.world.tables_mut(),
+                    draw_resources(
                         ui,
-                    );
-                }
+                        self.world.get_resource_mut::<EguiRegistery>(),
+                        self.world.resources_mut(),
+                        self.selection,
+                    )
+                };
             }
-            // EguiWindow::Resources => select_resource(ui, &type_registry, self.selection),
             // EguiWindow::Assets => select_asset(ui, &type_registry, self.world, self.selection),
-            // EguiWindow::Inspector => match *self.selection {
-            //     InspectorSelection::Entities => match self.selected_entities.as_slice() {
-            //         &[entity] => ui_for_entity_with_children(self.world, entity, ui),
-            //         entities => ui_for_entities_shared_components(self.world, entities, ui),
-            //     },
-            //     InspectorSelection::Resource(type_id, ref name) => {
-            //         ui.label(name);
-            //         bevy_inspector::by_type_id::ui_for_resource(
-            //             self.world,
-            //             type_id,
-            //             ui,
-            //             name,
-            //             &type_registry,
-            //         )
-            //     }
-            //     InspectorSelection::Asset(type_id, ref name, handle) => {
-            //         ui.label(name);
-            //         bevy_inspector::by_type_id::ui_for_asset(
-            //             self.world,
-            //             type_id,
-            //             handle,
-            //             ui,
-            //             &type_registry,
-            //         );
-            //     }
-            // },
+            EguiWindow::Inspector => unsafe {
+                draw_selected(
+                    ui,
+                    self.world.get_resource_mut::<EguiRegistery>(),
+                    self.world.resources_mut(),
+                    self.selection,
+                    self.world.components_mut(),
+                    self.world.tables_mut(),
+                    self.world.entities(),
+                );
+            },
             _ => {}
         }
     }
@@ -196,17 +255,5 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 
     fn clear_background(&self, window: &Self::Tab) -> bool {
         !matches!(window, EguiWindow::GameView)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn miri() {
-        let mut world = World::default();
-        world.insert_resource(Editor::new());
-        render(&mut world);
     }
 }

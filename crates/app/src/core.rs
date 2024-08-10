@@ -45,6 +45,7 @@ pub enum AppSchedule {
     PrepareRender,
     PreRender,
     Render,
+    RenderLighting,
     PostRender,
     Present,
 }
@@ -53,6 +54,7 @@ pub struct App {
     world: World,
     scheduler: Scheduler,
     plugins: VecDeque<Box<dyn Plugin>>,
+    egui_registry: Option<ecs::egui_widget::EguiRegistery>,
 }
 
 impl Default for App {
@@ -64,6 +66,7 @@ impl Default for App {
             world,
             scheduler: Scheduler::default(),
             plugins: VecDeque::new(),
+            egui_registry: Some(ecs::egui_widget::EguiRegistery::default()),
         }
     }
 }
@@ -74,6 +77,7 @@ impl App {
             world: World::default(),
             scheduler: Scheduler::default(),
             plugins: VecDeque::new(),
+            egui_registry: Some(ecs::egui_widget::EguiRegistery::default()),
         }
     }
 
@@ -139,42 +143,37 @@ impl App {
         self
     }
 
-    fn insert_winit_event(&mut self, event: WinitEvent) {
-        match event {
-            WinitEvent::KeyboardInput(key) => {
-                if let PhysicalKey::Code(key_code) = key.physical_key {
-                    self.world_mut().push_event(KeyInput::new(
-                        KeyCode::new(key_code),
-                        match key.state {
-                            ElementState::Pressed => KeyState::Pressed,
-                            ElementState::Released => KeyState::Released,
-                        },
-                    ));
-                }
-            }
-            WinitEvent::MouseInput(state, button) => {
-                self.world_mut().push_event(MouseInput::new(
-                    match button {
-                        winit::event::MouseButton::Left => MouseButton::Left,
-                        winit::event::MouseButton::Right => MouseButton::Right,
-                        _ => unimplemented!(),
-                    },
-                    match state {
-                        ElementState::Pressed => KeyState::Pressed,
-                        ElementState::Released => KeyState::Released,
-                    },
-                ));
-            }
-            WinitEvent::MouseMotion(x, y) => {
-                self.world_mut().push_event(MouseMotion(x, y));
-            }
-        }
+    pub fn egui_component<C: Component + ecs::egui_widget::AsEgui>(&mut self) -> &mut Self {
+        #[cfg(feature = "widgets")]
+        self.egui_registry
+            .as_mut()
+            .unwrap()
+            .register_component::<C>();
+        self
+    }
+
+    pub fn egui_resource<R: Resource + ecs::egui_widget::AsEgui>(&mut self) -> &mut Self {
+        #[cfg(feature = "widgets")]
+        self.egui_registry
+            .as_mut()
+            .unwrap()
+            .register_resource::<R>();
+        self
+    }
+
+    pub fn egui_blacklist<T: 'static>(&mut self) -> &mut Self {
+        #[cfg(feature = "widgets")]
+        self.egui_registry.as_mut().unwrap().blacklist::<T>();
+        self
     }
 
     pub fn run(&mut self) {
         while let Some(mut plugin) = self.plugins.pop_front() {
             plugin.build(self);
         }
+
+        let registry = self.egui_registry.take().unwrap();
+        self.insert_resource(registry);
 
         self.scheduler.init_schedule(&mut self.world);
 
@@ -218,6 +217,7 @@ fn render(scheduler: &mut Scheduler, world: &mut World) {
     scheduler.run_schedule(world, AppSchedule::PrepareRender);
     scheduler.run_schedule(world, AppSchedule::PreRender);
     scheduler.run_schedule(world, AppSchedule::Render);
+    scheduler.run_schedule(world, AppSchedule::RenderLighting);
     scheduler.run_schedule(world, AppSchedule::PostRender);
     scheduler.run_schedule(world, AppSchedule::Present);
 }
@@ -232,13 +232,6 @@ fn check_for_exit(world: &mut World) -> bool {
         .read()
         .next()
         .is_some()
-}
-
-#[derive(Debug, WinnyEvent)]
-pub enum WinitEvent {
-    KeyboardInput(winit::event::KeyEvent),
-    MouseInput(winit::event::ElementState, winit::event::MouseButton),
-    MouseMotion(f64, f64),
 }
 
 struct WinitApp {
@@ -362,15 +355,35 @@ impl ApplicationHandler for WinitApp {
                 resized(&mut self.app.scheduler, &mut self.app.world);
                 self.app.world.take_resource::<WindowResized>();
             }
-            winit::event::WindowEvent::KeyboardInput { event, .. } => self
-                .app
-                .insert_winit_event(WinitEvent::KeyboardInput(event)),
-            winit::event::WindowEvent::MouseInput { state, button, .. } => self
-                .app
-                .insert_winit_event(WinitEvent::MouseInput(state, button)),
-            winit::event::WindowEvent::CursorMoved { position, .. } => self
-                .app
-                .insert_winit_event(WinitEvent::MouseMotion(position.x, position.y)),
+            winit::event::WindowEvent::KeyboardInput { event, .. } => {
+                if let PhysicalKey::Code(key_code) = event.physical_key {
+                    self.app.world_mut().push_event(KeyInput::new(
+                        KeyCode::new(key_code),
+                        match event.state {
+                            ElementState::Pressed => KeyState::Pressed,
+                            ElementState::Released => KeyState::Released,
+                        },
+                    ));
+                }
+            }
+            winit::event::WindowEvent::MouseInput { state, button, .. } => {
+                self.app.world_mut().push_event(MouseInput::new(
+                    match button {
+                        winit::event::MouseButton::Left => MouseButton::Left,
+                        winit::event::MouseButton::Right => MouseButton::Right,
+                        _ => unimplemented!(),
+                    },
+                    match state {
+                        ElementState::Pressed => KeyState::Pressed,
+                        ElementState::Released => KeyState::Released,
+                    },
+                ));
+            }
+            winit::event::WindowEvent::CursorMoved { position, .. } => {
+                self.app
+                    .world_mut()
+                    .push_event(MouseMotion(position.x, position.y));
+            }
             winit::event::WindowEvent::RedrawRequested => {
                 // NOTE: doesn't increase the responsiveness of quick screen resizing
                 // self.render();
@@ -383,9 +396,19 @@ impl ApplicationHandler for WinitApp {
         &mut self,
         _event_loop: &ActiveEventLoop,
         _device_id: DeviceId,
-        _event: DeviceEvent,
+        event: DeviceEvent,
     ) {
-        // match event {}
+        match event {
+            DeviceEvent::MouseWheel { delta } => {
+                self.app.world_mut().push_event(MouseWheel(match delta {
+                    event::MouseScrollDelta::LineDelta(x, y) => MouseScrollDelta::LineDelta(x, y),
+                    event::MouseScrollDelta::PixelDelta(p) => {
+                        MouseScrollDelta::PixelDelta(p.x as f32, p.y as f32)
+                    }
+                }));
+            }
+            _ => (),
+        }
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {

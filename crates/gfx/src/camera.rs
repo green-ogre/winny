@@ -1,10 +1,19 @@
 use crate::render_pipeline::bind_group::{self, AsBindGroup};
 use crate::{render_pipeline::buffer::AsGpuBuffer, transform::Transform};
-use app::render_util::Dimensions;
+use app::plugins::Plugin;
+use app::render_util::{Dimensions, RenderContext};
 use app::window::ViewPort;
 use app::window::Window;
-use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
+use ecs::{AsEgui, WinnyAsEgui, WinnyBundle, WinnyComponent, WinnyResource};
 use math::matrix::Matrix4x4f;
+
+pub struct CameraPlugin;
+
+impl Plugin for CameraPlugin {
+    fn build(&mut self, app: &mut app::prelude::App) {
+        app.egui_component::<Camera>();
+    }
+}
 
 #[derive(WinnyBundle, Default)]
 pub struct Camera2dBundle {
@@ -15,10 +24,19 @@ pub struct Camera2dBundle {
 /// Defines what [`ViewPort`] the world should be drawn to.
 ///
 /// At the moment, only _one_ camera may exist at a time.
-#[derive(WinnyComponent, Default)]
+#[derive(WinnyComponent, WinnyAsEgui, Default)]
 pub struct Camera {
     // Window viewport if None.
     pub viewport: Option<ViewPort>,
+}
+
+impl Camera {
+    pub fn viewport_or_window(&self, context: &RenderContext) -> ViewPort {
+        match self.viewport {
+            Some(v) => v,
+            None => context.window_viewport(),
+        }
+    }
 }
 
 impl AsBindGroup for &[CameraUniform] {

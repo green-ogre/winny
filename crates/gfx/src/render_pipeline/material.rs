@@ -18,7 +18,7 @@ use app::render_util::RenderContext;
 use app::{core::App, plugins::Plugin};
 use asset::{server::AssetServer, *};
 use ecs::*;
-use ecs::{Component, WinnyComponent, WinnyWidget};
+use ecs::{Component, WinnyComponent};
 use math::vector::{Vec2f, Vec4f};
 use std::marker::PhantomData;
 
@@ -148,7 +148,7 @@ pub struct RawMaterial2d {
 unsafe impl AsGpuBuffer for RawMaterial2d {}
 
 /// Applies the `opacity` to the target of the [`ShaderMaterial2d`]
-#[derive(WinnyWidget, Debug, Clone, Copy)]
+#[derive(WinnyAsEgui, Debug, Clone, Copy)]
 pub struct Opacity(pub f32);
 
 impl Opacity {
@@ -164,7 +164,7 @@ impl Default for Opacity {
 }
 
 /// Applies the `saturation` to the target of the [`ShaderMaterial2d`]
-#[derive(WinnyWidget, Debug, Clone, Copy)]
+#[derive(WinnyAsEgui, Debug, Clone, Copy)]
 pub struct Saturation(pub f32);
 
 impl Saturation {
@@ -180,8 +180,32 @@ impl Default for Saturation {
 }
 
 /// Applies the `modulation` to the target of the [`ShaderMaterial2d`]
-#[derive(WinnyWidget, Debug, Clone, Copy)]
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Modulation(pub Vec4f);
+
+impl ecs::egui_widget::Widget for Modulation {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
+        ui.with_layout(
+            ecs::egui::Layout::left_to_right(ecs::egui::Align::Min),
+            |ui| {
+                ui.label("r: ");
+                ui.add(egui::DragValue::new(&mut self.0.x).speed(0.005));
+                ui.label("g: ");
+                ui.add(egui::DragValue::new(&mut self.0.y).speed(0.005));
+                ui.label("b: ");
+                ui.add(egui::DragValue::new(&mut self.0.z).speed(0.005));
+                ui.label("a: ");
+                ui.add(egui::DragValue::new(&mut self.0.w).speed(0.005));
+
+                self.0.x = self.0.x.clamp(0.0, 1.0);
+                self.0.y = self.0.y.clamp(0.0, 1.0);
+                self.0.z = self.0.z.clamp(0.0, 1.0);
+                self.0.w = self.0.w.clamp(0.0, 1.0);
+            },
+        );
+    }
+}
 
 impl Modulation {
     pub fn clamp(&self) -> Vec4f {

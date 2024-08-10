@@ -1,18 +1,21 @@
 use bytemuck::Pod;
-#[cfg(feature = "editor")]
+#[cfg(feature = "widgets")]
 use ecs::egui_widget::Widget;
 use ecs::{WinnyComponent, WinnyResource};
+use math::vector::Vec2f;
 use std::{ops::Deref, sync::Arc};
 use wgpu::TextureFormat;
 
-#[cfg(feature = "editor")]
+use crate::prelude::ViewPort;
+
+#[cfg(feature = "widgets")]
 pub trait DimensionsUnit: 'static + Copy + Send + Sync + Pod + Widget {}
-#[cfg(feature = "editor")]
+#[cfg(feature = "widgets")]
 impl<T: 'static + Copy + Send + Sync + Pod + Widget> DimensionsUnit for T {}
 
-#[cfg(not(feature = "editor"))]
+#[cfg(not(feature = "widgets"))]
 pub trait DimensionsUnit: 'static + Copy + Send + Sync + Pod {}
-#[cfg(not(feature = "editor"))]
+#[cfg(not(feature = "widgets"))]
 impl<T: 'static + Copy + Send + Sync + Pod> DimensionsUnit for T {}
 
 /// Described a width and height of unit T
@@ -22,7 +25,7 @@ pub struct Dimensions<T: DimensionsUnit> {
     dimensions: [T; 2],
 }
 
-#[cfg(feature = "editor")]
+#[cfg(feature = "widgets")]
 impl<T: DimensionsUnit> Widget for Dimensions<T> {
     fn display(&mut self, ui: &mut ecs::egui::Ui) {
         ecs::egui::CollapsingHeader::new("Dimensions").show(ui, |ui| {
@@ -124,4 +127,13 @@ pub struct RenderContext {
     pub queue: RenderQueue,
     pub device: RenderDevice,
     pub config: RenderConfig,
+}
+
+impl RenderContext {
+    pub fn window_viewport(&self) -> ViewPort {
+        ViewPort::new(
+            Vec2f::new(0., 0.),
+            Vec2f::new(self.config.width() as f32, self.config.height() as f32),
+        )
+    }
 }

@@ -23,8 +23,8 @@ wgpu.workspace = true
 rand.workspace = true
 fxhash.workspace = true
 
-egui = { version = "0.28.1", optional = true }
-egui-wgpu = { version = "0.28.1", optional = true }
+egui = "0.28.1"
+egui-wgpu = "0.28.1"
 wgpu_text = { version = "0.8.8", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -35,6 +35,4 @@ getrandom = { version = "0.2.15", features = ["js"] }
 
 
 [features]
-egui = ["dep:egui", "dep:egui-wgpu"]
 text = ["dep:wgpu_text"]
-widgets = []

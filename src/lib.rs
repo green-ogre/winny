@@ -4,9 +4,9 @@ use asset::AssetLoaderPlugin;
 use audio::AudioPlugin;
 #[cfg(feature = "editor")]
 use editor::EditorPlugin;
+use gfx::camera::CameraPlugin;
 use gfx::gui::EguiPlugin;
 use gfx::render::RendererPlugin;
-use gfx::ColorMaterial;
 use gfx::{
     render_pipeline::{
         bind_group::BindGroupPlugin,
@@ -16,6 +16,7 @@ use gfx::{
     sprite::SpritePlugin,
     texture::TexturePlugin,
 };
+use gfx::{ColorMaterial, TransformPlugin};
 use log::LogPlugin;
 
 pub extern crate app;
@@ -72,13 +73,13 @@ impl Plugin for DefaultPlugins {
             SpritePlugin,
             AudioPlugin,
             ShaderPlugin,
-            // ModelPlugin,
         ))
         .add_plugins((
-            #[cfg(feature = "egui")]
             EguiPlugin,
             #[cfg(feature = "editor")]
             EditorPlugin,
+            TransformPlugin,
+            CameraPlugin,
             MaterialPlugin::<Material2d>::new(),
             MaterialPlugin::<ColorMaterial>::new(),
         ));

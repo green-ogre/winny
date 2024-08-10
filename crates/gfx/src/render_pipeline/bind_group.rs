@@ -3,7 +3,7 @@ use crate::texture::{Image, SamplerFilterType, Texture};
 use app::render_util::RenderContext;
 use app::{core::App, plugins::Plugin};
 use asset::*;
-use ecs::{SparseArrayIndex, SparseSet, WinnyComponent, WinnyResource, WinnyWidget};
+use ecs::{SparseArrayIndex, SparseSet, WinnyAsEgui, WinnyComponent, WinnyResource};
 use fxhash::FxHashMap;
 use wgpu::BufferUsages;
 
@@ -263,6 +263,19 @@ impl BindGroup {
             })
             .unwrap()
     }
+
+    /// Panics #
+    ///     If there are no views in resources.
+    pub fn single_texture_view(&self) -> &wgpu::TextureView {
+        &self
+            .resources
+            .iter()
+            .find_map(|r| match r {
+                WgpuResource::TextureView(view) => Some(view),
+                _ => None,
+            })
+            .unwrap()
+    }
 }
 
 /// Describes a set of [`WgpuResource`] in a render pipeline.
@@ -417,7 +430,7 @@ impl BindGroupHandle {
     }
 }
 
-#[derive(WinnyWidget, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(WinnyAsEgui, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BindGroupId(usize);
 
 impl SparseArrayIndex for BindGroupId {
