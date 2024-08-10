@@ -2,18 +2,16 @@ pub mod deserialize;
 pub mod serialize;
 
 pub use crate::{deserialize::*, serialize::*};
+extern crate cereal_macro;
 extern crate self as cereal;
+pub use cereal_macro::*;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Deserializer, Serializer};
     use cereal_macro::{Deserialize, Serialize};
-    use std::{
-        any::{Any, TypeId},
-        collections::HashMap,
-        fmt::Debug,
-    };
+    use std::{any::Any, collections::HashMap, fmt::Debug};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
     struct SomeData {

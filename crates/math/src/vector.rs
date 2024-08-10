@@ -1,9 +1,20 @@
 use crate::matrix::Matrix4x4f;
+use cereal::{WinnyDeserialize, WinnySerialize};
 use ecs::egui_widget::Widget;
 use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, PartialEq)]
+#[derive(
+    WinnySerialize,
+    WinnyDeserialize,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    bytemuck::Pod,
+    bytemuck::Zeroable,
+    PartialEq,
+)]
 pub struct Vec2f {
     pub x: f32,
     pub y: f32,
@@ -104,7 +115,17 @@ impl Vec2f {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(
+    WinnyDeserialize,
+    WinnySerialize,
+    Debug,
+    Default,
+    Copy,
+    Clone,
+    PartialEq,
+    bytemuck::Pod,
+    bytemuck::Zeroable,
+)]
 pub struct Vec3f {
     pub x: f32,
     pub y: f32,
@@ -169,6 +190,10 @@ impl Vec3f {
 
     pub fn normalize(&self) -> Vec3f {
         let m = self.magnitude();
+
+        if m == 0.0 {
+            return Vec3f::zero();
+        }
 
         Vec3f {
             x: self.x / m,
@@ -295,7 +320,17 @@ impl std::ops::DivAssign<f32> for Vec3f {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, PartialEq)]
+#[derive(
+    WinnySerialize,
+    WinnyDeserialize,
+    Debug,
+    Copy,
+    Clone,
+    Default,
+    bytemuck::Pod,
+    bytemuck::Zeroable,
+    PartialEq,
+)]
 pub struct Vec4f {
     pub x: f32,
     pub y: f32,

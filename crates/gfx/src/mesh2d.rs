@@ -1,5 +1,5 @@
 use crate::{render_pipeline::buffer::AsGpuBuffer, AsVertexBuffer, Vertex, VertexUv};
-use ecs::WinnyAsEgui;
+use ecs::{egui_widget::AsEgui, WinnyAsEgui};
 use math::vector::{Vec2f, Vec4f};
 
 #[derive(WinnyAsEgui, Debug, Clone)]

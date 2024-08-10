@@ -363,6 +363,7 @@ impl ApplicationHandler for WinitApp {
                             ElementState::Pressed => KeyState::Pressed,
                             ElementState::Released => KeyState::Released,
                         },
+                        event.text.map(|s| s.to_string()),
                     ));
                 }
             }

@@ -54,6 +54,8 @@ pub enum KeyCode {
     Space,
     Shift,
     Escape,
+    Enter,
+    Tab,
 }
 
 impl KeyCode {
@@ -99,20 +101,23 @@ impl KeyCode {
             winit::keyboard::KeyCode::ShiftLeft => KeyCode::Shift,
             winit::keyboard::KeyCode::ShiftRight => KeyCode::Shift,
             winit::keyboard::KeyCode::Escape => KeyCode::Escape,
+            winit::keyboard::KeyCode::Enter => KeyCode::Enter,
+            winit::keyboard::KeyCode::Tab => KeyCode::Tab,
             _ => KeyCode::Unknown,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, WinnyEvent)]
+#[derive(Debug, Clone, WinnyEvent)]
 pub struct KeyInput {
     pub code: KeyCode,
     pub state: KeyState,
+    pub text: Option<String>,
 }
 
 impl KeyInput {
-    pub fn new(code: KeyCode, state: KeyState) -> Self {
-        Self { code, state }
+    pub fn new(code: KeyCode, state: KeyState, text: Option<String>) -> Self {
+        Self { code, state, text }
     }
 }
 

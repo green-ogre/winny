@@ -62,10 +62,10 @@ impl CameraUniform {
         let screen_center = window.viewport.center();
         let offset = screen_center - viewport_center;
         transform.m[0][3] += offset.x;
-        transform.m[1][3] -= offset.y;
+        transform.m[1][3] += offset.y;
 
-        // The y will already be flipped
-        transform.m[0][3] *= -1.0;
+        transform.m[0][3] *= -viewport.width() / window.viewport.width();
+        transform.m[1][3] *= -viewport.height() / window.viewport.height();
 
         Self {
             transform,

@@ -22,6 +22,7 @@ use log::LogPlugin;
 pub extern crate app;
 pub extern crate asset;
 pub extern crate audio;
+pub extern crate cereal;
 pub extern crate ecs;
 pub extern crate gfx;
 #[cfg(feature = "hot_reload")]
@@ -30,11 +31,14 @@ pub extern crate log;
 pub extern crate math;
 pub extern crate util;
 
+extern crate self as winny;
+
 pub mod prelude {
     pub use crate::DefaultPlugins;
     pub use app::prelude::*;
     pub use asset::*;
     pub use audio::*;
+    pub use cereal::*;
     pub use ecs::*;
     pub use gfx::*;
     #[cfg(feature = "hot_reload")]

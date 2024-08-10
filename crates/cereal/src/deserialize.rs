@@ -16,7 +16,7 @@ impl<'a> Deserializer<'a> {
     pub fn pop_collection<T: Deserialize>(&mut self, len: u32) -> impl Iterator<Item = T> {
         let mut collection = Vec::with_capacity(len as usize);
         for _ in 0..len {
-            collection.push(T::deserialize(self))
+            collection.push(T::deserialize(self).unwrap())
         }
 
         collection.into_iter()
@@ -28,50 +28,56 @@ impl<'a> Deserializer<'a> {
     ) -> impl Iterator<Item = (K, V)> {
         let mut collection = Vec::with_capacity(len as usize);
         for _ in 0..len {
-            collection.push((K::deserialize(self), V::deserialize(self)))
+            collection.push((K::deserialize(self).unwrap(), V::deserialize(self).unwrap()))
         }
 
         collection.into_iter().rev()
     }
 }
 
-pub trait Deserialize {
-    fn deserialize(deserializer: &mut Deserializer<'_>) -> Self;
+pub trait Deserialize: Sized {
+    fn deserialize(deserializer: &mut Deserializer<'_>) -> Option<Self>;
+}
+
+impl Deserialize for bool {
+    fn deserialize(deserializer: &mut Deserializer<'_>) -> Option<Self> {
+        Some(*deserializer.pop_bytes(1).first().unwrap() == 1)
+    }
 }
 
 impl<T: Deserialize> Deserialize for Box<T> {
-    fn deserialize(deserializer: &mut Deserializer<'_>) -> Self {
-        Box::new(T::deserialize(deserializer))
+    fn deserialize(deserializer: &mut Deserializer<'_>) -> Option<Self> {
+        Some(Box::new(T::deserialize(deserializer).unwrap()))
     }
 }
 
 impl<T: Deserialize> Deserialize for Vec<T> {
-    fn deserialize(deserializer: &mut Deserializer<'_>) -> Self {
-        let len = u32::deserialize(deserializer);
-        deserializer.pop_collection(len as u32).collect()
+    fn deserialize(deserializer: &mut Deserializer<'_>) -> Option<Self> {
+        let len = u32::deserialize(deserializer).unwrap();
+        Some(deserializer.pop_collection(len as u32).collect())
     }
 }
 
 impl<K: Deserialize + PartialEq + Eq + Hash, V: Deserialize> Deserialize for HashMap<K, V> {
-    fn deserialize(deserializer: &mut Deserializer<'_>) -> Self {
-        let len = u32::deserialize(deserializer);
+    fn deserialize(deserializer: &mut Deserializer<'_>) -> Option<Self> {
+        let len = u32::deserialize(deserializer).unwrap();
         let mut map = HashMap::default();
 
         for (k, v) in deserializer.pop_keyed_collection(len as u32) {
             map.insert(k, v);
         }
 
-        map
+        Some(map)
     }
 }
 
 macro_rules! impl_deserialize {
     ($t:ty) => {
         impl Deserialize for $t {
-            fn deserialize(deserializer: &mut Deserializer<'_>) -> Self {
+            fn deserialize(deserializer: &mut Deserializer<'_>) -> Option<Self> {
                 let size = std::mem::size_of::<$t>();
                 let val = deserializer.pop_bytes(size).try_into().unwrap();
-                <$t>::from_le_bytes(val)
+                Some(<$t>::from_le_bytes(val))
             }
         }
     };
@@ -90,3 +96,6 @@ impl_deserialize!(i64);
 impl_deserialize!(i32);
 impl_deserialize!(i16);
 impl_deserialize!(i8);
+
+impl_deserialize!(f64);
+impl_deserialize!(f32);

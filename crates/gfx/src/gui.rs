@@ -68,9 +68,7 @@ impl EguiRenderer {
         &self.context
     }
 
-    // https://github.com/emilk/egui/blob/34db001db14940c948eb03d3fe87f2af2c45daba/crates/egui-winit/src/lib.rs#L698
     pub fn on_key_event(&mut self, event: &KeyInput) {
-        util::tracing::trace!("{event:?}");
         let pressed = event.state == KeyState::Pressed;
 
         if pressed {
@@ -81,6 +79,10 @@ impl EguiRenderer {
                 repeat: false,
                 modifiers: self.egui_input.modifiers,
             });
+
+            if let Some(text) = &event.text {
+                self.egui_input.events.push(egui::Event::Text(text.clone()));
+            }
         }
     }
 
@@ -319,6 +321,9 @@ fn into_key(key: KeyCode) -> egui::Key {
         KeyCode::Key0 => egui::Key::Num0,
         KeyCode::Space => egui::Key::Space,
         KeyCode::Escape => egui::Key::Escape,
+        KeyCode::Enter => egui::Key::Enter,
+        KeyCode::Space => egui::Key::Space,
+        KeyCode::Tab => egui::Key::Tab,
         _ => {
             // TODO: all keys
             util::warn!("{:?} not converted to egui::Key", key);

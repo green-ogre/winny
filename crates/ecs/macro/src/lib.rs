@@ -26,21 +26,6 @@ pub fn internal_component_impl(input: TokenStream) -> TokenStream {
     parse_component(input, quote! { crate })
 }
 
-#[cfg(not(feature = "editor"))]
-fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let name = &input.ident;
-
-    let generics = &input.generics;
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-
-    quote! {
-        impl #impl_generics #path_to_ecs::storage::Component for #name #ty_generics #where_clause {}
-    }
-    .into()
-}
-
-#[cfg(feature = "editor")]
 fn parse_component(input: TokenStream, path_to_ecs: proc_macro2::TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;

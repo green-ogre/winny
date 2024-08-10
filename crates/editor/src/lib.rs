@@ -149,8 +149,6 @@ fn draw_entity(
                     });
             }
         }
-    } else {
-        panic!("selected entity that does not exist");
     }
 }
 
@@ -202,8 +200,6 @@ fn draw_selected(
                     let resource = unsafe { resources.get_raw_ptr(meta.resource_id).unwrap() };
                     drawer.display(resource, ui);
                 }
-            } else {
-                panic!("selected resource that does not exist");
             }
         }
         Selection::Entities(entity) => {

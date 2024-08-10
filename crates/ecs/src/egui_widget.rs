@@ -3,6 +3,7 @@ use cgmath::Quaternion;
 use ecs_macro::InternalResource;
 use std::{any::TypeId, ops::Range, path::PathBuf, ptr::NonNull};
 
+// TODO: array fixed size
 pub trait AsEgui {
     fn egui() -> impl Egui;
 }
@@ -42,7 +43,7 @@ macro_rules! impl_widget {
     ($t:ident) => {
         impl Widget for $t {
             fn display(&mut self, ui: &mut egui::Ui) {
-                ui.add(egui::DragValue::new(self).speed(0.1));
+                ui.add(egui::DragValue::new(self).speed(0.01));
             }
         }
     };

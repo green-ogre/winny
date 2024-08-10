@@ -41,6 +41,12 @@ pub trait Serialize: 'static {
     fn serialize(&self, serializer: &mut Serializer<'_>);
 }
 
+impl Serialize for bool {
+    fn serialize(&self, serializer: &mut Serializer<'_>) {
+        serializer.push_bytes(vec![*self as u8]);
+    }
+}
+
 impl<T: Serialize> Serialize for Box<T> {
     fn serialize(&self, serializer: &mut Serializer<'_>) {
         <T>::serialize(self, serializer);
@@ -84,3 +90,6 @@ impl_serialize!(i64);
 impl_serialize!(i32);
 impl_serialize!(i16);
 impl_serialize!(i8);
+
+impl_serialize!(f64);
+impl_serialize!(f32);

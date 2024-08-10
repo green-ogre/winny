@@ -47,6 +47,10 @@ path = "crates/gfx"
 package = "editor"
 path = "crates/editor"
 
+[dependencies.cereal]
+package = "cereal"
+path = "crates/cereal"
+
 [dependencies.hot_reload]
 package = "hot_reload"
 path = "crates/hot_reload"
