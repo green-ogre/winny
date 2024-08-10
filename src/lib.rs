@@ -6,6 +6,7 @@ use audio::AudioPlugin;
 use editor::EditorPlugin;
 use gfx::camera::CameraPlugin;
 use gfx::gui::EguiPlugin;
+use gfx::mesh2d::Mesh2dPlugin;
 use gfx::render::RendererPlugin;
 use gfx::{
     render_pipeline::{
@@ -74,11 +75,12 @@ impl Plugin for DefaultPlugins {
             AssetLoaderPlugin,
             TexturePlugin,
             TimePlugin,
+            Mesh2dPlugin,
             SpritePlugin,
             AudioPlugin,
-            ShaderPlugin,
         ))
         .add_plugins((
+            ShaderPlugin,
             EguiPlugin,
             #[cfg(feature = "editor")]
             EditorPlugin,

@@ -62,8 +62,8 @@ fn vs_main(
     out.uv.x = (out.uv.x * instance.flip_h) + ((1.0 - out.uv.x) * (1.0 - instance.flip_h));
     out.uv.y = (out.uv.y * instance.flip_v) + ((1.0 - out.uv.y) * (1.0 - instance.flip_v));
 
-    let x_scale = 2.0 / camera.window_dimensions.x;
-    let y_scale = -2.0 / camera.window_dimensions.y;
+    let x_scale = 2.0 / camera.viewport_dimensions.x;
+    let y_scale = -2.0 / camera.viewport_dimensions.y;
 
     transformation_matrix[0][3] *= x_scale;
     transformation_matrix[1][3] *= y_scale;

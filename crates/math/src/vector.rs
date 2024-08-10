@@ -141,7 +141,7 @@ impl Widget for Vec3f {
                 self.x.display(ui);
                 ui.label("y: ");
                 self.y.display(ui);
-                ui.label("r: ");
+                ui.label("z: ");
                 self.z.display(ui);
             },
         );

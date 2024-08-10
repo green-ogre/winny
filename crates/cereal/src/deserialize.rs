@@ -71,6 +71,17 @@ impl<K: Deserialize + PartialEq + Eq + Hash, V: Deserialize> Deserialize for Has
     }
 }
 
+impl<T: Deserialize, const LEN: usize> Deserialize for [T; LEN] {
+    fn deserialize(deserializer: &mut Deserializer<'_>) -> Option<Self> {
+        let mut elems = Vec::new();
+        for _ in 0..LEN {
+            elems.push(T::deserialize(deserializer).unwrap());
+        }
+
+        Some(unsafe { elems.try_into().unwrap_unchecked() })
+    }
+}
+
 macro_rules! impl_deserialize {
     ($t:ty) => {
         impl Deserialize for $t {

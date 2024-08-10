@@ -1,11 +1,74 @@
-use crate::{render_pipeline::buffer::AsGpuBuffer, AsVertexBuffer, Vertex, VertexUv};
-use ecs::{egui_widget::AsEgui, WinnyAsEgui};
-use math::vector::{Vec2f, Vec4f};
+use std::cmp::Ordering;
 
-#[derive(WinnyAsEgui, Debug, Clone)]
-pub struct Mesh2d {
-    triangles: Vec<Triangle>,
+use crate::{
+    camera::{Camera, CameraUniform},
+    render_pipeline::buffer::AsGpuBuffer,
+    AsBindGroup, AsVertexBuffer, BindGroup, FragmentShader, RenderAsset, RenderAssetApp,
+    RenderAssets, RenderEncoder, RenderPipeline2d, RenderView, Transform, Vertex, VertexBuffer,
+    VertexShader, VertexUv,
+};
+use app::{
+    core::{AppSchedule, Schedule},
+    plugins::Plugin,
+    render_util::RenderContext,
+    window::Window,
+};
+use asset::{Asset, AssetApp, AssetLoader, Assets, Handle};
+use cereal::{Deserialize, Deserializer, Serialize, WinnyDeserialize, WinnySerialize};
+use ecs::*;
+use ecs::{egui_widget::AsEgui, WinnyAsEgui};
+use math::{
+    matrix::Matrix4x4f,
+    vector::{Vec2f, Vec4f},
+};
+use util::info;
+use wgpu::core::command::compute_commands::wgpu_compute_pass_push_debug_group;
+
+pub struct Mesh2dPlugin;
+
+impl Plugin for Mesh2dPlugin {
+    fn build(&mut self, app: &mut app::prelude::App) {
+        app.egui_component::<BindedGpuMesh2d>()
+            .register_asset::<Mesh2d>()
+            .register_render_asset::<GpuMesh2d>()
+            .register_asset_loader::<Mesh2d>(Mesh2dAssetLoader)
+            .register_resource::<Mesh2dPipeline>()
+            .add_systems(Schedule::StartUp, startup)
+            .add_systems(
+                AppSchedule::Render,
+                (bind_new_mesh_bundles, prepare_render_pass, render_pass),
+            );
+    }
 }
+
+struct Mesh2dAssetLoader;
+
+impl AssetLoader for Mesh2dAssetLoader {
+    type Asset = Mesh2d;
+    type Settings = ();
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["msh"]
+    }
+
+    async fn load(
+        mut reader: asset::ByteReader<std::io::Cursor<Vec<u8>>>,
+        _settings: Self::Settings,
+        _path: String,
+        _ext: &str,
+    ) -> Result<Self::Asset, asset::AssetLoaderError> {
+        let mut bytes = reader.read_all()?;
+        let mut d = Deserializer::new(&mut bytes);
+        Ok(Mesh2d::deserialize(&mut d).unwrap())
+    }
+}
+
+#[derive(WinnyAsEgui, WinnySerialize, WinnyDeserialize, Default, Debug, Clone)]
+pub struct Mesh2d {
+    pub triangles: Vec<Triangle>,
+}
+
+impl Asset for Mesh2d {}
 
 impl Mesh2d {
     pub fn from_points(points: Points) -> Option<Self> {
@@ -13,38 +76,72 @@ impl Mesh2d {
     }
 
     pub fn as_verts(&self) -> Vec<Vertex> {
-        self.triangles.iter().map(|t| t.points).flatten().collect()
+        self.triangles
+            .iter()
+            .map(|t| t.points)
+            .flatten()
+            .map(|p| p.into())
+            .collect()
     }
 }
 
-#[repr(C)]
-#[derive(WinnyAsEgui, Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Triangle {
-    points: [Vertex; 3],
+#[derive(Debug)]
+pub struct GpuMesh2d {
+    buffer: VertexBuffer,
+    len: u32,
 }
 
-unsafe impl AsGpuBuffer for Triangle {}
+impl RenderAsset for GpuMesh2d {
+    type Asset = Mesh2d;
+    type Params<'w> = Res<'w, RenderContext>;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Point(Vec2f);
+    fn prepare_asset<'w>(asset: &Self::Asset, context: &Self::Params<'w>) -> Self {
+        let verts = asset.as_verts();
+        let buffer = <Vertex as AsVertexBuffer<0>>::as_entire_buffer(
+            &context,
+            &verts,
+            wgpu::BufferUsages::VERTEX,
+        );
+        let len = verts.len() as u32;
+
+        Self { buffer, len }
+    }
+}
+
+#[derive(WinnyAsEgui, WinnySerialize, WinnyDeserialize, Default, Debug, Copy, Clone)]
+pub struct Triangle {
+    points: [Point; 3],
+}
+
+#[derive(WinnyAsEgui, WinnySerialize, WinnyDeserialize, Default, Debug, Clone, Copy, PartialEq)]
+pub struct Point {
+    x: f32,
+    y: f32,
+}
 
 impl From<Point> for Vertex {
     fn from(value: Point) -> Self {
         Self {
-            position: [value.0.x, value.0.y, 0.0, 1.0].into(),
+            position: [value.x, value.y, 0.0, 1.0].into(),
         }
     }
 }
 
 impl From<Vertex> for Point {
     fn from(value: Vertex) -> Self {
-        Point(Vec2f::new(value.position.x, value.position.y))
+        Point {
+            x: value.position.x,
+            y: value.position.y,
+        }
     }
 }
 
 impl From<Vec2f> for Point {
     fn from(value: Vec2f) -> Self {
-        Self(value)
+        Self {
+            x: value.x,
+            y: value.y,
+        }
     }
 }
 
@@ -56,57 +153,258 @@ impl Points {
         self.0.push(point.into());
     }
 
+    pub fn pop(&mut self) {
+        let _ = self.0.pop();
+    }
+
     pub fn into_triangles(mut self) -> Option<Vec<Triangle>> {
-        if self.0.len() >= 3 {
-            let points = order_ccw(
-                self.0.pop().unwrap().into(),
-                self.0.pop().unwrap().into(),
-                self.0.pop().unwrap().into(),
-            );
-            let mut triangles = vec![Triangle {
-                points: [points[0].into(), points[1].into(), points[2].into()],
-            }];
+        minimal_triangulation_with_convex_hull(self.0)
+    }
+}
 
-            for point in self.0.into_iter() {
-                let mut t = triangles
-                    .iter()
-                    .map(|t| t.points)
-                    .flatten()
-                    .collect::<Vec<_>>();
-                t.sort_by(|p1, p2| {
-                    let p1 = Vec2f::new(p1.position.x, p1.position.y);
-                    let p2 = Vec2f::new(p2.position.x, p2.position.y);
-                    (p1.dist2(&point.0)).total_cmp(&p1.dist2(&point.0))
-                });
+fn cross_product(o: &Point, a: &Point, b: &Point) -> f32 {
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+}
 
-                let points = order_ccw(
-                    t.pop().unwrap().into(),
-                    t.pop().unwrap().into(),
-                    t.pop().unwrap().into(),
-                );
+fn convex_hull(mut points: Vec<Point>) -> Vec<Point> {
+    if points.len() <= 3 {
+        return points;
+    }
 
-                triangles.push(Triangle {
-                    points: [points[0].into(), points[1].into(), points[2].into()],
-                });
+    // Sort points lexicographically
+    points.sort_by(|a, b| {
+        a.x.partial_cmp(&b.x)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.y.partial_cmp(&b.y).unwrap_or(Ordering::Equal))
+    });
+
+    let mut lower = Vec::new();
+    for p in &points {
+        while lower.len() >= 2
+            && cross_product(&lower[lower.len() - 2], &lower[lower.len() - 1], p) <= 0.0
+        {
+            lower.pop();
+        }
+        lower.push(p.clone());
+    }
+
+    let mut upper = Vec::new();
+    for p in points.iter().rev() {
+        while upper.len() >= 2
+            && cross_product(&upper[upper.len() - 2], &upper[upper.len() - 1], p) <= 0.0
+        {
+            upper.pop();
+        }
+        upper.push(p.clone());
+    }
+
+    lower.pop();
+    upper.pop();
+    lower.extend(upper);
+    lower
+}
+
+fn minimal_triangulation_with_convex_hull(points: Vec<Point>) -> Option<Vec<Triangle>> {
+    if points.len() < 3 {
+        return None;
+    }
+
+    let hull = convex_hull(points.clone());
+    let mut triangles = Vec::new();
+
+    // Triangulate the convex hull
+    for i in 1..hull.len() - 1 {
+        triangles.push(Triangle {
+            points: [hull[0].clone(), hull[i].clone(), hull[i + 1].clone()],
+        });
+    }
+
+    // Triangulate interior points
+    for point in points.iter() {
+        if !hull.contains(point) {
+            // Find the visible edges of the existing triangulation
+            let mut visible_edges = Vec::new();
+            for triangle in &triangles {
+                for i in 0..3 {
+                    let j = (i + 1) % 3;
+                    if cross_product(&triangle.points[i], &triangle.points[j], point) > 0.0 {
+                        visible_edges
+                            .push((triangle.points[i].clone(), triangle.points[j].clone()));
+                    }
+                }
             }
 
-            Some(triangles)
-        } else {
-            None
+            // Create new triangles
+            for (p1, p2) in visible_edges {
+                triangles.push(Triangle {
+                    points: [p1, p2, point.clone()],
+                });
+            }
+        }
+    }
+
+    Some(triangles)
+}
+
+fn startup(mut commands: Commands, context: Res<RenderContext>) {
+    commands.insert_resource(Mesh2dPipeline::new(&context));
+}
+
+fn can_build_pipeline(camera: Query<Camera>) -> bool {
+    camera.get_single().is_ok()
+}
+
+#[derive(WinnyResource)]
+pub struct Mesh2dPipeline {
+    pipeline: RenderPipeline2d,
+    camera: BindGroup,
+    transforms: VertexBuffer,
+}
+
+impl Mesh2dPipeline {
+    pub fn new(context: &RenderContext) -> Self {
+        let camera = <&[CameraUniform] as AsBindGroup>::as_entire_binding_empty(
+            context,
+            &[],
+            std::mem::size_of::<CameraUniform>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+
+        let transforms = <Matrix4x4f as AsVertexBuffer<1>>::as_entire_buffer_empty(
+            context,
+            std::mem::size_of::<Matrix4x4f>() as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+
+        let (vert, frag) = shaders(context);
+
+        let pipeline = RenderPipeline2d::new(
+            "mesh",
+            context,
+            &[camera.layout()],
+            &[
+                <Vertex as AsVertexBuffer<0>>::vertex_layout(),
+                <Matrix4x4f as AsVertexBuffer<1>>::vertex_layout(),
+            ],
+            &vert,
+            &frag,
+            wgpu::BlendState::ALPHA_BLENDING,
+            None,
+        );
+
+        Mesh2dPipeline {
+            pipeline,
+            camera,
+            transforms,
         }
     }
 }
 
-fn order_ccw(p1: Point, p2: Point, p3: Point) -> [Point; 3] {
-    // Calculate cross product
-    let cross_product =
-        (p2.0.x - p1.0.x) * (p3.0.y - p1.0.y) - (p2.0.y - p1.0.y) * (p3.0.x - p1.0.x);
+fn shaders(context: &RenderContext) -> (VertexShader, FragmentShader) {
+    (
+        VertexShader({
+            let shader = wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../../../res/shaders/mesh2d.wgsl").into(),
+                ),
+            };
+            context.device.create_shader_module(shader)
+        }),
+        FragmentShader({
+            let shader = wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../../../res/shaders/mesh2d.wgsl").into(),
+                ),
+            };
+            context.device.create_shader_module(shader)
+        }),
+    )
+}
 
-    if cross_product > 0.0 {
-        [p1, p2, p3] // Already counter-clockwise
-    } else if cross_product < 0.0 {
-        [p1, p3, p2] // Swap p2 and p3 to make counter-clockwise
-    } else {
-        [p1, p2, p3] // Collinear, original order
+#[derive(WinnyComponent, WinnyAsEgui)]
+struct BindedGpuMesh2d;
+
+fn bind_new_mesh_bundles(
+    mut commands: Commands,
+    pipeline: Res<Mesh2dPipeline>,
+    context: Res<RenderContext>,
+    mesh_bundles: Query<(Entity, Handle<Mesh2d>), (With<Transform>, Without<BindedGpuMesh2d>)>,
+    meshes: Res<Assets<Mesh2d>>,
+    mut gpu_meshes: ResMut<RenderAssets<GpuMesh2d>>,
+    params: <GpuMesh2d as RenderAsset>::Params<'_>,
+) {
+    for (entity, handle) in mesh_bundles.iter() {
+        if gpu_meshes.get(handle).is_some() {
+            commands.get_entity(entity).insert(BindedGpuMesh2d);
+            continue;
+        } else {
+            if let Some(mesh) = meshes.get(handle) {
+                info!("generating new gpu_mesh: [{mesh:?}]");
+                let mesh = GpuMesh2d::prepare_asset(mesh, &params);
+                gpu_meshes.insert(handle.clone(), mesh);
+                commands.get_entity(entity).insert(BindedGpuMesh2d);
+            }
+        }
+    }
+}
+
+fn prepare_render_pass(
+    mut commands: Commands,
+    mut pipeline: ResMut<Mesh2dPipeline>,
+    context: Res<RenderContext>,
+    meshes: Query<Transform, With<(Handle<Mesh2d>, BindedGpuMesh2d)>>,
+    mut gpu_meshes: ResMut<RenderAssets<GpuMesh2d>>,
+    params: <GpuMesh2d as RenderAsset>::Params<'_>,
+    camera: Query<(Camera, Transform)>,
+    window: Res<Window>,
+) {
+    if let Ok((camera, transform)) = camera.get_single() {
+        CameraUniform::write_buffer(
+            &context,
+            pipeline.camera.single_buffer(),
+            &[CameraUniform::from_camera(camera, transform, &window)],
+        );
+    }
+
+    let transform_data = meshes.iter().map(|t| t.as_matrix()).collect::<Vec<_>>();
+    <Matrix4x4f as AsVertexBuffer<1>>::write_buffer_resize(
+        &context,
+        &mut pipeline.transforms,
+        &transform_data,
+    )
+}
+
+fn render_pass(
+    mut encoder: ResMut<RenderEncoder>,
+    view: Res<RenderView>,
+    pipeline: Res<Mesh2dPipeline>,
+    meshes: Query<Handle<Mesh2d>, With<(BindedGpuMesh2d, Transform)>>,
+    gpu_meshes: Res<RenderAssets<GpuMesh2d>>,
+) {
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("draw to output"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
+    });
+
+    render_pass.set_pipeline(&pipeline.pipeline.0);
+    render_pass.set_vertex_buffer(1, pipeline.transforms.buffer().slice(..));
+    render_pass.set_bind_group(0, pipeline.camera.binding(), &[]);
+
+    for (i, mesh) in meshes.iter().enumerate() {
+        let gpu_mesh = gpu_meshes.get(mesh).unwrap();
+        render_pass.set_vertex_buffer(0, gpu_mesh.buffer.buffer().slice(..));
+        render_pass.draw(0..gpu_mesh.len, i as u32..i as u32 + 1);
     }
 }

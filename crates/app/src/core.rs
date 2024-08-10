@@ -36,9 +36,10 @@ pub enum Schedule {
 
 #[derive(WinnyScheduleLabel, Debug, Clone, Copy)]
 pub enum AppSchedule {
+    PostStartUp,
+    PreStartUp,
     Platform,
     RenderStartup,
-    PreStartUp,
     FlushEvents,
     Resized,
     SubmitEncoder,
@@ -203,6 +204,7 @@ fn startup(scheduler: &mut Scheduler, world: &mut World) {
     scheduler.run_schedule(world, AppSchedule::RenderStartup);
     scheduler.run_schedule(world, AppSchedule::PreStartUp);
     scheduler.run_schedule(world, Schedule::StartUp);
+    scheduler.run_schedule(world, AppSchedule::PostStartUp);
 }
 
 fn flush_events(scheduler: &mut Scheduler, world: &mut World) {

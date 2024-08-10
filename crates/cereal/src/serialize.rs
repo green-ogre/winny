@@ -67,6 +67,14 @@ impl<K: Serialize + PartialEq + Eq + Hash, V: Serialize> Serialize for HashMap<K
     }
 }
 
+impl<T: Serialize, const LEN: usize> Serialize for [T; LEN] {
+    fn serialize(&self, serializer: &mut Serializer<'_>) {
+        for elem in self.iter() {
+            elem.serialize(serializer);
+        }
+    }
+}
+
 macro_rules! impl_serialize {
     ($t:ty) => {
         impl Serialize for $t {

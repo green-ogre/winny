@@ -6,6 +6,7 @@ use app::render_util::RenderContext;
 use math::matrix::Matrix4x4f;
 
 /// Handle to a GPU buffer with layout information. Obtained from [`AsVertexBuffer::as_entire_buffer`].
+#[derive(Debug)]
 pub struct VertexBuffer {
     buffer: wgpu::Buffer,
     usage: wgpu::BufferUsages,

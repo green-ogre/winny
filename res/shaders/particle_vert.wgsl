@@ -63,8 +63,8 @@ fn vs_main(vert: VertexInput, instance: InstanceInput) -> VertexOutput {
         camera.m4,
     );
 
-    let x_scale = 2.0 / camera.window_dimensions.x;
-    let y_scale = -2.0 / camera.window_dimensions.y;
+    let x_scale = 2.0 / camera.viewport_dimensions.x;
+    let y_scale = -2.0 / camera.viewport_dimensions.y;
 
     particle_transformation[0][3] *= x_scale;
     particle_transformation[1][3] *= y_scale;

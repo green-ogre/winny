@@ -266,6 +266,7 @@ fn prepare_render_pass(
     points.add(Vec2f::new(0., 0.));
     points.add(Vec2f::new(1., 0.));
     points.add(Vec2f::new(0., 1.));
+    points.add(Vec2f::new(0.5, 0.5));
     let verts = Mesh2d::from_points(points).unwrap().as_verts();
     Vertex::write_buffer(&context, pipeline.occluders.buffer(), &verts);
 

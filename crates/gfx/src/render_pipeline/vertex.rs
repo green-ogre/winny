@@ -1,3 +1,4 @@
+use cereal::{WinnyDeserialize, WinnySerialize};
 use ecs::WinnyAsEgui;
 use math::vector::{Vec2f, Vec3f, Vec4f};
 
@@ -39,7 +40,17 @@ pub trait VertexLayout<const OFFSET: u32> {
 }
 
 #[repr(C)]
-#[derive(WinnyAsEgui, Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(
+    WinnyAsEgui,
+    WinnySerialize,
+    WinnyDeserialize,
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    bytemuck::Pod,
+    bytemuck::Zeroable,
+)]
 pub struct Vertex {
     pub position: Vec4f,
 }
