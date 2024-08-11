@@ -237,6 +237,13 @@ impl Vec3f {
     }
 }
 
+impl From<Vec2f> for Vec3f {
+    fn from(value: Vec2f) -> Self {
+        let Vec2f { x, y } = value;
+        Self { x, y, z: 0. }
+    }
+}
+
 impl Neg for Vec3f {
     type Output = Vec3f;
     fn neg(mut self) -> Self::Output {
