@@ -445,9 +445,9 @@ fn prepare_render_pass<M: Material>(
         &transform_data,
     );
 
-    for (_, material) in meshes.iter() {
-        M::update(material, &context, &pipeline.material);
-    }
+    // for (_, material) in meshes.iter() {
+    //     M::update(material, &context, &pipeline.material);
+    // }
 }
 
 fn render_pass<M: Material>(

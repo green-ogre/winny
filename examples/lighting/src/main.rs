@@ -57,17 +57,17 @@ struct SavePath(String);
 
 fn startup(mut commands: Commands, server: Res<AssetServer>) {
     commands.spawn(Camera2dBundle::default());
-    commands.spawn((
-        SpriteBundle {
-            sprite: Sprite {
-                scale: Vec2f::new(0.3, 0.3),
-                ..Default::default()
-            },
-            material: Material2d::default(),
-            handle: server.load("res/crosshair.png"),
-        },
-        Transform::default(),
-    ));
+    // commands.spawn((
+    //     SpriteBundle {
+    //         sprite: Sprite {
+    //             scale: Vec2f::new(0.3, 0.3),
+    //             ..Default::default()
+    //         },
+    //         material: Material2d::default(),
+    //         handle: server.load("res/crosshair.png"),
+    //     },
+    //     Transform::default(),
+    // ));
 }
 
 fn update(
@@ -108,7 +108,7 @@ fn update(
                 println!("{:#?}", mesh);
                 global_mesh.mesh = mesh.clone();
                 let handle = meshes.add(mesh);
-                commands.spawn((Transform::default(), handle));
+                commands.spawn((Transform::default(), handle, ColorMaterial::default()));
                 for entity in mesh_entities.iter() {
                     commands.get_entity(entity).despawn();
                 }

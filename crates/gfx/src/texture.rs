@@ -210,7 +210,6 @@ impl Texture {
     }
 
     pub fn create_sampler(
-        &self,
         context: &RenderContext,
         filter_type: &SamplerFilterType,
     ) -> wgpu::Sampler {

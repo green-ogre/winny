@@ -112,7 +112,7 @@ impl AsWgpuResources for &Texture {
     ) -> Vec<WgpuResource> {
         vec![
             WgpuResource::TextureView(self.create_view()),
-            WgpuResource::Sampler(self.create_sampler(context, &state)),
+            WgpuResource::Sampler(Texture::create_sampler(context, &state)),
         ]
     }
 }
@@ -298,6 +298,10 @@ impl BindGroup {
 
     pub fn insert_texture_view(&mut self, view: RenderView) {
         self.resources.push(WgpuResource::TextureView(view.0));
+    }
+
+    pub fn into_bind_group(self) -> wgpu::BindGroup {
+        self.binding
     }
 }
 

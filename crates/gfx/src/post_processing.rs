@@ -8,7 +8,10 @@
 // use ecs::*;
 // use std::marker::PhantomData;
 //
+//
 // pub struct PostProcessingPlugin<P: PostProcessing>(PhantomData<P>);
+//
+// impl<> Debug for PostProcessingPlugin<P>
 //
 // impl<P: PostProcessing> PostProcessingPlugin<P> {
 //     pub fn new() -> Self {
@@ -50,22 +53,6 @@
 //     server: Res<AssetServer>,
 // ) -> bool {
 //     shaders.get(&p.shader(&server)).is_some()
-// }
-//
-// pub trait PostProcessing: AsBindGroup + Resource {
-//     const P_LABEL: &'static str;
-//     type BindingState: SystemParam;
-//
-//     fn shader(&self, asset_server: &AssetServer) -> Handle<FragmentShaderSource>;
-//     fn binding_state<'s>(&self, state: &Self::BindingState)
-//         -> <Self as AsWgpuResources>::State<'s>;
-//     fn as_binding<'s>(
-//         self,
-//         context: &RenderContext,
-//         state: <Self as AsWgpuResources>::State<'s>,
-//     ) -> BindGroup {
-//         <Self as AsBindGroup>::as_entire_binding(context, self, state)
-//     }
 // }
 //
 // pub struct PostProcessingPipeline<B: PostProcessing> {

@@ -59,7 +59,6 @@ fn vs_main(@builtin(vertex_index) vert_id: u32, vert: VertexInput, transform: Tr
     out.clip_position.y *= 2.0 / camera.window_dimensions.y;
     out.clip_position = out.clip_position * transformation_matrix * camera_matrix;
     out.clip_position.z = 0.0;
-    // out.uv = vec2<f32>(f32((vert_id << 1) & 2), f32(vert_id & 2));
     return out;
 }
 

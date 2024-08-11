@@ -7,7 +7,9 @@ use super::{
     shader::FragmentShaderSource,
 };
 // #[cfg(target_arch = "wasm32")]
-use crate::{mesh2d::Mesh2dMatPlugin, particle::CpuParticlePlugin, Image, RenderAssets};
+use crate::{
+    mesh2d::Mesh2dMatPlugin, particle::CpuParticlePlugin, Image, RenderAsset, RenderAssets,
+};
 use crate::{
     particle::ParticlePlugin,
     sprite::SpriteMaterialPlugin,
@@ -102,10 +104,18 @@ impl Material for Material2d {
     fn resource_state<'s, 'w>(
         &'s self,
         textures: &'w mut RenderAssets<Texture>,
-        _images: &Assets<Image>,
-        _context: &Res<RenderContext>,
+        images: &Assets<Image>,
+        context: &Res<RenderContext>,
     ) -> Option<<Self as AsWgpuResources>::State<'w>> {
-        textures.get(&self.texture)
+        if let Some(image) = images.get(&self.texture) {
+            Some(
+                textures
+                    .entry(self.texture.clone())
+                    .or_insert_with(|| Texture::prepare_asset(image, &context)),
+            )
+        } else {
+            None
+        }
     }
 
     fn particle_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
@@ -172,7 +182,9 @@ impl Default for Material2d {
     fn default() -> Self {
         Self {
             texture: Handle::dangling(),
-            ..Default::default()
+            saturation: Saturation::default(),
+            modulation: Modulation::default(),
+            opacity: Opacity::default(),
         }
     }
 }

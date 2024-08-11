@@ -309,8 +309,8 @@ fn bind_new_sprite_bundles<M: Material>(
                     let texture = textures
                         .entry(image_handle.clone())
                         .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
-
                     let dimensions = TextureDimensions::from_texture(&texture);
+
                     let binding = if !bind_groups.contains(image_handle.id()) {
                         let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
                             &context,
