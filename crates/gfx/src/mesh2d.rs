@@ -46,16 +46,14 @@ impl<M: Material> Debug for Mesh2dMatPlugin<M> {
 
 impl<M: Material> Plugin for Mesh2dMatPlugin<M> {
     fn build(&mut self, app: &mut app::prelude::App) {
-        app.register_resource::<Mesh2dPipeline<M>>()
-            .add_systems(Schedule::StartUp, startup::<M>)
-            .add_systems(
-                AppSchedule::Render,
-                (
-                    bind_new_mesh_bundles::<M>,
-                    prepare_render_pass::<M>,
-                    render_pass::<M>,
-                ),
-            );
+        app.register_resource::<Mesh2dPipeline<M>>().add_systems(
+            AppSchedule::Render,
+            (
+                bind_new_mesh_bundles::<M>,
+                prepare_render_pass::<M>,
+                render_pass::<M>,
+            ),
+        );
     }
 }
 
@@ -270,10 +268,6 @@ fn minimal_triangulation_with_convex_hull(points: Vec<Point>) -> Option<Vec<Tria
     Some(triangles)
 }
 
-fn startup<M: Material>(mut commands: Commands, context: Res<RenderContext>) {
-    // commands.insert_resource(Mesh2dPipeline::<M>::new(&context, ));
-}
-
 #[derive(WinnyResource)]
 pub struct Mesh2dPipeline<M: Material> {
     pipeline: RenderPipeline2d,
@@ -401,7 +395,6 @@ fn bind_new_mesh_bundles<M: Material>(
 
         if gpu_meshes.get(handle).is_some() {
             commands.get_entity(entity).insert(BindedGpuMesh2d);
-            continue;
         } else {
             if let Some(mesh) = meshes.get(handle) {
                 info!("generating new gpu_mesh: [{mesh:?}]");
