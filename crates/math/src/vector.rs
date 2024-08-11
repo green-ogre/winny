@@ -202,6 +202,14 @@ impl Vec3f {
         }
     }
 
+    pub fn cross(&self, other: &Vec3f) -> Self {
+        Vec3f {
+            x: self.y * other.z - self.z * other.y,
+            y: self.z * other.x - self.x * other.z,
+            z: self.x * other.y - self.y * other.x,
+        }
+    }
+
     pub fn scale_matrix(&self) -> Matrix4x4f {
         Matrix4x4f {
             m: [
