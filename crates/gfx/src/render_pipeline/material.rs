@@ -335,6 +335,12 @@ impl Default for Modulation {
     }
 }
 
+impl Into<[f32; 4]> for Modulation {
+    fn into(self) -> [f32; 4] {
+        [self.0.x, self.0.y, self.0.z, self.0.w]
+    }
+}
+
 /// Simple color material.
 #[derive(WinnyComponent, WinnyAsEgui, Default, Debug, Clone, Copy)]
 pub struct ColorMaterial {

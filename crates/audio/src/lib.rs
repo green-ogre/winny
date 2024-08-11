@@ -25,7 +25,7 @@ use std::{
         Arc,
     },
 };
-use util::info;
+// use util::info;
 use util::tracing::error;
 
 pub extern crate hound;
@@ -99,7 +99,7 @@ macro_rules! map_stream_err {
 fn device() -> Result<Device, Error> {
     let host = cpal::default_host();
     let device = map_stream_err!(Error::HostNA, host.default_output_device().ok_or(()))?;
-    info!("audio device: {}", device.name().unwrap_or("NA".into()));
+    // info!("audio device: {}", device.name().unwrap_or("NA".into()));
     Ok(device)
 }
 
@@ -119,7 +119,7 @@ fn config(device: &Device) -> Result<StreamConfig, Error> {
             .ok_or(())
     )?;
     let config = config.with_sample_rate(cpal::SampleRate(44100)).into();
-    info!("Retrieving audio context: {:?}", config);
+    // info!("Retrieving audio context: {:?}", config);
     Ok(config)
 }
 
@@ -164,7 +164,7 @@ impl AudioSource {
         let spec = self.spec.clone();
 
         let resample_ratio = spec.sample_rate as f32 / config.sample_rate.0 as f32;
-        info!("resampling stream: {}", resample_ratio);
+        // info!("resampling stream: {}", resample_ratio);
         let (eos_tx, eos_rx) = channel();
         // let mut sample_cursor = 0.0;
         // let mut stream_offset = 0;
@@ -390,7 +390,7 @@ pub struct AudioPlayback {
 
 impl Drop for AudioPlayback {
     fn drop(&mut self) {
-        info!("exiting audio stream");
+        // info!("exiting audio stream");
     }
 }
 
