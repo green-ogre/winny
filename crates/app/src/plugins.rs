@@ -1,6 +1,7 @@
 use crate::prelude::App;
+use std::fmt::Debug;
 
-pub trait Plugin {
+pub trait Plugin: Debug {
     fn build(&mut self, app: &mut App);
 }
 

@@ -7,6 +7,7 @@ use app::window::Window;
 use ecs::{AsEgui, WinnyAsEgui, WinnyBundle, WinnyComponent, WinnyResource};
 use math::matrix::Matrix4x4f;
 
+#[derive(Debug)]
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {

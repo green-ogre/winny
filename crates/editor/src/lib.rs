@@ -6,6 +6,7 @@ use egui_dock::{DockArea, DockState, NodeIndex, Style};
 use gfx::{camera::Camera, gui::EguiRenderer};
 use std::any::TypeId;
 
+#[derive(Debug)]
 pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {

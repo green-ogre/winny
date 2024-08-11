@@ -11,6 +11,7 @@ use std::{
 use util::tracing::trace;
 use wgpu::util::DeviceExt;
 
+#[derive(Debug)]
 pub struct TexturePlugin;
 
 impl app::plugins::Plugin for TexturePlugin {

@@ -1,12 +1,13 @@
 use crate::render_pipeline::vertex::VertexLayout;
 use app::plugins::Plugin;
-use cgmath::{Matrix4, Quaternion, Zero};
+use cgmath::{Matrix4, One, Quaternion, Zero};
 use ecs::{WinnyAsEgui, WinnyComponent};
 use math::{
     matrix::{scale_matrix4x4f, translation_matrix4x4f, Matrix4x4f},
     vector::{Vec2f, Vec3f, Vec4f},
 };
 
+#[derive(Debug)]
 pub struct TransformPlugin;
 
 impl Plugin for TransformPlugin {
@@ -28,7 +29,7 @@ impl Default for Transform {
     fn default() -> Self {
         Self {
             translation: Vec3f::zero(),
-            rotation: Quaternion::zero(),
+            rotation: Quaternion::one(),
             scale: Vec2f::one(),
         }
     }

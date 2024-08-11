@@ -17,7 +17,7 @@ use gfx::{
     sprite::SpritePlugin,
     texture::TexturePlugin,
 };
-use gfx::{ColorMaterial, TransformPlugin};
+use gfx::{ColorMaterial, MaterialEguiPlugin, TransformPlugin};
 use log::LogPlugin;
 
 pub extern crate app;
@@ -49,6 +49,7 @@ pub mod prelude {
     pub use util::*;
 }
 
+#[derive(Debug)]
 pub struct DefaultPlugins {
     pub window: WindowPlugin,
     pub log: LogPlugin,
@@ -68,6 +69,17 @@ impl Default for DefaultPlugins {
 impl Plugin for DefaultPlugins {
     fn build(&mut self, app: &mut App) {
         app.add_plugins_priority((
+            ShaderPlugin,
+            EguiPlugin,
+            #[cfg(feature = "editor")]
+            EditorPlugin,
+            TransformPlugin,
+            CameraPlugin,
+            MaterialEguiPlugin,
+            MaterialPlugin::<Material2d>::new(),
+            MaterialPlugin::<ColorMaterial>::new(),
+        ))
+        .add_plugins_priority((
             RendererPlugin,
             BindGroupPlugin,
             self.log.clone(),
@@ -78,16 +90,6 @@ impl Plugin for DefaultPlugins {
             Mesh2dPlugin,
             SpritePlugin,
             AudioPlugin,
-        ))
-        .add_plugins((
-            ShaderPlugin,
-            EguiPlugin,
-            #[cfg(feature = "editor")]
-            EditorPlugin,
-            TransformPlugin,
-            CameraPlugin,
-            MaterialPlugin::<Material2d>::new(),
-            MaterialPlugin::<ColorMaterial>::new(),
         ));
     }
 }

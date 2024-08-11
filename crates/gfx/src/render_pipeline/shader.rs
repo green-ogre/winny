@@ -2,6 +2,7 @@ use app::prelude::*;
 use asset::*;
 use std::ops::Deref;
 
+#[derive(Debug)]
 pub struct ShaderPlugin;
 
 impl Plugin for ShaderPlugin {

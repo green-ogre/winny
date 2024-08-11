@@ -3,6 +3,7 @@ use app::prelude::*;
 use std::{io::Cursor, sync::Arc};
 use taplo::dom;
 
+#[derive(Debug)]
 pub struct TomlPlugin;
 
 impl Plugin for TomlPlugin {

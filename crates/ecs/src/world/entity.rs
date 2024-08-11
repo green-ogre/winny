@@ -3,7 +3,7 @@ use crate::{
     TableRow, UnsafeWorldCell, World,
 };
 use std::{fmt::Debug, sync::atomic::AtomicU32};
-use util::tracing::trace;
+use util::{tracing::trace, warn};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Entity(u64);
@@ -222,11 +222,12 @@ impl Entities {
     }
 
     pub fn despawn(&mut self, entity: Entity) {
-        let Some(meta) = self.meta_mut(entity) else {
-            panic!("reference to invalid entity");
-        };
-        meta.free = true;
-        self.free_entities.push(entity.index() as u32);
+        if let Some(meta) = self.meta_mut(entity) {
+            meta.free = true;
+            self.free_entities.push(entity.index() as u32);
+        } else {
+            warn!("Despawning entity multiple times");
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Entity, &EntityMeta)> {

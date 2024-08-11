@@ -8,6 +8,7 @@ use wgpu_text::glyph_brush::ab_glyph::FontRef;
 use wgpu_text::glyph_brush::{Extra, Section};
 use wgpu_text::{BrushBuilder, TextBrush};
 
+#[derive(Debug)]
 pub struct TextPlugin {
     text_path: String,
 }

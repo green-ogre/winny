@@ -19,6 +19,7 @@ pub mod watcher;
 #[allow(unused)]
 pub use crate::{handle::*, reader::*, server::*, toml::*, watcher::*};
 
+#[derive(Debug)]
 pub struct AssetLoaderPlugin;
 
 impl Plugin for AssetLoaderPlugin {

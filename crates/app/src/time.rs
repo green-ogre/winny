@@ -6,6 +6,7 @@ use chrono::{DateTime, Local, TimeDelta};
 use ecs::egui_widget::Widget;
 use ecs::{WinnyComponent, WinnyResource, *};
 
+#[derive(Debug)]
 pub struct TimePlugin;
 
 impl Plugin for TimePlugin {

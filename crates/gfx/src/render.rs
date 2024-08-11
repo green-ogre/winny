@@ -7,6 +7,7 @@ use std::{
 };
 use util::{info, tracing::trace};
 
+#[derive(Debug)]
 pub struct RendererPlugin;
 
 impl Plugin for RendererPlugin {
@@ -229,7 +230,7 @@ impl RenderEncoder {
 
 /// Handle to the active [`wgpu::TextureView`] in the render app schedule
 #[derive(Debug, WinnyResource)]
-pub struct RenderView(wgpu::TextureView);
+pub struct RenderView(pub(crate) wgpu::TextureView);
 
 impl Deref for RenderView {
     type Target = wgpu::TextureView;

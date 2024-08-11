@@ -1,7 +1,7 @@
 use crate::camera::{Camera, CameraUniform};
 use crate::render::{RenderEncoder, RenderView};
 use crate::render_pipeline::bind_group::{
-    AsBindGroup, AssetBindGroups, BindGroup, BindGroupHandle, RenderBindGroup,
+    self, AsBindGroup, AssetBindGroups, BindGroup, BindGroupHandle, RenderBindGroup,
 };
 use crate::render_pipeline::buffer::AsGpuBuffer;
 use crate::render_pipeline::material::{Material, Material2d};
@@ -17,14 +17,17 @@ use app::prelude::*;
 use asset::server::AssetServer;
 use asset::*;
 use cgmath::{Quaternion, Rad, Rotation3};
+use ecs::system_param::SystemParam;
 use ecs::*;
 use ecs::{WinnyBundle, WinnyComponent, WinnyResource};
 use math::angle::{Degrees, Radf};
 use math::matrix::{scale_matrix4x4f, Matrix4x4f};
 use math::vector::{Vec2f, Vec3f};
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::Range;
 
+#[derive(Debug)]
 pub struct SpritePlugin;
 
 impl Plugin for SpritePlugin {
@@ -42,6 +45,12 @@ fn startup(mut commands: Commands, context: Res<RenderContext>) {
 
 #[derive(Default)]
 pub struct SpriteMaterialPlugin<M: Material>(PhantomData<M>);
+
+impl<M: Material> Debug for SpriteMaterialPlugin<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SpriteMaterialPlugin")
+    }
+}
 
 impl<M: Material> Plugin for SpriteMaterialPlugin<M> {
     fn build(&mut self, app: &mut App) {
@@ -66,7 +75,6 @@ impl<M: Material> SpriteMaterialPlugin<M> {
 pub struct SpriteBundle<M: Material = Material2d> {
     pub sprite: Sprite,
     pub material: M,
-    pub handle: Handle<Image>,
 }
 
 /// Describes local transformations in relation to the entity [`Transform`].
@@ -303,17 +311,19 @@ fn bind_new_sprite_bundles<M: Material>(
                         .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
 
                     let dimensions = TextureDimensions::from_texture(&texture);
-                    commands.get_entity(entity).insert((
-                        bind_groups.get_handle_or_insert_with(image_handle.clone(), || {
-                            let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
-                                &context,
-                                material.clone(),
-                                material.resource_state(&texture),
-                            ));
-                            binding
-                        }),
-                        dimensions,
-                    ));
+                    let binding = if !bind_groups.contains(image_handle.id()) {
+                        let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
+                            &context,
+                            material.clone(),
+                            material
+                                .resource_state(&mut textures, &images, &context)
+                                .expect("material is initialized"),
+                        ));
+                        bind_groups.insert(image_handle.clone(), binding)
+                    } else {
+                        bind_groups.get_handle(image_handle).unwrap()
+                    };
+                    commands.get_entity(entity).insert((binding, dimensions));
                 } else {
                     return;
                 }
@@ -376,33 +386,37 @@ fn bind_updated_texture_handles<M: Material>(
     context: Res<RenderContext>,
     images: Res<Assets<Image>>,
     mut textures: ResMut<RenderAssets<Texture>>,
-    texture_params: <Texture as RenderAsset>::Params<'_>,
+    exture_params: <Texture as RenderAsset>::Params<'_>,
+    // params: <M as Material>::BindingState<'_>,
 ) {
-    for (texture_handle, bind_group_handle, texture_dimensions, material) in sprites.iter_mut() {
-        if texture_handle.is_changed() {
-            if let Some(image) = images.get(texture_handle) {
-                let texture = textures
-                    .entry(texture_handle.clone())
-                    .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
-                let dimensions = TextureDimensions::from_texture(texture);
-                let binding = bind_groups.get_handle_or_insert_with(texture_handle.clone(), || {
-                    let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
-                        &context,
-                        material.clone(),
-                        material.resource_state(texture),
-                    ));
-                    binding
-                });
-
-                *bind_group_handle = binding;
-                *texture_dimensions = dimensions;
-            } else {
-                // Image is not yet created, so we mark the Handle<Image> as `changed` to repeat
-                // this operation.
-                texture_handle.mark_changed();
-            }
-        }
-    }
+    // for (texture_handle, bind_group_handle, texture_dimensions, material) in sprites.iter_mut() {
+    //     if texture_handle.is_changed() {
+    //         if let Some(image) = images.get(texture_handle) {
+    //             let texture = textures
+    //                 .entry(texture_handle.clone())
+    //                 .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
+    //             let dimensions = TextureDimensions::from_texture(texture);
+    //             if !bind_groups.contains(texture_handle.id()) {
+    //                 let binding = RenderBindGroup(<M as AsBindGroup>::as_entire_binding(
+    //                     &context,
+    //                     material.clone(),
+    //                     material
+    //                         .resource_state(&params)
+    //                         .expect("material is not initialized"),
+    //                 ));
+    //                 bind_groups.insert(texture_handle.clone(), binding);
+    //             }
+    //
+    //             let binding = bind_groups.get_from_id(texture_handle.id()).unwrap();
+    //             *bind_group_handle = binding;
+    //             *texture_dimensions = dimensions;
+    //         } else {
+    //             // Image is not yet created, so we mark the Handle<Image> as `changed` to repeat
+    //             // this operation.
+    //             texture_handle.mark_changed();
+    //         }
+    //     }
+    // }
 }
 
 #[repr(C)]

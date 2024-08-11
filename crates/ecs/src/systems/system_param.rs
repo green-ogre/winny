@@ -27,6 +27,26 @@ pub trait SystemParam {
     }
 }
 
+impl SystemParam for () {
+    type Item<'world, 'state> = ();
+    type State = ();
+
+    fn access(_world: &mut World) -> SystemAccess {
+        SystemAccess::default()
+    }
+
+    fn init_state(_world: &mut World) -> Self::State {
+        ()
+    }
+
+    fn to_param<'w, 's>(
+        _state: &'s mut Self::State,
+        _world: UnsafeWorldCell<'w>,
+    ) -> Self::Item<'w, 's> {
+        ()
+    }
+}
+
 impl SystemParam for &World {
     type State = ();
     type Item<'world, 'state> = &'world World;

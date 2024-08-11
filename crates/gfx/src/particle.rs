@@ -13,6 +13,7 @@ use crate::{
     },
     texture::{Image, Texture, TextureDimensions},
     transform::Transform,
+    AsWgpuResources, FragmentShader,
 };
 use app::prelude::*;
 use app::{
@@ -21,19 +22,25 @@ use app::{
 };
 use asset::{server::AssetServer, *};
 use cgmath::{Quaternion, Rad, Rotation3};
-use ecs::{WinnyBundle, WinnyComponent, WinnyResource, *};
+use ecs::{system_param::SystemParam, WinnyBundle, WinnyComponent, WinnyResource, *};
 use math::{
     angle::Radf,
     matrix::{scale_matrix4x4f, world_to_screen_space_matrix4x4f, Matrix4x4f},
     vector::{Vec2f, Vec3f, Vec4f},
 };
 use rand::Rng;
-use std::{marker::PhantomData, ops::Range};
+use std::{fmt::Debug, marker::PhantomData, ops::Range};
 use util::info;
 
 // WARN: Particles and Sprites exist within different contexts, therefore they're z position has no
 // relationship to each other, and one will always draw over the other
 pub struct ParticlePlugin<M: Material>(PhantomData<M>);
+
+impl<M: Material> Debug for ParticlePlugin<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ParticlePlugin")
+    }
+}
 
 impl<M: Material> Plugin for ParticlePlugin<M> {
     fn build(&mut self, app: &mut App) {
@@ -56,6 +63,12 @@ impl<M: Material> ParticlePlugin<M> {
 /// For the time being, WebGPU will not run on wasm, therefore the compute shader and storage
 /// buffers are not supported for the [`ParticlePlugin`].
 pub struct CpuParticlePlugin<M: Material>(PhantomData<M>);
+
+impl<M: Material> Debug for CpuParticlePlugin<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CpuParticlePlugin")
+    }
+}
 
 impl<M: Material> Plugin for CpuParticlePlugin<M> {
     fn build(&mut self, app: &mut App) {
@@ -289,153 +302,153 @@ pub struct ParticlePipeline<T: Material> {
     _phantom: PhantomData<T>,
 }
 
-impl<M: Material> ParticlePipeline<M> {
-    pub fn new<'s>(
-        vert_shader: &VertexShader,
-        frag_shaders: &mut Assets<FragmentShaderSource>,
-        server: &mut AssetServer,
-        material: M,
-        emitter: &ParticleEmitter,
-        buffer_len: u32,
-        context: &RenderContext,
-        texture: &Texture,
-        emitter_transform: &Transform,
-        delta: &DeltaTime,
-        window: &Window,
-    ) -> Self {
-        let material_resources = <M as AsBindGroup>::as_entire_binding(
-            context,
-            material.clone(),
-            material.resource_state(texture),
-        );
-
-        let camera_binding = <&[CameraUniform] as AsBindGroup>::as_entire_binding_empty(
-            context,
-            &[],
-            std::mem::size_of::<CameraUniform>() as u64,
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        );
-
-        let mut vertices = FULLSCREEN_QUAD_VERTEX_UV;
-        let mut atlas_scaling = (1.0, 1.0);
-        let texture_dimensions = TextureDimensions::from_texture(texture);
-        let normalized_scale = Vec2f::new(
-            texture_dimensions.width() / window.viewport.width(),
-            texture_dimensions.height() / window.viewport.height(),
-        );
-        let image_scale = scale_matrix4x4f(normalized_scale);
-        for vert in vertices.iter_mut() {
-            vert.position = image_scale * vert.position;
-        }
-        let particle_vertex_buffer = <VertexUv as AsVertexBuffer<0>>::as_entire_buffer(
-            &context,
-            &vertices,
-            wgpu::BufferUsages::VERTEX,
-        );
-
-        let particles = generate_particles_with_conditions(emitter, delta, &context.config);
-
-        let vertex_particle_resources = <&[ReadOnlyRawParticle] as AsBindGroup>::as_entire_binding(
-            context,
-            &particles.iter().map(|p| p.into()).collect::<Vec<_>>(),
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        );
-
-        let compute_particle_resources = <&[RawParticle] as AsBindGroup>::as_entire_binding(
-            context,
-            &particles,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        );
-
-        let alive_indexes = (0..buffer_len)
-            .map(|i| InstanceIndex(i))
-            .collect::<Vec<_>>();
-        let alive_index_buffer = <InstanceIndex as AsVertexBuffer<2>>::as_entire_buffer(
-            &context,
-            &alive_indexes,
-            wgpu::BufferUsages::VERTEX,
-        );
-
-        let vertex_emitter_uniform = VertexEmitterUniform::new(emitter, context, emitter_transform);
-        let vertex_emitter_resources = <&[VertexEmitterUniform] as AsBindGroup>::as_entire_binding(
-            context,
-            &[vertex_emitter_uniform],
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        );
-
-        let render_pipeline = RenderPipeline2d::from_material_layout(
-            format!("particles: {}", M::LABEL).as_str(),
-            FragmentType::Particle,
-            context,
-            server,
-            &[
-                &vertex_emitter_resources,
-                &vertex_particle_resources,
-                &camera_binding,
-            ],
-            material_resources.layout(),
-            &[&particle_vertex_buffer, &alive_index_buffer],
-            vert_shader,
-            frag_shaders,
-            material,
-        );
-
-        let compute_emitter_uniform =
-            ComputeEmitterUniform::new(emitter, context, emitter_transform, delta);
-        let compute_emitter_resources =
-            <&[ComputeEmitterUniform] as AsBindGroup>::as_entire_binding(
-                context,
-                &[compute_emitter_uniform],
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            );
-
-        let compute_shader = wgpu::ShaderModuleDescriptor {
-            label: Some("particle compute"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../../res/shaders/particles_compute.wgsl").into(),
-            ),
-        };
-        let compute_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("particle compute"),
-                    bind_group_layouts: &[
-                        &compute_particle_resources.layout(),
-                        &compute_emitter_resources.layout(),
-                    ],
-                    push_constant_ranges: &[],
-                });
-        let compute_shader = context.device.create_shader_module(compute_shader);
-
-        let compute_pipeline =
-            context
-                .device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("particle compute"),
-                    layout: Some(&compute_layout),
-                    module: &compute_shader,
-                    entry_point: "main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                });
-
-        Self {
-            camera_binding,
-            render_pipeline,
-            compute_pipeline,
-            material_resources,
-            particle_vertex_buffer,
-            vertex_emitter_resources,
-            vertex_particle_resources,
-            compute_emitter_resources,
-            compute_particle_resources,
-            alive_index_buffer,
-            buffer_len,
-
-            _phantom: PhantomData,
-        }
-    }
-}
+// impl<M: Material> ParticlePipeline<M> {
+//     pub fn new<'s>(
+//         vert_shader: &VertexShader,
+//         frag_shaders: &mut Assets<FragmentShaderSource>,
+//         server: &mut AssetServer,
+//         material: M,
+//         emitter: &ParticleEmitter,
+//         buffer_len: u32,
+//         context: &RenderContext,
+//         textures: &RenderAssets<Texture>,
+//         texture_dimensions: &TextureDimensions,
+//         emitter_transform: &Transform,
+//         delta: &DeltaTime,
+//         window: &Window,
+//     ) -> Self {
+//         let material_resources = <M as AsBindGroup>::as_entire_binding(
+//             context,
+//             material.clone(),
+//             material.resource_state(textures).unwrap(),
+//         );
+//
+//         let camera_binding = <&[CameraUniform] as AsBindGroup>::as_entire_binding_empty(
+//             context,
+//             &[],
+//             std::mem::size_of::<CameraUniform>() as u64,
+//             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+//         );
+//
+//         let mut vertices = FULLSCREEN_QUAD_VERTEX_UV;
+//         let mut atlas_scaling = (1.0, 1.0);
+//         let normalized_scale = Vec2f::new(
+//             texture_dimensions.width() / window.viewport.width(),
+//             texture_dimensions.height() / window.viewport.height(),
+//         );
+//         let image_scale = scale_matrix4x4f(normalized_scale);
+//         for vert in vertices.iter_mut() {
+//             vert.position = image_scale * vert.position;
+//         }
+//         let particle_vertex_buffer = <VertexUv as AsVertexBuffer<0>>::as_entire_buffer(
+//             &context,
+//             &vertices,
+//             wgpu::BufferUsages::VERTEX,
+//         );
+//
+//         let particles = generate_particles_with_conditions(emitter, delta, &context.config);
+//
+//         let vertex_particle_resources = <&[ReadOnlyRawParticle] as AsBindGroup>::as_entire_binding(
+//             context,
+//             &particles.iter().map(|p| p.into()).collect::<Vec<_>>(),
+//             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+//         );
+//
+//         let compute_particle_resources = <&[RawParticle] as AsBindGroup>::as_entire_binding(
+//             context,
+//             &particles,
+//             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+//         );
+//
+//         let alive_indexes = (0..buffer_len)
+//             .map(|i| InstanceIndex(i))
+//             .collect::<Vec<_>>();
+//         let alive_index_buffer = <InstanceIndex as AsVertexBuffer<2>>::as_entire_buffer(
+//             &context,
+//             &alive_indexes,
+//             wgpu::BufferUsages::VERTEX,
+//         );
+//
+//         let vertex_emitter_uniform = VertexEmitterUniform::new(emitter, context, emitter_transform);
+//         let vertex_emitter_resources = <&[VertexEmitterUniform] as AsBindGroup>::as_entire_binding(
+//             context,
+//             &[vertex_emitter_uniform],
+//             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+//         );
+//
+//         let render_pipeline = RenderPipeline2d::from_material_layout(
+//             format!("particles: {}", M::LABEL).as_str(),
+//             FragmentType::Particle,
+//             context,
+//             server,
+//             &[
+//                 &vertex_emitter_resources,
+//                 &vertex_particle_resources,
+//                 &camera_binding,
+//             ],
+//             material_resources.layout(),
+//             &[&particle_vertex_buffer, &alive_index_buffer],
+//             vert_shader,
+//             frag_shaders,
+//             material,
+//         );
+//
+//         let compute_emitter_uniform =
+//             ComputeEmitterUniform::new(emitter, context, emitter_transform, delta);
+//         let compute_emitter_resources =
+//             <&[ComputeEmitterUniform] as AsBindGroup>::as_entire_binding(
+//                 context,
+//                 &[compute_emitter_uniform],
+//                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+//             );
+//
+//         let compute_shader = wgpu::ShaderModuleDescriptor {
+//             label: Some("particle compute"),
+//             source: wgpu::ShaderSource::Wgsl(
+//                 include_str!("../../../res/shaders/particles_compute.wgsl").into(),
+//             ),
+//         };
+//         let compute_layout =
+//             context
+//                 .device
+//                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+//                     label: Some("particle compute"),
+//                     bind_group_layouts: &[
+//                         &compute_particle_resources.layout(),
+//                         &compute_emitter_resources.layout(),
+//                     ],
+//                     push_constant_ranges: &[],
+//                 });
+//         let compute_shader = context.device.create_shader_module(compute_shader);
+//
+//         let compute_pipeline =
+//             context
+//                 .device
+//                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+//                     label: Some("particle compute"),
+//                     layout: Some(&compute_layout),
+//                     module: &compute_shader,
+//                     entry_point: "main",
+//                     compilation_options: wgpu::PipelineCompilationOptions::default(),
+//                 });
+//
+//         Self {
+//             camera_binding,
+//             render_pipeline,
+//             compute_pipeline,
+//             material_resources,
+//             particle_vertex_buffer,
+//             vertex_emitter_resources,
+//             vertex_particle_resources,
+//             compute_emitter_resources,
+//             compute_particle_resources,
+//             alive_index_buffer,
+//             buffer_len,
+//
+//             _phantom: PhantomData,
+//         }
+//     }
+// }
 
 #[derive(WinnyComponent)]
 pub struct CpuParticlePipeline<T: Material> {
@@ -454,22 +467,19 @@ pub struct CpuParticlePipeline<T: Material> {
 impl<M: Material> CpuParticlePipeline<M> {
     pub fn new<'s>(
         vert_shader: &VertexShader,
-        frag_shaders: &mut Assets<FragmentShaderSource>,
-        server: &mut AssetServer,
+        frag_shader: &FragmentShader,
         material: M,
         emitter: &ParticleEmitter,
         buffer_len: u32,
-        context: &RenderContext,
-        texture: &Texture,
+        context: &Res<RenderContext>,
+        texture_dimensions: &TextureDimensions,
         emitter_transform: &Transform,
         delta: &DeltaTime,
         window: &Window,
+        state: <M as AsWgpuResources>::State<'s>,
     ) -> Self {
-        let material_resources = <M as AsBindGroup>::as_entire_binding(
-            context,
-            material.clone(),
-            material.resource_state(texture),
-        );
+        let material_resources =
+            <M as AsBindGroup>::as_entire_binding(context, material.clone(), state);
 
         let camera_binding = <&[CameraUniform] as AsBindGroup>::as_entire_binding_empty(
             context,
@@ -480,7 +490,6 @@ impl<M: Material> CpuParticlePipeline<M> {
 
         let mut vertices = FULLSCREEN_QUAD_VERTEX_UV;
         let mut atlas_scaling = (1.0, 1.0);
-        let texture_dimensions = TextureDimensions::from_texture(texture);
         let normalized_scale = Vec2f::new(
             texture_dimensions.width() / window.viewport.width(),
             texture_dimensions.height() / window.viewport.height(),
@@ -503,17 +512,18 @@ impl<M: Material> CpuParticlePipeline<M> {
             wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         );
 
-        let render_pipeline = RenderPipeline2d::from_material_layout(
+        let render_pipeline = RenderPipeline2d::new(
             format!("cpu particles: {}", M::LABEL).as_str(),
-            FragmentType::CpuParticle,
             context,
-            server,
-            &[&camera_binding],
-            material_resources.layout(),
-            &[&particle_vertex_buffer, &particle_transform_buffer],
+            &[&camera_binding.layout()],
+            &[
+                particle_vertex_buffer.layout(),
+                particle_transform_buffer.layout(),
+            ],
             vert_shader,
-            frag_shaders,
-            material,
+            frag_shader,
+            wgpu::BlendState::ALPHA_BLENDING,
+            None,
         );
 
         let emitter_uniform =
@@ -609,7 +619,7 @@ fn generate_particles_with_conditions(
 #[derive(WinnyResource)]
 struct ParticleVertShaderHandle(Handle<VertexShaderSource>);
 
-fn bind_new_particle_bundles<M: Material>(
+fn bind_new_particle_bundles<'w, M: Material>(
     mut commands: Commands,
     mut server: ResMut<AssetServer>,
     context: Res<RenderContext>,
@@ -626,59 +636,61 @@ fn bind_new_particle_bundles<M: Material>(
     mut frag_shaders: ResMut<Assets<FragmentShaderSource>>,
     window: Res<Window>,
 ) {
-    for (entity, handle, transform, emitter, material) in bundles.iter() {
-        if let Some(vert_shader_handle) = &particle_vert_shader_handle {
-            if let Some(image) = images.get(handle) {
-                let texture = textures
-                    .entry(handle.clone())
-                    .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
-
-                if let Some(vert_shader) = vert_shaders.get_mut(&vert_shader_handle.0) {
-                    if !material.is_init(&server, &frag_shaders) {
-                        continue;
-                    }
-
-                    let particle_render_pipeline = ParticlePipeline::new(
-                        vert_shader.shader(&context),
-                        &mut frag_shaders,
-                        &mut server,
-                        material.clone(),
-                        emitter,
-                        emitter.num_particles as u32,
-                        &context,
-                        &texture,
-                        &transform,
-                        &delta,
-                        &window,
-                    );
-
-                    let dimensions = TextureDimensions::from_texture(&texture);
-                    commands
-                        .get_entity(entity)
-                        .insert((particle_render_pipeline, dimensions));
-                } else {
-                    // util::tracing::error!(
-                    //     "Could not retrieve asset particle pipeline vertex shader"
-                    // );
-                }
-            }
-        } else {
-            // This will only run when the first particle pipeline is built, so we compile the
-            // shader
-            let vert_shader = wgpu::ShaderModuleDescriptor {
-                label: Some("particles vert"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../../../res/shaders/particle_vert.wgsl").into(),
-                ),
-            };
-            let vert_shader = VertexShader(context.device.create_shader_module(vert_shader));
-            let handle = vert_shaders.add(VertexShaderSource(
-                include_str!("../../../res/shaders/particle_vert.wgsl").into(),
-                Some(vert_shader),
-            ));
-            commands.insert_resource(ParticleVertShaderHandle(handle));
-        }
-    }
+    // for (entity, handle, transform, emitter, material) in bundles.iter() {
+    //     if let Some(vert_shader_handle) = &particle_vert_shader_handle {
+    //         if let Some(image) = images.get(handle) {
+    //             let texture = textures
+    //                 .entry(handle.clone())
+    //                 .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
+    //
+    //             if let Some(vert_shader) = vert_shaders.get_mut(&vert_shader_handle.0) {
+    //                 if !material.is_init(&server, &frag_shaders) {
+    //                     continue;
+    //                 }
+    //
+    //                 let dimensions = TextureDimensions::from_texture(&texture);
+    //
+    //                 let particle_render_pipeline = ParticlePipeline::new(
+    //                     vert_shader.shader(&context),
+    //                     &mut frag_shaders,
+    //                     &mut server,
+    //                     material.clone(),
+    //                     emitter,
+    //                     emitter.num_particles as u32,
+    //                     &context,
+    //                     &textures,
+    //                     &dimensions,
+    //                     &transform,
+    //                     &delta,
+    //                     &window,
+    //                 );
+    //
+    //                 commands
+    //                     .get_entity(entity)
+    //                     .insert((particle_render_pipeline, dimensions));
+    //             } else {
+    //                 // util::tracing::error!(
+    //                 //     "Could not retrieve asset particle pipeline vertex shader"
+    //                 // );
+    //             }
+    //         }
+    //     } else {
+    //         // This will only run when the first particle pipeline is built, so we compile the
+    //         // shader
+    //         let vert_shader = wgpu::ShaderModuleDescriptor {
+    //             label: Some("particles vert"),
+    //             source: wgpu::ShaderSource::Wgsl(
+    //                 include_str!("../../../res/shaders/particle_vert.wgsl").into(),
+    //             ),
+    //         };
+    //         let vert_shader = VertexShader(context.device.create_shader_module(vert_shader));
+    //         let handle = vert_shaders.add(VertexShaderSource(
+    //             include_str!("../../../res/shaders/particle_vert.wgsl").into(),
+    //             Some(vert_shader),
+    //         ));
+    //         commands.insert_resource(ParticleVertShaderHandle(handle));
+    //     }
+    // }
 }
 
 fn bind_new_cpu_particle_bundles<M: Material>(
@@ -706,28 +718,33 @@ fn bind_new_cpu_particle_bundles<M: Material>(
                     .or_insert_with(|| Texture::prepare_asset(image, &texture_params));
 
                 if let Some(vert_shader) = vert_shaders.get_mut(&vert_shader_handle.0) {
-                    if !material.is_init(&server, &frag_shaders) {
-                        continue;
+                    if let Some(frag) =
+                        frag_shaders.get_mut(&material.cpu_particle_fragment_shader(&server))
+                    {
+                        let dimensions = TextureDimensions::from_texture(&texture);
+                        if let Some(state) =
+                            material.resource_state(&mut textures, &images, &context)
+                        {
+                            let particle_render_pipeline = CpuParticlePipeline::new(
+                                vert_shader.shader(&context),
+                                frag.shader(&context),
+                                material.clone(),
+                                emitter,
+                                emitter.num_particles as u32,
+                                &context,
+                                &dimensions,
+                                &transform,
+                                &delta,
+                                &window,
+                                state,
+                            );
+
+                            commands
+                                .get_entity(entity)
+                                .insert((particle_render_pipeline, dimensions));
+                        }
+                    } else {
                     }
-
-                    let particle_render_pipeline = CpuParticlePipeline::new(
-                        vert_shader.shader(&context),
-                        &mut frag_shaders,
-                        &mut server,
-                        material.clone(),
-                        emitter,
-                        emitter.num_particles as u32,
-                        &context,
-                        &texture,
-                        &transform,
-                        &delta,
-                        &window,
-                    );
-
-                    let dimensions = TextureDimensions::from_texture(&texture);
-                    commands
-                        .get_entity(entity)
-                        .insert((particle_render_pipeline, dimensions));
                 } else {
                     // util::tracing::error!(
                     //     "Could not retrieve asset particle pipeline vertex shader"

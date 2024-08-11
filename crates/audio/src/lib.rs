@@ -28,6 +28,7 @@ use std::{
 use util::tracing::{error, trace};
 // use wav::WavFormat;
 
+#[derive(Debug)]
 pub struct AudioPlugin;
 
 impl Plugin for AudioPlugin {

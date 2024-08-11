@@ -1,11 +1,11 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 
 use crate::{
     camera::{Camera, CameraUniform},
     render_pipeline::buffer::AsGpuBuffer,
-    AsBindGroup, AsVertexBuffer, BindGroup, FragmentShader, RenderAsset, RenderAssetApp,
-    RenderAssets, RenderEncoder, RenderPipeline2d, RenderView, Transform, Vertex, VertexBuffer,
-    VertexShader, VertexUv,
+    AsBindGroup, AsVertexBuffer, AsWgpuResources, BindGroup, FragmentShader, FragmentShaderSource,
+    Image, Material, RenderAsset, RenderAssetApp, RenderAssets, RenderEncoder, RenderPipeline2d,
+    RenderView, Texture, Transform, Vertex, VertexBuffer, VertexShader, VertexUv, WgpuResource,
 };
 use app::{
     core::{AppSchedule, Schedule},
@@ -13,7 +13,7 @@ use app::{
     render_util::RenderContext,
     window::Window,
 };
-use asset::{Asset, AssetApp, AssetLoader, Assets, Handle};
+use asset::{server::AssetServer, Asset, AssetApp, AssetLoader, Assets, Handle};
 use cereal::{Deserialize, Deserializer, Serialize, WinnyDeserialize, WinnySerialize};
 use ecs::*;
 use ecs::{egui_widget::AsEgui, WinnyAsEgui};
@@ -24,6 +24,7 @@ use math::{
 use util::info;
 use wgpu::core::command::compute_commands::wgpu_compute_pass_push_debug_group;
 
+#[derive(Debug)]
 pub struct Mesh2dPlugin;
 
 impl Plugin for Mesh2dPlugin {
@@ -31,13 +32,36 @@ impl Plugin for Mesh2dPlugin {
         app.egui_component::<BindedGpuMesh2d>()
             .register_asset::<Mesh2d>()
             .register_render_asset::<GpuMesh2d>()
-            .register_asset_loader::<Mesh2d>(Mesh2dAssetLoader)
-            .register_resource::<Mesh2dPipeline>()
-            .add_systems(Schedule::StartUp, startup)
+            .register_asset_loader::<Mesh2d>(Mesh2dAssetLoader);
+    }
+}
+
+pub struct Mesh2dMatPlugin<M: Material>(PhantomData<M>);
+
+impl<M: Material> Debug for Mesh2dMatPlugin<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Mesh2dPlugin")
+    }
+}
+
+impl<M: Material> Plugin for Mesh2dMatPlugin<M> {
+    fn build(&mut self, app: &mut app::prelude::App) {
+        app.register_resource::<Mesh2dPipeline<M>>()
+            .add_systems(Schedule::StartUp, startup::<M>)
             .add_systems(
                 AppSchedule::Render,
-                (bind_new_mesh_bundles, prepare_render_pass, render_pass),
+                (
+                    bind_new_mesh_bundles::<M>,
+                    prepare_render_pass::<M>,
+                    render_pass::<M>,
+                ),
             );
+    }
+}
+
+impl<M: Material> Mesh2dMatPlugin<M> {
+    pub fn new() -> Self {
+        Self(PhantomData)
     }
 }
 
@@ -246,23 +270,29 @@ fn minimal_triangulation_with_convex_hull(points: Vec<Point>) -> Option<Vec<Tria
     Some(triangles)
 }
 
-fn startup(mut commands: Commands, context: Res<RenderContext>) {
-    commands.insert_resource(Mesh2dPipeline::new(&context));
-}
-
-fn can_build_pipeline(camera: Query<Camera>) -> bool {
-    camera.get_single().is_ok()
+fn startup<M: Material>(mut commands: Commands, context: Res<RenderContext>) {
+    // commands.insert_resource(Mesh2dPipeline::<M>::new(&context, ));
 }
 
 #[derive(WinnyResource)]
-pub struct Mesh2dPipeline {
+pub struct Mesh2dPipeline<M: Material> {
     pipeline: RenderPipeline2d,
     camera: BindGroup,
+    material: BindGroup,
     transforms: VertexBuffer,
+    _phantom: PhantomData<M>,
 }
 
-impl Mesh2dPipeline {
-    pub fn new(context: &RenderContext) -> Self {
+impl<M: Material> Mesh2dPipeline<M> {
+    pub fn new(
+        context: &RenderContext,
+        material: M,
+        shaders: &mut Assets<FragmentShaderSource>,
+        server: &AssetServer,
+        state: <M as AsWgpuResources>::State<'_>,
+    ) -> Self {
+        let (vert, frag) = get_shaders(context, &material, shaders, server);
+
         let camera = <&[CameraUniform] as AsBindGroup>::as_entire_binding_empty(
             context,
             &[],
@@ -270,18 +300,18 @@ impl Mesh2dPipeline {
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
 
+        let material = <M as AsBindGroup>::as_entire_binding(context, material.clone(), state);
+
         let transforms = <Matrix4x4f as AsVertexBuffer<1>>::as_entire_buffer_empty(
             context,
             std::mem::size_of::<Matrix4x4f>() as u64,
             wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         );
 
-        let (vert, frag) = shaders(context);
-
         let pipeline = RenderPipeline2d::new(
             "mesh",
             context,
-            &[camera.layout()],
+            &[camera.layout(), material.layout()],
             &[
                 <Vertex as AsVertexBuffer<0>>::vertex_layout(),
                 <Matrix4x4f as AsVertexBuffer<1>>::vertex_layout(),
@@ -295,12 +325,19 @@ impl Mesh2dPipeline {
         Mesh2dPipeline {
             pipeline,
             camera,
+            material,
             transforms,
+            _phantom: PhantomData,
         }
     }
 }
 
-fn shaders(context: &RenderContext) -> (VertexShader, FragmentShader) {
+fn get_shaders<'s, M: Material>(
+    context: &RenderContext,
+    material: &M,
+    shaders: &'s mut Assets<FragmentShaderSource>,
+    server: &AssetServer,
+) -> (VertexShader, &'s FragmentShader) {
     (
         VertexShader({
             let shader = wgpu::ShaderModuleDescriptor {
@@ -311,31 +348,57 @@ fn shaders(context: &RenderContext) -> (VertexShader, FragmentShader) {
             };
             context.device.create_shader_module(shader)
         }),
-        FragmentShader({
-            let shader = wgpu::ShaderModuleDescriptor {
-                label: None,
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../../../res/shaders/mesh2d.wgsl").into(),
-                ),
-            };
-            context.device.create_shader_module(shader)
-        }),
+        RenderPipeline2d::material_frag(
+            material,
+            server,
+            crate::FragmentType::Mesh2d,
+            shaders,
+            context,
+        ),
     )
 }
 
 #[derive(WinnyComponent, WinnyAsEgui)]
 struct BindedGpuMesh2d;
 
-fn bind_new_mesh_bundles(
+fn bind_new_mesh_bundles<M: Material>(
     mut commands: Commands,
-    pipeline: Res<Mesh2dPipeline>,
+    pipeline: Option<Res<Mesh2dPipeline<M>>>,
     context: Res<RenderContext>,
-    mesh_bundles: Query<(Entity, Handle<Mesh2d>), (With<Transform>, Without<BindedGpuMesh2d>)>,
+    mut textures: ResMut<RenderAssets<Texture>>,
+    images: Res<Assets<Image>>,
+    mesh_bundles: Query<(Entity, Handle<Mesh2d>, M), (With<Transform>, Without<BindedGpuMesh2d>)>,
     meshes: Res<Assets<Mesh2d>>,
     mut gpu_meshes: ResMut<RenderAssets<GpuMesh2d>>,
     params: <GpuMesh2d as RenderAsset>::Params<'_>,
+    server: Res<AssetServer>,
+    mut shaders: ResMut<Assets<FragmentShaderSource>>,
 ) {
-    for (entity, handle) in mesh_bundles.iter() {
+    let mut generated_pipeline = false;
+    for (entity, handle, material) in mesh_bundles.iter() {
+        if pipeline.is_none() && !generated_pipeline {
+            if shaders
+                .get(&material.mesh_2d_fragment_shader(&server))
+                .is_some()
+            {
+                if let Some(state) = material.resource_state(&mut textures, &images, &context) {
+                    let pipeline = Mesh2dPipeline::new(
+                        &context,
+                        material.clone(),
+                        &mut shaders,
+                        &server,
+                        state,
+                    );
+                    commands.insert_resource(pipeline);
+                    generated_pipeline = true;
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
+
         if gpu_meshes.get(handle).is_some() {
             commands.get_entity(entity).insert(BindedGpuMesh2d);
             continue;
@@ -350,16 +413,20 @@ fn bind_new_mesh_bundles(
     }
 }
 
-fn prepare_render_pass(
+fn prepare_render_pass<M: Material>(
     mut commands: Commands,
-    mut pipeline: ResMut<Mesh2dPipeline>,
+    mut pipeline: Option<ResMut<Mesh2dPipeline<M>>>,
     context: Res<RenderContext>,
-    meshes: Query<Transform, With<(Handle<Mesh2d>, BindedGpuMesh2d)>>,
+    meshes: Query<(Transform, M), With<(Handle<Mesh2d>, BindedGpuMesh2d)>>,
     mut gpu_meshes: ResMut<RenderAssets<GpuMesh2d>>,
     params: <GpuMesh2d as RenderAsset>::Params<'_>,
     camera: Query<(Camera, Transform)>,
     window: Res<Window>,
 ) {
+    let Some(mut pipeline) = pipeline else {
+        return;
+    };
+
     if let Ok((camera, transform)) = camera.get_single() {
         CameraUniform::write_buffer(
             &context,
@@ -368,21 +435,33 @@ fn prepare_render_pass(
         );
     }
 
-    let transform_data = meshes.iter().map(|t| t.as_matrix()).collect::<Vec<_>>();
+    let transform_data = meshes
+        .iter()
+        .map(|(t, _)| t.as_matrix())
+        .collect::<Vec<_>>();
     <Matrix4x4f as AsVertexBuffer<1>>::write_buffer_resize(
         &context,
         &mut pipeline.transforms,
         &transform_data,
-    )
+    );
+
+    for (_, material) in meshes.iter() {
+        M::update(material, &context, &pipeline.material);
+    }
 }
 
-fn render_pass(
+fn render_pass<M: Material>(
     mut encoder: ResMut<RenderEncoder>,
     view: Res<RenderView>,
-    pipeline: Res<Mesh2dPipeline>,
-    meshes: Query<Handle<Mesh2d>, With<(BindedGpuMesh2d, Transform)>>,
+    pipeline: Option<Res<Mesh2dPipeline<M>>>,
+    meshes: Query<(Handle<Mesh2d>, M), With<(BindedGpuMesh2d, Transform)>>,
     gpu_meshes: Res<RenderAssets<GpuMesh2d>>,
+    context: Res<RenderContext>,
 ) {
+    let Some(pipeline) = pipeline else {
+        return;
+    };
+
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("draw to output"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -401,8 +480,9 @@ fn render_pass(
     render_pass.set_pipeline(&pipeline.pipeline.0);
     render_pass.set_vertex_buffer(1, pipeline.transforms.buffer().slice(..));
     render_pass.set_bind_group(0, pipeline.camera.binding(), &[]);
+    render_pass.set_bind_group(1, pipeline.material.binding(), &[]);
 
-    for (i, mesh) in meshes.iter().enumerate() {
+    for (i, (mesh, material)) in meshes.iter().enumerate() {
         let gpu_mesh = gpu_meshes.get(mesh).unwrap();
         render_pass.set_vertex_buffer(0, gpu_mesh.buffer.buffer().slice(..));
         render_pass.draw(0..gpu_mesh.len, i as u32..i as u32 + 1);

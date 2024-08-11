@@ -7,7 +7,7 @@ use super::{
     shader::FragmentShaderSource,
 };
 // #[cfg(target_arch = "wasm32")]
-use crate::particle::CpuParticlePlugin;
+use crate::{mesh2d::Mesh2dMatPlugin, particle::CpuParticlePlugin, Image, RenderAssets};
 use crate::{
     particle::ParticlePlugin,
     sprite::SpriteMaterialPlugin,
@@ -17,12 +17,27 @@ use crate::{
 use app::render_util::RenderContext;
 use app::{core::App, plugins::Plugin};
 use asset::{server::AssetServer, *};
-use ecs::*;
+use ecs::{system_param::SystemParam, *};
 use ecs::{Component, WinnyComponent};
 use math::vector::{Vec2f, Vec4f};
-use std::marker::PhantomData;
+use std::{fmt::Debug, marker::PhantomData};
+
+#[derive(Debug)]
+pub struct MaterialEguiPlugin;
+
+impl Plugin for MaterialEguiPlugin {
+    fn build(&mut self, app: &mut App) {
+        app.egui_component::<ColorMaterial>();
+    }
+}
 
 pub struct MaterialPlugin<M: Material>(PhantomData<M>);
+
+impl<M: Material> Debug for MaterialPlugin<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MaterialPlugin")
+    }
+}
 
 impl<M: Material> Plugin for MaterialPlugin<M> {
     fn build(&mut self, app: &mut App) {
@@ -31,7 +46,11 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         let particle_plugin = CpuParticlePlugin::<M>::new();
         // #[cfg(not(target_arch = "wasm32"))]
         // let particle_plugin = ParticlePlugin::<M>::new();
-        app.add_plugins((particle_plugin, SpriteMaterialPlugin::<M>::new()));
+        app.add_plugins((
+            particle_plugin,
+            SpriteMaterialPlugin::<M>::new(),
+            Mesh2dMatPlugin::<M>::new(),
+        ));
     }
 }
 
@@ -44,17 +63,23 @@ impl<M: Material> MaterialPlugin<M> {
 pub trait Material: AsBindGroup + Clone + Component {
     const BLEND_STATE: wgpu::BlendState;
 
-    fn resource_state<'s>(&self, texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s>;
+    fn resource_state<'s, 'w>(
+        &'s self,
+        textures: &'w mut RenderAssets<Texture>,
+        images: &Assets<Image>,
+        context: &Res<RenderContext>,
+    ) -> Option<<Self as AsWgpuResources>::State<'w>>;
 
-    fn particle_fragment_shader(&self, _server: &AssetServer) -> Handle<FragmentShaderSource> {
+    fn particle_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
         Handle::dangling()
     }
-
-    fn cpu_particle_fragment_shader(&self, _server: &AssetServer) -> Handle<FragmentShaderSource> {
+    fn cpu_particle_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
         Handle::dangling()
     }
-
-    fn sprite_fragment_shader(&self, _server: &AssetServer) -> Handle<FragmentShaderSource> {
+    fn sprite_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
+        Handle::dangling()
+    }
+    fn mesh_2d_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
         Handle::dangling()
     }
 
@@ -74,13 +99,29 @@ pub trait Material: AsBindGroup + Clone + Component {
 impl Material for Material2d {
     const BLEND_STATE: wgpu::BlendState = wgpu::BlendState::ALPHA_BLENDING;
 
-    fn resource_state<'s>(&self, texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s> {
-        texture
+    fn resource_state<'s, 'w>(
+        &'s self,
+        textures: &'w mut RenderAssets<Texture>,
+        _images: &Assets<Image>,
+        _context: &Res<RenderContext>,
+    ) -> Option<<Self as AsWgpuResources>::State<'w>> {
+        textures.get(&self.texture)
     }
 
-    // Loaded in source
-    fn is_init(&self, _server: &AssetServer, _shaders: &Assets<FragmentShaderSource>) -> bool {
-        true
+    fn particle_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
+        server.load("winny/res/shaders/material2d_particle.wgsl")
+    }
+
+    fn cpu_particle_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
+        server.load("winny/res/shaders/material2d_cpu_particle.wgsl")
+    }
+
+    fn sprite_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
+        server.load("winny/res/shaders/material2d_sprite.wgsl")
+    }
+
+    fn mesh_2d_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
+        server.load("winny/res/shaders/material2d_mesh.wgsl")
     }
 }
 
@@ -119,11 +160,12 @@ impl AsBindGroup for Material2d {
 }
 
 /// Default [`Material`] for all 2D Sprites and Particles.
-#[derive(WinnyComponent, Default, Debug, Clone, Copy)]
+#[derive(WinnyComponent, Debug, Clone)]
 pub struct Material2d {
     pub opacity: Opacity,
     pub saturation: Saturation,
     pub modulation: Modulation,
+    pub texture: Handle<Image>,
 }
 
 impl Material2d {
@@ -148,8 +190,23 @@ pub struct RawMaterial2d {
 unsafe impl AsGpuBuffer for RawMaterial2d {}
 
 /// Applies the `opacity` to the target of the [`ShaderMaterial2d`]
-#[derive(WinnyAsEgui, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Opacity(pub f32);
+
+impl ecs::egui_widget::Widget for Opacity {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
+        ui.with_layout(
+            ecs::egui::Layout::left_to_right(ecs::egui::Align::Min),
+            |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut self.0)
+                        .speed(0.0005)
+                        .range(0.0..=1.0),
+                );
+            },
+        );
+    }
+}
 
 impl Opacity {
     pub fn clamp(&self) -> f32 {
@@ -164,8 +221,24 @@ impl Default for Opacity {
 }
 
 /// Applies the `saturation` to the target of the [`ShaderMaterial2d`]
-#[derive(WinnyAsEgui, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Saturation(pub f32);
+
+impl ecs::egui_widget::Widget for Saturation {
+    fn display(&mut self, ui: &mut ecs::egui::Ui) {
+        ui.with_layout(
+            ecs::egui::Layout::left_to_right(ecs::egui::Align::Min),
+            |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut self.0)
+                        .speed(0.0005)
+                        .range(0.0..=1.0),
+                );
+                self.0 = self.0.clamp(0.0, 1.0);
+            },
+        );
+    }
+}
 
 impl Saturation {
     pub fn clamp(&self) -> f32 {
@@ -190,18 +263,29 @@ impl ecs::egui_widget::Widget for Modulation {
             ecs::egui::Layout::left_to_right(ecs::egui::Align::Min),
             |ui| {
                 ui.label("r: ");
-                ui.add(egui::DragValue::new(&mut self.0.x).speed(0.005));
+                ui.add(
+                    egui::DragValue::new(&mut self.0.x)
+                        .speed(0.0005)
+                        .range(0.0..=1.0),
+                );
                 ui.label("g: ");
-                ui.add(egui::DragValue::new(&mut self.0.y).speed(0.005));
+                ui.add(
+                    egui::DragValue::new(&mut self.0.y)
+                        .speed(0.0005)
+                        .range(0.0..=1.0),
+                );
                 ui.label("b: ");
-                ui.add(egui::DragValue::new(&mut self.0.z).speed(0.005));
+                ui.add(
+                    egui::DragValue::new(&mut self.0.z)
+                        .speed(0.0005)
+                        .range(0.0..=1.0),
+                );
                 ui.label("a: ");
-                ui.add(egui::DragValue::new(&mut self.0.w).speed(0.005));
-
-                self.0.x = self.0.x.clamp(0.0, 1.0);
-                self.0.y = self.0.y.clamp(0.0, 1.0);
-                self.0.z = self.0.z.clamp(0.0, 1.0);
-                self.0.w = self.0.w.clamp(0.0, 1.0);
+                ui.add(
+                    egui::DragValue::new(&mut self.0.w)
+                        .speed(0.0005)
+                        .range(0.0..=1.0),
+                );
             },
         );
     }
@@ -220,7 +304,7 @@ impl Default for Modulation {
 }
 
 /// Simple color material.
-#[derive(WinnyComponent, Default, Debug, Clone, Copy)]
+#[derive(WinnyComponent, WinnyAsEgui, Default, Debug, Clone, Copy)]
 pub struct ColorMaterial {
     pub opacity: Opacity,
     pub saturation: Saturation,
@@ -253,7 +337,14 @@ unsafe impl AsGpuBuffer for RawColorMaterial {}
 impl Material for ColorMaterial {
     const BLEND_STATE: wgpu::BlendState = wgpu::BlendState::ALPHA_BLENDING;
 
-    fn resource_state<'s>(&self, _texture: &'s Texture) -> <Self as AsWgpuResources>::State<'s> {}
+    fn resource_state<'s, 'w>(
+        &'s self,
+        _textures: &'w mut RenderAssets<Texture>,
+        _images: &'w Assets<Image>,
+        _context: &Res<RenderContext>,
+    ) -> Option<<Self as AsWgpuResources>::State<'w>> {
+        Some(())
+    }
 
     fn particle_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
         server.load("winny/res/shaders/color_material_particle.wgsl")
@@ -264,6 +355,10 @@ impl Material for ColorMaterial {
     }
 
     fn sprite_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
+        server.load("winny/res/shaders/color_material_sprite.wgsl")
+    }
+
+    fn mesh_2d_fragment_shader(&self, server: &AssetServer) -> Handle<FragmentShaderSource> {
         server.load("winny/res/shaders/color_material_sprite.wgsl")
     }
 

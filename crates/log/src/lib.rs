@@ -4,7 +4,7 @@ use util::tracing::{
     Subscriber,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct LogPlugin {
     pub level: &'static str,
 }

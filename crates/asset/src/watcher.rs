@@ -12,6 +12,7 @@ use util::info;
 
 use crate::ReloadAsset;
 
+#[derive(Debug)]
 pub struct WatcherPlugin;
 
 impl Plugin for WatcherPlugin {

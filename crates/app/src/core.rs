@@ -48,6 +48,7 @@ pub enum AppSchedule {
     Render,
     RenderLighting,
     PostRender,
+    Egui,
     Present,
 }
 
@@ -221,6 +222,7 @@ fn render(scheduler: &mut Scheduler, world: &mut World) {
     scheduler.run_schedule(world, AppSchedule::Render);
     scheduler.run_schedule(world, AppSchedule::RenderLighting);
     scheduler.run_schedule(world, AppSchedule::PostRender);
+    scheduler.run_schedule(world, AppSchedule::Egui);
     scheduler.run_schedule(world, AppSchedule::Present);
 }
 

@@ -6,6 +6,7 @@ use egui_wgpu::ScreenDescriptor;
 use std::ops::Deref;
 
 // TODO: split into two plugins
+#[derive(Debug)]
 pub struct EguiPlugin;
 
 impl Plugin for EguiPlugin {
@@ -14,7 +15,7 @@ impl Plugin for EguiPlugin {
             .add_systems(Schedule::StartUp, startup)
             .add_systems(Schedule::PreUpdate, handle_input)
             .add_systems(AppSchedule::PreRender, begin_frame)
-            .add_systems(AppSchedule::PostRender, end_frame);
+            .add_systems(AppSchedule::Egui, end_frame);
     }
 }
 

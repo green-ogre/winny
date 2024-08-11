@@ -1,3 +1,11 @@
+use crate::{
+    camera::Camera,
+    mesh2d::{Mesh2d, Points},
+    render_pipeline::{bind_group, buffer::AsGpuBuffer},
+    AsBindGroup, AsVertexBuffer, BindGroup, FragTexture, FragmentShader, Modulation, RenderEncoder,
+    RenderPipeline2d, RenderView, SamplerFilterType, Texture, Transform, VertTexture, Vertex,
+    VertexBuffer, VertexLayout, VertexShader,
+};
 use app::{
     core::{AppSchedule, Schedule},
     plugins::Plugin,
@@ -9,15 +17,7 @@ use ecs::{WinnyAsEgui, WinnyResource};
 use math::vector::{Vec2f, Vec3f, Vec4f};
 use wgpu::core::pipeline;
 
-use crate::{
-    camera::Camera,
-    mesh2d::{Mesh2d, Points},
-    render_pipeline::{bind_group, buffer::AsGpuBuffer},
-    AsBindGroup, AsVertexBuffer, BindGroup, FragTexture, FragmentShader, Modulation, RenderEncoder,
-    RenderPipeline2d, RenderView, SamplerFilterType, Texture, Transform, VertTexture, Vertex,
-    VertexBuffer, VertexLayout, VertexShader,
-};
-
+#[derive(Debug)]
 pub struct Lighting2dPlugin;
 
 impl Plugin for Lighting2dPlugin {

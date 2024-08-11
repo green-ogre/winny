@@ -1,12 +1,15 @@
 use super::buffer::AsGpuBuffer;
 use crate::texture::{Image, SamplerFilterType, Texture};
+use crate::RenderView;
 use app::render_util::RenderContext;
 use app::{core::App, plugins::Plugin};
 use asset::*;
+use ecs::system_param::SystemParam;
 use ecs::{SparseArrayIndex, SparseSet, WinnyAsEgui, WinnyComponent, WinnyResource};
 use fxhash::FxHashMap;
 use wgpu::BufferUsages;
 
+#[derive(Debug)]
 pub struct BindGroupPlugin;
 
 impl Plugin for BindGroupPlugin {
@@ -227,9 +230,6 @@ pub struct BindGroup {
     binding: wgpu::BindGroup,
 }
 
-#[cfg(feature = "widgets")]
-ecs::ecs_macro::impl_label_widget!(BindGroup);
-
 impl BindGroup {
     pub fn new(
         resources: Vec<WgpuResource>,
@@ -275,6 +275,29 @@ impl BindGroup {
                 _ => None,
             })
             .unwrap()
+    }
+
+    /// Panics #
+    ///     If there are no views in resources.
+    pub fn take_texture_view(&mut self) -> wgpu::TextureView {
+        let index = self
+            .resources
+            .iter()
+            .enumerate()
+            .find_map(|(i, r)| match r {
+                WgpuResource::TextureView(_) => Some(i),
+                _ => None,
+            })
+            .unwrap();
+
+        match self.resources.remove(index) {
+            WgpuResource::TextureView(view) => view,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn insert_texture_view(&mut self, view: RenderView) {
+        self.resources.push(WgpuResource::TextureView(view.0));
     }
 }
 
@@ -456,6 +479,34 @@ impl AssetBindGroups {
         self.bindings.get(&id)
     }
 
+    pub fn contains(&self, id: AssetId) -> bool {
+        self.stored_bindings.contains_key(&id)
+    }
+
+    pub fn get_from_handle<A: Asset>(&self, handle: &Handle<A>) -> Option<&RenderBindGroup> {
+        self.stored_bindings
+            .get(&handle.id())
+            .and_then(|b| self.bindings.get(b))
+    }
+
+    pub fn get_handle<A: Asset>(&self, handle: &Handle<A>) -> Option<BindGroupHandle> {
+        self.stored_bindings
+            .get(&handle.id())
+            .map(|id| BindGroupHandle::new(*id, handle.id()))
+    }
+
+    pub fn insert<A: Asset>(
+        &mut self,
+        handle: Handle<A>,
+        bind_group: RenderBindGroup,
+    ) -> BindGroupHandle {
+        let bind_id = self
+            .bindings
+            .insert_in_first_empty(bind_group, |index| BindGroupId(index));
+        self.stored_bindings.insert(handle.id(), bind_id);
+        BindGroupHandle::new(bind_id, handle.id())
+    }
+
     pub fn get_handle_or_insert_with<A: BindableAsset>(
         &mut self,
         handle: Handle<A>,
@@ -464,11 +515,7 @@ impl AssetBindGroups {
         if let Some(bind_id) = self.stored_bindings.get(&handle.id()) {
             BindGroupHandle::new(*bind_id, handle.id())
         } else {
-            let bind_id = self
-                .bindings
-                .insert_in_first_empty(bind_group(), |index| BindGroupId(index));
-            self.stored_bindings.insert(handle.id(), bind_id);
-            BindGroupHandle::new(bind_id, handle.id())
+            self.insert(handle, bind_group())
         }
     }
 }

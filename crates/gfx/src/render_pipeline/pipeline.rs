@@ -4,21 +4,41 @@ use super::{
     shader::{FragmentShader, FragmentShaderSource, VertexShader},
     vertex_buffer::VertexBuffer,
 };
+use crate::FragmentShaderLoader;
 use app::render_util::RenderContext;
 use asset::{server::AssetServer, *};
 
 pub struct RenderPipeline2d(pub wgpu::RenderPipeline);
 
-#[cfg(feature = "widgets")]
-ecs::ecs_macro::impl_label_widget!(RenderPipeline2d);
-
+#[derive(Debug)]
 pub enum FragmentType {
     Sprite,
     Particle,
     CpuParticle,
+    Mesh2d,
 }
 
 impl RenderPipeline2d {
+    pub fn material_frag<'s, M: Material>(
+        material: &M,
+        server: &AssetServer,
+        frag_type: FragmentType,
+        shaders: &'s mut Assets<FragmentShaderSource>,
+        context: &RenderContext,
+    ) -> &'s FragmentShader {
+        let handle = match frag_type {
+            FragmentType::Sprite => material.sprite_fragment_shader(server),
+            FragmentType::Particle => material.particle_fragment_shader(server),
+            FragmentType::CpuParticle => material.cpu_particle_fragment_shader(server),
+            FragmentType::Mesh2d => material.mesh_2d_fragment_shader(server),
+        };
+
+        shaders
+            .get_mut(&handle)
+            .expect("Material should produce valid handle to shader: {frag_type:?}")
+            .shader(context)
+    }
+
     pub fn from_material_layout<M: Material>(
         label: &str,
         fragment_type: FragmentType,
@@ -31,45 +51,12 @@ impl RenderPipeline2d {
         frag_shaders: &mut Assets<FragmentShaderSource>,
         material: M,
     ) -> Self {
-        let handle = match fragment_type {
-            FragmentType::Sprite => material.sprite_fragment_shader(server),
-            FragmentType::Particle => material.particle_fragment_shader(server),
-            FragmentType::CpuParticle => material.cpu_particle_fragment_shader(server),
-        };
-
-        let frag_shader = if handle.is_dangling() {
-            let source = match fragment_type {
-                FragmentType::Sprite => {
-                    include_str!("../../../../res/shaders/material2d_sprite.wgsl")
-                }
-                FragmentType::Particle => {
-                    include_str!("../../../../res/shaders/material2d_particle.wgsl")
-                }
-                FragmentType::CpuParticle => {
-                    include_str!("../../../../res/shaders/material2d_cpu_particle.wgsl")
-                }
-            };
-            let shader = wgpu::ShaderModuleDescriptor {
-                label: None,
-                source: wgpu::ShaderSource::Wgsl(source.into()),
-            };
-            let shader = context.device.create_shader_module(shader);
-            let handle = frag_shaders.add(FragmentShaderSource(
-                source.into(),
-                Some(FragmentShader(shader)),
-            ));
-
-            frag_shaders.get_mut(&handle).unwrap().shader(context)
-        } else {
-            frag_shaders
-                .get_mut(&handle)
-                .expect("Material should produce valid handle to shader")
-                .shader(context)
-        };
-
         let blend_state = M::BLEND_STATE;
         let mut bind_groups = bind_groups.iter().map(|b| b.layout()).collect::<Vec<_>>();
         bind_groups.push(material_layout);
+
+        let frag_shader =
+            Self::material_frag(&material, server, fragment_type, frag_shaders, context);
 
         Self::new(
             label,
