@@ -7,12 +7,12 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, SampleFormat, StreamConfig,
 };
-#[cfg(feature = "widgets")]
 use ecs::egui_widget::Widget;
 #[cfg(target_arch = "wasm32")]
 use ecs::EventReader;
 use ecs::{
-    Commands, Entity, Query, Res, ResMut, WinnyBundle, WinnyComponent, WinnyResource, Without,
+    Commands, Entity, EventWriter, Query, Res, ResMut, WinnyAsEgui, WinnyBundle, WinnyComponent,
+    WinnyEvent, WinnyResource, Without,
 };
 use hound::{WavReader, WavSpec};
 use rand::Rng;
@@ -25,8 +25,10 @@ use std::{
         Arc,
     },
 };
-use util::tracing::{error, trace};
-// use wav::WavFormat;
+use util::info;
+use util::tracing::error;
+
+pub extern crate hound;
 
 #[derive(Debug)]
 pub struct AudioPlugin;
@@ -35,7 +37,10 @@ impl Plugin for AudioPlugin {
     fn build(&mut self, app: &mut App) {
         let loader = AudioAssetLoader {};
         #[cfg(not(target_arch = "wasm32"))]
-        app.register_asset::<AudioSource>()
+        app.egui_component::<AudioPlayback>()
+            .egui_component::<PlaybackSettings>()
+            .register_event::<ExitingStream>()
+            .register_asset::<AudioSource>()
             .register_asset_loader::<AudioSource>(loader)
             .add_systems(
                 Schedule::PreUpdate,
@@ -94,6 +99,7 @@ macro_rules! map_stream_err {
 fn device() -> Result<Device, Error> {
     let host = cpal::default_host();
     let device = map_stream_err!(Error::HostNA, host.default_output_device().ok_or(()))?;
+    info!("audio device: {}", device.name().unwrap_or("NA".into()));
     Ok(device)
 }
 
@@ -113,13 +119,13 @@ fn config(device: &Device) -> Result<StreamConfig, Error> {
             .ok_or(())
     )?;
     let config = config.with_sample_rate(cpal::SampleRate(44100)).into();
-    trace!("Retrieving audio context: {:?}", config);
+    info!("Retrieving audio context: {:?}", config);
     Ok(config)
 }
 
 pub struct AudioSource {
-    bytes: Arc<[u8]>,
-    spec: WavSpec,
+    pub bytes: Arc<[u8]>,
+    pub spec: WavSpec,
 }
 
 impl Asset for AudioSource {}
@@ -158,7 +164,7 @@ impl AudioSource {
         let spec = self.spec.clone();
 
         let resample_ratio = spec.sample_rate as f32 / config.sample_rate.0 as f32;
-        trace!("resampling stream: {}", resample_ratio);
+        info!("resampling stream: {}", resample_ratio);
         let (eos_tx, eos_rx) = channel();
         // let mut sample_cursor = 0.0;
         // let mut stream_offset = 0;
@@ -260,7 +266,6 @@ fn resampling_stream_f32(
     // let mut samples_read = 0;
 
     for (buf, sample) in output.iter_mut().zip(reader.samples::<i32>()) {
-        // println!("{spec:#?}, {sample:?}");
         let sample = sample.unwrap_or_default() as f32 / i32::MAX as f32;
         *buf = sample * playback_settings.volume * volume;
     }
@@ -293,9 +298,6 @@ fn resampling_stream_f32(
     // *stream_offset += samples_read * bytes_per_sample;
 
     if remaining_samples == 0 {
-        // if playback_settings.loop_track {
-        //     *stream_offset = 0;
-        // } else {
         if eos_tx.send(()).is_err() {
             error!("audio stream reciever closed");
         }
@@ -316,7 +318,7 @@ impl Debug for AudioSource {
     }
 }
 
-#[derive(WinnyComponent, Clone, Copy)]
+#[derive(WinnyComponent, WinnyAsEgui, Clone, Copy)]
 pub struct PlaybackSettings {
     pub volume: f32,
     pub speed: f32,
@@ -364,7 +366,6 @@ impl PlaybackSettings {
 
 pub struct StreamHandle(cpal::Stream, Receiver<()>);
 
-#[cfg(feature = "widgets")]
 impl Widget for StreamHandle {
     fn display(&mut self, ui: &mut ecs::egui::Ui) {
         ui.label("StreamHandle");
@@ -380,7 +381,7 @@ pub enum StreamCommand {
     Stop,
 }
 
-#[derive(WinnyComponent)]
+#[derive(WinnyComponent, WinnyAsEgui)]
 pub struct AudioPlayback {
     handle: StreamHandle,
     // commands: Sender<StreamCommand>,
@@ -389,7 +390,7 @@ pub struct AudioPlayback {
 
 impl Drop for AudioPlayback {
     fn drop(&mut self) {
-        // info!("exiting audio stream: {:?}", self.path);
+        info!("exiting audio stream");
     }
 }
 
@@ -405,6 +406,7 @@ impl AudioPlayback {
         let config = config(&device)?;
 
         let handle = source.stream(device, config, global_audio, playback_settings)?;
+        handle.0.play().unwrap();
 
         Ok(Self {
             handle,
@@ -488,10 +490,18 @@ fn init_audio_bundle_streams(
     }
 }
 
-fn flush_finished_streams(mut commands: Commands, streams: Query<(Entity, AudioPlayback)>) {
+#[derive(WinnyEvent, Clone)]
+pub struct ExitingStream(pub Entity);
+
+fn flush_finished_streams(
+    mut commands: Commands,
+    streams: Query<(Entity, AudioPlayback)>,
+    mut writer: EventWriter<ExitingStream>,
+) {
     for (e, playback) in streams.iter() {
         if playback.handle.1.try_recv().is_ok() {
             commands.get_entity(e).despawn();
+            writer.send(ExitingStream(e));
         }
     }
 }
