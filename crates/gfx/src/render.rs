@@ -1,11 +1,13 @@
 use app::prelude::*;
-use ecs::{Commands, Res, ResMut, Take, WinnyResource};
+use ecs::{AsEgui, Commands, Res, ResMut, Take, WinnyAsEgui, WinnyResource};
 use math::vector::Vec4f;
 use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
 use util::{info, tracing::trace};
+
+use crate::Modulation;
 
 #[derive(Debug)]
 pub struct RendererPlugin;
@@ -15,13 +17,14 @@ impl Plugin for RendererPlugin {
         #[cfg(target_arch = "wasm32")]
         std::panic::set_hook(Box::new(console_error_panic_hook::hook));
 
-        app.register_resource::<Renderer>()
+        app.egui_resource::<ClearColor>()
+            .register_resource::<Renderer>()
             .register_resource::<RenderView>()
             .register_resource::<RenderContext>()
             .register_resource::<RenderOutput>()
             .register_resource::<RenderEncoder>()
             .register_resource::<RenderContext>()
-            .insert_resource(ClearColor(Vec4f::new(0.05, 0.05, 0.05, 1.0)))
+            .insert_resource(ClearColor(Modulation(Vec4f::new(0.05, 0.05, 0.05, 1.0))))
             .add_systems(AppSchedule::Resized, resize)
             .add_systems(AppSchedule::RenderStartup, startup)
             .add_systems(AppSchedule::PrepareRender, start_render)
@@ -31,8 +34,8 @@ impl Plugin for RendererPlugin {
 }
 
 /// Sets default background color.
-#[derive(WinnyResource)]
-pub struct ClearColor(pub Vec4f);
+#[derive(WinnyResource, WinnyAsEgui)]
+pub struct ClearColor(pub Modulation);
 
 fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>, clear: Res<ClearColor>) {
     {
@@ -42,10 +45,10 @@ fn clear_screen(mut encoder: ResMut<RenderEncoder>, view: Res<RenderView>, clear
                 view: &view,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: clear.0.x as f64,
-                        g: clear.0.y as f64,
-                        b: clear.0.z as f64,
-                        a: clear.0.w as f64,
+                        r: clear.0 .0.x as f64,
+                        g: clear.0 .0.y as f64,
+                        b: clear.0 .0.z as f64,
+                        a: clear.0 .0.w as f64,
                     }),
                     store: wgpu::StoreOp::Store,
                 },

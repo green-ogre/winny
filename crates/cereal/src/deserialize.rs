@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 
 pub struct Deserializer<'a> {
     bytes: &'a mut Vec<u8>,
@@ -79,6 +79,12 @@ impl<T: Deserialize, const LEN: usize> Deserialize for [T; LEN] {
         }
 
         Some(unsafe { elems.try_into().unwrap_unchecked() })
+    }
+}
+
+impl<T: 'static> Deserialize for PhantomData<T> {
+    fn deserialize(_deserializer: &mut Deserializer<'_>) -> Option<Self> {
+        Some(PhantomData)
     }
 }
 

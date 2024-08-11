@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 
 pub struct Serializer<'a> {
     bytes: &'a mut Vec<u8>,
@@ -73,6 +73,10 @@ impl<T: Serialize, const LEN: usize> Serialize for [T; LEN] {
             elem.serialize(serializer);
         }
     }
+}
+
+impl<T: 'static> Serialize for PhantomData<T> {
+    fn serialize(&self, _serializer: &mut Serializer<'_>) {}
 }
 
 macro_rules! impl_serialize {

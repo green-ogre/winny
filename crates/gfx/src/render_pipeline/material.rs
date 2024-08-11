@@ -168,6 +168,17 @@ pub struct Material2d {
     pub texture: Handle<Image>,
 }
 
+impl Default for Material2d {
+    fn default() -> Self {
+        Self {
+            texture: Handle::dangling(),
+            ..Default::default()
+        }
+    }
+}
+
+impl Asset for Material2d {}
+
 impl Material2d {
     pub(crate) fn as_raw(&self) -> RawMaterial2d {
         RawMaterial2d {
@@ -295,6 +306,15 @@ impl Modulation {
     pub fn clamp(&self) -> Vec4f {
         self.0.normalize_homogenous()
     }
+
+    pub fn wgpu_color(&self) -> wgpu::Color {
+        wgpu::Color {
+            r: self.0.x as f64,
+            g: self.0.y as f64,
+            b: self.0.z as f64,
+            a: self.0.w as f64,
+        }
+    }
 }
 
 impl Default for Modulation {
@@ -310,6 +330,8 @@ pub struct ColorMaterial {
     pub saturation: Saturation,
     pub modulation: Modulation,
 }
+
+impl Asset for ColorMaterial {}
 
 impl ColorMaterial {
     pub(crate) fn as_raw(&self) -> RawColorMaterial {

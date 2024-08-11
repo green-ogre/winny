@@ -138,27 +138,23 @@ fn parse_d(input: TokenStream, path_to_cereal: proc_macro2::TokenStream) -> Toke
                 }
             }
             Fields::Unnamed(fields) => {
-                let mut fields = fields
+                let fields = fields
                     .unnamed
                     .iter()
                     .map(|field| {
                         let ty = &field.ty;
-                        let attrs = &field.attrs;
-                        let skip = attrs.iter().any(|attr| attr.path().is_ident("skip"));
+                        // let attrs = &field.attrs;
+                        // let skip = attrs.iter().any(|attr| attr.path().is_ident("skip"));
 
-                        if !skip {
-                            quote! {
-                                <#ty>::deserialize(deserializer).unwrap(),
-                            }
-                        } else {
-                            quote! {}
+                        quote! {
+                            <#ty>::deserialize(deserializer).unwrap(),
                         }
                     })
                     .collect::<Vec<_>>();
-                fields.reverse();
+                // fields.reverse();
 
                 quote! {
-                    #name(#(#fields)*, ..Default::default())
+                    #name(#(#fields)*)
                 }
             }
             Fields::Unit => quote! { #name },

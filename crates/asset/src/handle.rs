@@ -1,4 +1,5 @@
 use crate::Asset;
+use cereal::{WinnyDeserialize, WinnySerialize};
 use ecs::{SparseArrayIndex, WinnyAsEgui, WinnyComponent};
 use std::{hash::Hash, marker::PhantomData};
 
@@ -8,7 +9,7 @@ use std::{hash::Hash, marker::PhantomData};
 /// Handle to an [`LoadedAsset`] stored within the appropriate [`Assets`] resource.
 ///
 /// Aquired from [`AssetServer::load`].
-#[derive(WinnyComponent, Debug)]
+#[derive(WinnySerialize, WinnyDeserialize, WinnyComponent, Debug)]
 pub struct Handle<A: Asset>(AssetId, HandleGeneration, PhantomData<A>);
 
 impl<A: Asset> Clone for Handle<A> {
@@ -85,7 +86,9 @@ impl<A: Asset> Into<Handle<A>> for ErasedHandle {
 }
 
 /// Index into an [`Assets`] resource.
-#[derive(WinnyAsEgui, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    WinnyAsEgui, WinnySerialize, WinnyDeserialize, Debug, Clone, Copy, PartialEq, Eq, Hash,
+)]
 pub struct AssetId(pub(crate) u32);
 
 impl SparseArrayIndex for AssetId {
@@ -95,7 +98,7 @@ impl SparseArrayIndex for AssetId {
 }
 
 /// Tracks change between ticks.
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(WinnySerialize, WinnyDeserialize, Debug, Copy, Clone, Default)]
 struct HandleGeneration {
     previous: u16,
     current: u16,
