@@ -30,7 +30,7 @@ impl Plugin for TextPlugin {
             .register_resource::<TextHandle>()
             .register_resource::<TextRenderer>()
             .add_systems(AppSchedule::PreStartUp, startup)
-            .add_systems(AppSchedule::PostRender, render_pass);
+            .add_systems(AppSchedule::Egui, render_pass);
     }
 }
 

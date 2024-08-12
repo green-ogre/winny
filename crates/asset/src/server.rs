@@ -163,9 +163,9 @@ impl AssetLoaders {
             .extension()
             .expect("file extension")
             .to_owned();
-        let mut path = path.as_ref().to_str().unwrap().to_owned();
+        let mut relative_path = path.as_ref().to_str().unwrap().to_owned();
         if !self.path_prefix.is_empty() {
-            path = format!("{}/{}", self.path_prefix, path);
+            relative_path = format!("{}/{}", self.path_prefix, relative_path);
         }
 
         let asset_type_id = TypeId::of::<A>();
@@ -174,17 +174,18 @@ impl AssetLoaders {
                 let handle = self.loaders[*loader].loader.load(
                     &self.loaders[*loader].handler,
                     self.loaders[*loader].result.clone(),
-                    path.clone(),
+                    relative_path,
                     file_ext.to_str().unwrap().to_owned(),
                 );
-                self.loaded_assets.insert(path, handle);
+                self.loaded_assets
+                    .insert(path.as_ref().to_str().unwrap().to_owned(), handle);
 
                 handle.into()
             }
             None => {
                 util::tracing::error!(
                     "Could not find AssetLoader for file: {:?} of type: {:?}",
-                    path,
+                    relative_path,
                     std::any::type_name::<A>()
                 );
                 Handle::dangling()

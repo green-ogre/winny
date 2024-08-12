@@ -2,7 +2,13 @@ use crate::access::{AccessFilter, ComponentAccessFilter, SystemAccess};
 
 use super::*;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub trait Filter: Send + Sync {
+    fn condition(arch: &Archetype) -> bool;
+    fn system_access(components: &mut Components) -> SystemAccess;
+}
+#[cfg(target_arch = "wasm32")]
+pub trait Filter {
     fn condition(arch: &Archetype) -> bool;
     fn system_access(components: &mut Components) -> SystemAccess;
 }

@@ -95,7 +95,7 @@ pub trait Material: AsBindGroup + Clone + Component {
             && shaders.get(&self.sprite_fragment_shader(server)).is_some()
     }
 
-    fn update(&self, _context: &RenderContext, _binding: &BindGroup) {}
+    fn update(&self, _context: &RenderContext, _binding: &wgpu::Buffer) {}
 }
 
 impl Material for Material2d {
@@ -402,8 +402,8 @@ impl Material for ColorMaterial {
         server.load("winny/res/shaders/color_material_sprite.wgsl")
     }
 
-    fn update(&self, context: &RenderContext, binding: &BindGroup) {
-        RawColorMaterial::write_buffer(context, binding.single_buffer(), &[self.as_raw()]);
+    fn update(&self, context: &RenderContext, binding: &wgpu::Buffer) {
+        RawColorMaterial::write_buffer(context, binding, &[self.as_raw()]);
     }
 }
 

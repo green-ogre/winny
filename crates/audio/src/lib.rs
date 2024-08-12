@@ -50,6 +50,7 @@ impl Plugin for AudioPlugin {
         #[cfg(target_arch = "wasm32")]
         app.register_asset::<AudioSource>()
             .register_asset_loader::<AudioSource>(loader)
+            .register_event::<ExitingStream>()
             .add_systems(
                 Schedule::PreUpdate,
                 (

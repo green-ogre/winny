@@ -272,7 +272,7 @@ fn minimal_triangulation_with_convex_hull(points: Vec<Point>) -> Option<Vec<Tria
 pub struct Mesh2dPipeline<M: Material> {
     pipeline: RenderPipeline2d,
     camera: BindGroup,
-    material: BindGroup,
+    pub material: BindGroup,
     transforms: VertexBuffer,
     _phantom: PhantomData<M>,
 }

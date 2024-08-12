@@ -9,7 +9,17 @@ use super::*;
     label = "invalid `Bundle`",
     note = "consider annotating `{Self}` with `#[derive(Component)]` or `#[derive(Bundle)]`"
 )]
+#[cfg(not(target_arch = "wasm32"))]
 pub trait Bundle: 'static + Send + Sync {
+    /// Describes the [`Component`]'s of this bundle, as well as the order they will be inserted
+    /// within [`Bundle::insert_components`]
+    fn component_meta<F: FnMut(&ComponentMeta)>(components: &mut Components, ids: &mut F);
+
+    /// Inserted in the order of [`Bundle::component_meta`]
+    fn insert_components<F: FnMut(OwnedPtr)>(self, f: &mut F);
+}
+#[cfg(target_arch = "wasm32")]
+pub trait Bundle: 'static {
     /// Describes the [`Component`]'s of this bundle, as well as the order they will be inserted
     /// within [`Bundle::insert_components`]
     fn component_meta<F: FnMut(&ComponentMeta)>(components: &mut Components, ids: &mut F);

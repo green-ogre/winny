@@ -32,7 +32,22 @@ pub trait QueryData: WorldQuery {
 
 pub trait ReadOnlyQueryData: QueryData<ReadOnly = Self> {}
 
+#[cfg(not(target_arch = "wasm32"))]
 pub trait WorldQuery: Send + Sync {
+    type Fetch<'d>;
+    type Item<'d>;
+    type State;
+
+    fn init_state(world: UnsafeWorldCell<'_>) -> Self::State;
+    fn init_fetch<'d>(world: UnsafeWorldCell<'d>, state: &Self::State) -> Self::Fetch<'d>;
+    fn set_table<'d>(fetch: &mut Self::Fetch<'d>, state: &Self::State, table: &'d Table);
+    fn fetch<'d>(fetch: &mut Self::Fetch<'d>, arch_entity: &ArchEntity) -> Self::Item<'d>;
+
+    fn system_access(components: &mut Components) -> SystemAccess;
+    fn set_ids() -> Vec<TypeId>;
+}
+#[cfg(target_arch = "wasm32")]
+pub trait WorldQuery {
     type Fetch<'d>;
     type Item<'d>;
     type State;

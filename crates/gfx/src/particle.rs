@@ -928,7 +928,7 @@ fn render_cpu_emitters<M: Material>(
     });
 
     for (pipeline, mat, _) in emitters.iter().filter(|(_, _, e)| e.is_emitting) {
-        mat.update(&context, &pipeline.material_resources);
+        // mat.update(&context, &pipeline.material_resources);
         render_pass.set_pipeline(&pipeline.render_pipeline.0);
         render_pass.set_vertex_buffer(0, pipeline.particle_vertex_buffer.buffer().slice(..));
         render_pass.set_vertex_buffer(1, pipeline.particle_transform_buffer.buffer().slice(..));
